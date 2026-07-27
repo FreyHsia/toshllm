@@ -741,6 +741,13 @@ private struct BenchHistoryRow: View, Equatable {
                         Label(gpu, systemImage: "cpu")
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                     }
+                    if let version = r.appVersion {
+                        Text("v\(version)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .help(loc.t("Versión de ToshLLM que hizo esta medición",
+                                        "ToshLLM version that produced this run"))
+                    }
                     Text(r.date, format: .dateTime.day().month().hour().minute())
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
