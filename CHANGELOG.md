@@ -6,8 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
-- **Faster prompt processing on every quantized model**... the tiled matmul and its MoE variant write the dequantized tile in vector stores instead of one value at a time, worth 4 to 9% on the kernel and 3.5% of prompt speed on Qwen3-8B-Q4_K_M (712 to 739 pp/s) and 2.9% on Qwen3.6-14B-A3B-Q5_K_M (1088 to 1120 pp/s).
-- **Faster generation on K-quant models**... the q4_K and q5_K matrix-vector kernels read their quants in wide loads instead of one access at a time, worth 6.9% and 3.4% on the kernel and about 1.5% of generation speed on Qwen3-8B-Q4_K_M.
+- **Much faster prompt processing on short prompts**... batches of 32 tokens or fewer now use a token tile they can actually fill, instead of computing padding: measured 34% faster at 16 tokens and 32% at 32 on a dense Q4_K model. Long prompts are unaffected, they already fill the tile. This is the path a chat turn takes once the cache is warm, where only the new tokens are processed.
+- **Faster prompt processing on every quantized model**... the tiled matmul and its MoE variant write the dequantized tile in vector stores instead of one value at a time: measured 3.5% faster on a dense Q4_K model, 4.4 to 6% on MoE models that fit in VRAM, and 11.8% on a 35B MoE with experts offloaded to CPU.
+- **Faster generation on K-quant models**... the q4_K and q5_K matrix-vector kernels read their quants in wide loads instead of one access at a time, measured about 1.5% faster generation on a dense Q4_K model.
 
 ## [0.83.4] - 2026-07-23
 
