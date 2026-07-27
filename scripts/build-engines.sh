@@ -68,6 +68,27 @@ fi
 # upstream commit (which is unchanged across releases that only touch the patch).
 TOSH_VERSION="$(tr -d '[:space:]' < "$(dirname "$0")/../VERSION")"
 
+# GitHub runners occasionally lose DNS or reset a transfer for a few seconds.
+# A release build should not discard several minutes of compilation because one
+# clone/fetch hit that transient window, so every networked git operation gets a
+# small bounded retry with incremental backoff.
+retry_git() {
+    local attempt=1
+    local max_attempts=4
+    local delay
+
+    while ! "$@"; do
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            echo "ERROR: git operation failed after $max_attempts attempts: $*" >&2
+            return 1
+        fi
+        delay=$((attempt * 10))
+        echo "Git network operation failed (attempt $attempt/$max_attempts); retrying in ${delay}s..." >&2
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+}
+
 CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release
     -DBUILD_SHARED_LIBS=OFF
@@ -103,10 +124,10 @@ build_engine() {
     local patches=("$@")
 
     if [ ! -d "$vendor/.git" ]; then
-        git clone --filter=blob:none https://github.com/ggml-org/llama.cpp "$vendor"
+        retry_git git clone --filter=blob:none https://github.com/ggml-org/llama.cpp "$vendor"
     fi
     cd "$vendor"
-    git fetch origin "$fetch_ref" 2>/dev/null || git fetch origin
+    retry_git git fetch origin "$fetch_ref" 2>/dev/null || retry_git git fetch origin
     git checkout -qf "$ref"
     git checkout -- . 2>/dev/null || true
 
@@ -153,14 +174,14 @@ build_image_engine() {
     # clone the main repo, then init the submodule separately, both abort-and-retry
     # on a stalled transfer instead of hanging.
     if [ ! -d "$vendor/.git" ]; then
-        GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
+        retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
             git clone https://github.com/leejet/stable-diffusion.cpp "$vendor"
     fi
     cd "$vendor"
-    git fetch origin 2>/dev/null || true
+    retry_git git fetch origin
     git checkout -qf "$SD_COMMIT"
     git submodule sync --recursive
-    GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
+    retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
         git submodule update --init --recursive
     git checkout -- . 2>/dev/null || true
     git -C ggml checkout -- . 2>/dev/null || true
