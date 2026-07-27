@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Faster prompt processing on every quantized model**... the tiled matmul and its MoE variant write the dequantized tile in vector stores instead of one value at a time, worth 4 to 9% on the kernel and 3.5% of prompt speed on Qwen3-8B-Q4_K_M (712 to 739 pp/s) and 2.9% on Qwen3.6-14B-A3B-Q5_K_M (1088 to 1120 pp/s).
 - **Faster generation on K-quant models**... the q4_K and q5_K matrix-vector kernels read their quants in wide loads instead of one access at a time, worth 6.9% and 3.4% on the kernel and about 1.5% of generation speed on Qwen3-8B-Q4_K_M.
 
 ## [0.83.4] - 2026-07-23
