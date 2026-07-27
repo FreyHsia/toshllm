@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
-- **Much faster prompt processing on short prompts**... batches of 32 tokens or fewer now use a token tile they can actually fill, instead of computing padding: measured 34% faster at 16 tokens and 32% at 32 on a dense Q4_K model. Long prompts are unaffected, they already fill the tile. This is the path a chat turn takes once the cache is warm, where only the new tokens are processed.
+- **Much faster prompt processing on short prompts**... batches of 32 tokens or fewer now use a token tile they can actually fill, instead of computing padding: measured 34% and 32% faster at 16 and 32 tokens on a dense Q4_K model, and 27% and 24% on a dense Q5_K one. It applies to every quantization. Long prompts are unaffected, they already fill the tile. This is the path a chat turn takes once the cache is warm, where only the new tokens are processed.
 - **Faster prompt processing on every quantized model**... the tiled matmul and its MoE variant write the dequantized tile in vector stores instead of one value at a time: measured 3.5% faster on a dense Q4_K model, 4.4 to 6% on MoE models that fit in VRAM, and 11.8% on a 35B MoE with experts offloaded to CPU.
 - **Faster generation on K-quant models**... the q4_K and q5_K matrix-vector kernels read their quants in wide loads instead of one access at a time, measured about 1.5% faster generation on a dense Q4_K model.
 
