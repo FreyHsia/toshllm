@@ -3425,7 +3425,7 @@ index a1003b3ac..cc736d24d 100644
                  reg_ctx->devices.push_back(dev);
              }
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 969fddfa5..680d6da84 100644
+index 969fddfa5..b566afeaf 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -626,17 +626,20 @@
@@ -4993,7 +4993,7 @@ index 969fddfa5..680d6da84 100644
      const short ir = it%4;     // 0...3
  
      const int nb = args.ne00/QK_K;
-@@ -8342,11 +9354,11 @@
+@@ -8342,44 +9354,46 @@
      device const float * y4 = y + ix * QK_K + 64 * iq + 8 * ir;
  
      uint16_t sc16[4];
@@ -5006,7 +5006,52 @@ index 969fddfa5..680d6da84 100644
          for (short i = 0; i < 8; ++i) {
              yl[i+0] = y4[i+  0]; sumy[0] += yl[i+0];
              yl[i+8] = y4[i+ 32]; sumy[1] += yl[i+8];
-@@ -8389,11 +9401,11 @@
+             yh[i+0] = y4[i+128]; sumy[2] += yh[i+0];
+             yh[i+8] = y4[i+160]; sumy[3] += yh[i+8];
+         }
+ 
+         device const uint16_t * sc = (device const uint16_t *)x[ib].scales + iq;
+-        device const uint16_t * q1 = (device const uint16_t *)x[ib].qs + 16 * iq + 4 * ir;
++        // widen to int before the pointer math: short offsets into a device base miscompile on AMD
++        device const uint16_t * q1 = (device const uint16_t *)x[ib].qs + (16 * (int) iq + 4 * (int) ir);
+         device const half     * dh = &x[ib].d;
+ 
+         for (short row = 0; row < nr0; row++) {
+             sc16[0] = sc[0] & kmask1;
+             sc16[1] = sc[2] & kmask1;
+             sc16[2] = ((sc[4] >> 0) & kmask2) | ((sc[0] & kmask3) >> 2);
+             sc16[3] = ((sc[4] >> 4) & kmask2) | ((sc[2] & kmask3) >> 2);
+ 
+-            device const uint16_t * q2 = q1 + 32;
++            const ushort4 qv1 = *(device const ushort4 *)(q1);
++            const ushort4 qv2 = *(device const ushort4 *)(q1 + 32);
+ 
+             float4 acc1 = {0.f, 0.f, 0.f, 0.f};
+             float4 acc2 = {0.f, 0.f, 0.f, 0.f};
+ 
+             FOR_UNROLL (short i = 0; i < 4; ++i) {
+-                acc1[0] += yl[2*i + 0] * (q1[i] & 0x000F);
+-                acc1[1] += yl[2*i + 1] * (q1[i] & 0x0F00);
+-                acc1[2] += yl[2*i + 8] * (q1[i] & 0x00F0);
+-                acc1[3] += yl[2*i + 9] * (q1[i] & 0xF000);
+-                acc2[0] += yh[2*i + 0] * (q2[i] & 0x000F);
+-                acc2[1] += yh[2*i + 1] * (q2[i] & 0x0F00);
+-                acc2[2] += yh[2*i + 8] * (q2[i] & 0x00F0);
+-                acc2[3] += yh[2*i + 9] * (q2[i] & 0xF000);
++                acc1[0] += yl[2*i + 0] * (qv1[i] & 0x000F);
++                acc1[1] += yl[2*i + 1] * (qv1[i] & 0x0F00);
++                acc1[2] += yl[2*i + 8] * (qv1[i] & 0x00F0);
++                acc1[3] += yl[2*i + 9] * (qv1[i] & 0xF000);
++                acc2[0] += yh[2*i + 0] * (qv2[i] & 0x000F);
++                acc2[1] += yh[2*i + 1] * (qv2[i] & 0x0F00);
++                acc2[2] += yh[2*i + 8] * (qv2[i] & 0x00F0);
++                acc2[3] += yh[2*i + 9] * (qv2[i] & 0xF000);
+             }
+ 
+             sumf[row] += dh[0] * ((acc1[0] + 1.f/256.f * acc1[1]) * sc8[0] +
+                                   (acc1[2] + 1.f/256.f * acc1[3]) * sc8[1] * 1.f/16.f +
+                                   (acc2[0] + 1.f/256.f * acc2[1]) * sc8[4] +
+@@ -8389,11 +9403,11 @@
              q1 += args.nb01/2;
              sc += args.nb01/2;
              dh += args.nb01/2;
@@ -5019,7 +5064,7 @@ index 969fddfa5..680d6da84 100644
      device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
  
      for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-@@ -8415,10 +9427,25 @@
+@@ -8415,10 +9429,25 @@
          ushort sgitg[[simdgroup_index_in_threadgroup]]) {
  
      kernel_mul_mv_q4_K_f32_impl<N_R0_Q4_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
@@ -5045,7 +5090,7 @@ index 969fddfa5..680d6da84 100644
          args_t args,
          device const char * src0,
          device const char * src1,
-@@ -8452,12 +9479,15 @@
+@@ -8452,12 +9481,15 @@
  
      constexpr uint16_t kmask1 = 0x3f3f;
      constexpr uint16_t kmask2 = 0x0f0f;
@@ -5063,7 +5108,7 @@ index 969fddfa5..680d6da84 100644
  
      const short l0 = 8*ir;
      const short q_offset = 32*iq + l0;
-@@ -8471,11 +9501,11 @@
+@@ -8471,11 +9503,11 @@
      uint16_t sc16[4];
      thread const uint8_t * sc8 = (thread const uint8_t *)sc16;
  
@@ -5076,7 +5121,37 @@ index 969fddfa5..680d6da84 100644
          device const half * dh = &x[i].d;
          device const uint16_t * a = (device const uint16_t *)x[i].scales + iq;
  
-@@ -8520,11 +9550,11 @@
+@@ -8496,16 +9528,24 @@
+             sc16[2] = ((a[4] >> 0) & kmask2) | ((a[0] & kmask3) >> 2);
+             sc16[3] = ((a[4] >> 4) & kmask2) | ((a[2] & kmask3) >> 2);
+ 
+             float4 acc1 = {0.f};
+             float4 acc2 = {0.f};
++            const uchar4 q1a = *(device const uchar4 *)(q1);
++            const uchar4 q1b = *(device const uchar4 *)(q1 + 4);
++            const uchar4 q2a = *(device const uchar4 *)(q2);
++            const uchar4 q2b = *(device const uchar4 *)(q2 + 4);
++            const uchar4 qha = *(device const uchar4 *)(qh);
++            const uchar4 qhb = *(device const uchar4 *)(qh + 4);
+             FOR_UNROLL (short l = 0; l < 8; ++l) {
+-                uint8_t h = qh[l];
+-                acc1[0] += yl[l+0] * (q1[l] & 0x0F);
+-                acc1[1] += yl[l+8] * (q1[l] & 0xF0);
+-                acc1[2] += yh[l+0] * (q2[l] & 0x0F);
+-                acc1[3] += yh[l+8] * (q2[l] & 0xF0);
++                const uint8_t h  = l < 4 ? qha[l] : qhb[l - 4];
++                const uint8_t v1 = l < 4 ? q1a[l] : q1b[l - 4];
++                const uint8_t v2 = l < 4 ? q2a[l] : q2b[l - 4];
++                acc1[0] += yl[l+0] * (v1 & 0x0F);
++                acc1[1] += yl[l+8] * (v1 & 0xF0);
++                acc1[2] += yh[l+0] * (v2 & 0x0F);
++                acc1[3] += yh[l+8] * (v2 & 0xF0);
+                 acc2[0] += h & hm1 ? yl[l+0] : 0.f;
+                 acc2[1] += h & hm2 ? yl[l+8] : 0.f;
+                 acc2[2] += h & hm3 ? yh[l+0] : 0.f;
+                 acc2[3] += h & hm4 ? yh[l+8] : 0.f;
+             }
+@@ -8520,11 +9560,11 @@
              qh += args.nb01;
              dh += args.nb01/2;
              a  += args.nb01/2;
@@ -5089,7 +5164,7 @@ index 969fddfa5..680d6da84 100644
      device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
  
      for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-@@ -8584,22 +9614,25 @@
+@@ -8584,22 +9624,25 @@
  
      float sumf[nr0] = { 0.f };
  
@@ -5118,7 +5193,7 @@ index 969fddfa5..680d6da84 100644
          device const uint8_t * qh = x[i].qh + q_offset_h;
          device const int8_t  * sc = x[i].scales + is;
          device const half    * dh = &x[i].d;
-@@ -9957,18 +10990,19 @@
+@@ -9957,18 +11000,19 @@
  constant bool FC_mul_mm_bc_out [[function_constant(FC_MUL_MM + 1)]];
  constant short FC_mul_mm_ne12  [[function_constant(FC_MUL_MM + 2)]];
  constant short FC_mul_mm_ne13  [[function_constant(FC_MUL_MM + 3)]];
@@ -5139,7 +5214,7 @@ index 969fddfa5..680d6da84 100644
          device const char * srcA,
          device const char * srcB,
          device       char * dst,
-@@ -10089,11 +11123,11 @@
+@@ -10089,11 +11133,11 @@
  
  template<
      typename S0, typename S0_4x4, typename S0_8x8,
@@ -5152,7 +5227,7 @@ index 969fddfa5..680d6da84 100644
          device const char * src0,
          device const char * src1,
          device       char * dst,
-@@ -10104,11 +11138,13 @@
+@@ -10104,11 +11148,13 @@
  
      threadgroup S0 * sa = (threadgroup S0 *)(shmem);
      threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
@@ -5167,7 +5242,7 @@ index 969fddfa5..680d6da84 100644
      constexpr int NL0 = NK/16;
      constexpr int NL1 = NK/8;
  
-@@ -10120,11 +11156,12 @@
+@@ -10120,11 +11166,12 @@
      const short nr0 = (args.ne0 - r0 < NR0) ? (args.ne0 - r0) : NR0;
      const short nr1 = (args.ne1 - r1 < NR1) ? (args.ne1 - r1) : NR1;
  
@@ -5181,7 +5256,7 @@ index 969fddfa5..680d6da84 100644
  
      short il = il0;
  
-@@ -10142,136 +11179,206 @@
+@@ -10142,136 +11189,206 @@
          + args.nb13*i13
          + args.nb12*i12
          + args.nb11*(r1 + lr1)
@@ -5444,7 +5519,7 @@ index 969fddfa5..680d6da84 100644
          threadgroup float * temp_str = ((threadgroup float *) shmem) + 32*(sgitg&1) + (16*(sgitg >> 1))*NR0;
  
          for (short i = 0; i < 8; i++) {
-@@ -10358,10 +11465,12 @@
+@@ -10358,10 +11475,12 @@
      tpe_u32[ide] = n_all;
  }
  
@@ -5457,7 +5532,7 @@ index 969fddfa5..680d6da84 100644
  template [[host_name("kernel_mul_mm_id_map0_ne20_4" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<4>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_5" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<5>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_6" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<6>;
-@@ -10422,13 +11531,21 @@
+@@ -10422,13 +11541,21 @@
  
      short il = il0;
  
@@ -5482,7 +5557,7 @@ index 969fddfa5..680d6da84 100644
      const short    offset1 = il0/nl;
  
      device const block_q * x = (device const block_q *)(src0 + args.nb01*(r0 + lr0) + offset0) + offset1;
-@@ -10440,17 +11557,28 @@
+@@ -10440,17 +11567,28 @@
          + args.nb12*i12
          + args.nb11*i11
          + args.nb10*iy);
@@ -5513,7 +5588,7 @@ index 969fddfa5..680d6da84 100644
      auto tA = tensor<threadgroup S0, dextents<int32_t, 2>, tensor_inline>(sa, dextents<int32_t, 2>(NK,  NR0));
      auto tB = tensor<threadgroup S1, dextents<int32_t, 2>, tensor_inline>(sb, dextents<int32_t, 2>(NR1, NK ));
  
-@@ -10477,11 +11605,15 @@
+@@ -10477,11 +11615,15 @@
                  const short lx = (tiitg/NL0)%8;
                  const short ly = i%8;
  
@@ -5530,7 +5605,7 @@ index 969fddfa5..680d6da84 100644
              S0_4x4 temp_a;
              dequantize_func(x, il, temp_a);
  
-@@ -10489,21 +11621,18 @@
+@@ -10489,21 +11631,18 @@
  
              FOR_UNROLL (short i = 0; i < 16; i++) {
                  const short sx = 2*il0 + i/8;
@@ -5554,7 +5629,7 @@ index 969fddfa5..680d6da84 100644
  
          if (FC_mul_mm_bc_inp) {
              for (short i = 0; i < 8; ++i) {
-@@ -10600,34 +11729,70 @@
+@@ -10600,34 +11739,70 @@
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
  
@@ -5641,7 +5716,7 @@ index 969fddfa5..680d6da84 100644
          auto sA = tA.slice(0, 0);
          auto sB = tB.slice(0, 0);
  
-@@ -10640,37 +11805,48 @@
+@@ -10640,37 +11815,48 @@
  
  #ifdef GGML_METAL_HAS_TENSOR
      auto tC = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(sc, dextents<int32_t, 2>(NR0, NR1));
@@ -5698,7 +5773,7 @@ index 969fddfa5..680d6da84 100644
          }
      }
  }
-@@ -10679,10 +11855,19 @@
+@@ -10679,10 +11865,19 @@
  // matrix-matrix multiplication
  //
  
