@@ -561,6 +561,13 @@ struct BenchmarksView: View {
                                 if let gpu = r.gpu {
                                     Text(gpu).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                                 }
+                                if let v = r.appVersion {
+                                    Text("v\(v)")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .help(loc.t("Versión de ToshLLM que hizo esta medición",
+                                                    "ToshLLM version that produced this run"))
+                                }
                                 Spacer(minLength: 0)
                             }
                             metricBar(loc.t("Gen", "Gen"), value: r.tg, max: maxTG, color: Color.appAccent)

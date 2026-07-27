@@ -749,6 +749,7 @@
   "Top P": "",
   "Top quality": "",
   "ToshLLM does not include chats, prompts, account names, or local paths. Model files are not uploaded either: only their name, size, and SHA-256 are included.": "",
+  "ToshLLM version that produced this run": "",
   "Transport": "",
   "Trending on Hugging Face": "",
   "Turn vision on or off for this model": "",

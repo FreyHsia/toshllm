@@ -25,6 +25,9 @@ struct BenchResult: Codable, Identifiable {
     var kind: String?      // "real" = server generation; nil = raw llama-bench
     var accept: Double?    // MTP acceptance 0-1, real runs only
     var shared: Bool?      // published to the community from the share flow
+    /// App version that produced the run, so engine changes stay comparable.
+    /// Nil on results saved before this was recorded.
+    var appVersion: String? = AppInfo.version
 
     var shortModel: String { ModelName(model).title }
 
