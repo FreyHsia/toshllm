@@ -1,8 +1,8 @@
 diff --git a/common/common.cpp b/common/common.cpp
-index 8f13217ab..c433cd872 100644
+index 8f13217ab..6caf26239 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -392,18 +392,34 @@
+@@ -392,18 +392,38 @@
      common_log_set_timestamps(common_log_main(), true);
  
      llama_log_set(common_log_default_callback, NULL);
@@ -16,6 +16,10 @@ index 8f13217ab..c433cd872 100644
 +#define TOSH_STRINGIFY2(x) #x
 +#define TOSH_STRINGIFY(x) TOSH_STRINGIFY2(x)
 +
++const char * common_tosh_version(void) {
++    return TOSH_STRINGIFY(TOSH_VERSION);
++}
++
  void common_params_print_info(const common_params & params, bool print_devices) {
  #ifdef NDEBUG
      const char * build_type = "";
@@ -28,7 +32,7 @@ index 8f13217ab..c433cd872 100644
 +    // releases that only touch the patch. No env var means a direct CLI run.
 +    {
 +        const char * app_version = std::getenv("TOSH_APP_VERSION");
-+        COM_INF("%s: ToshLLM engine %s (app %s)\n", __func__, TOSH_STRINGIFY(TOSH_VERSION),
++        COM_INF("%s: ToshLLM engine %s (app %s)\n", __func__, common_tosh_version(),
 +                app_version ? app_version : "standalone");
 +    }
 +
@@ -37,6 +41,24 @@ index 8f13217ab..c433cd872 100644
      // device enumeration creates a primary context on CUDA backends, skip it when the caller does not own any device
      if (print_devices) {
          COM_TRC("%s", "device_info:\n");
+diff --git a/common/common.h b/common/common.h
+index bffc1767a..d11a4de03 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -746,10 +746,13 @@
+ void common_init();
+ 
+ void common_params_print_info(const common_params & params, bool print_devices = true);
+ std::string common_params_get_system_info(const common_params & params);
+ 
++// engine version stamped from VERSION, unlike the upstream build number
++const char * common_tosh_version(void);
++
+ bool parse_cpu_range(const std::string & range, bool(&boolmask)[GGML_MAX_N_THREADS]);
+ bool parse_cpu_mask(const std::string & mask, bool(&boolmask)[GGML_MAX_N_THREADS]);
+ void postprocess_cpu_params(common_cpu_params & cpuparams, const common_cpu_params * role_model = nullptr);
+ bool set_process_priority(enum ggml_sched_priority prio);
+ 
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
 index 9c56ec30c..f889412d3 100644
 --- a/ggml/src/ggml-backend-impl.h
@@ -431,7 +453,7 @@ index abf4b06ed..d063f95e4 100644
  void             ggml_metal_graph_optimize(ggml_metal_t ctx, struct ggml_cgraph * gf);
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 32d97cd5d..7a3e4acad 100644
+index 32d97cd5d..7e384ed8e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -16,10 +16,11 @@
@@ -732,7 +754,7 @@ index 32d97cd5d..7a3e4acad 100644
  
          [encoder copyFromBuffer:buf_src
                     sourceOffset:0
-@@ -347,65 +493,375 @@
+@@ -347,65 +493,390 @@
          [cmd_buf retain];
      }
  }
@@ -862,9 +884,9 @@ index 32d97cd5d..7a3e4acad 100644
 +
 +            done += n;
 +        }
-+    }
-+}
-+
+     }
+ }
+ 
 +static struct ggml_metal_xdev_link * ggml_metal_xdev_link_get(
 +        ggml_metal_t ctx_src, ggml_metal_t ctx_dst) {
 +    struct ggml_metal_xdev_link * link = NULL;
@@ -967,14 +989,29 @@ index 32d97cd5d..7a3e4acad 100644
 +
 +        if (!link->peer_logged) {
 +            // fprintf, not GGML_LOG_INFO, so the confirmation shows at the default
-+            // log level like the SIMD-width line; still once per link, no per-copy cost.
-+            fprintf(stderr, "ggml_metal: Infinity Fabric peer transfer enabled: %s -> %s (peer group %llu)\n",
-+                    dev_src.name.UTF8String, dev_dst.name.UTF8String,
-+                    (unsigned long long) peer_group);
++            // log level like the SIMD-width line. Deduped by peer group across contexts:
++            // a tool that reloads the model per run rebuilds the link every time.
++            static uint64_t logged[8];
++            static int      n_logged = 0;
++
++            bool seen = false;
++            for (int i = 0; i < n_logged; ++i) {
++                seen = seen || logged[i] == peer_group;
++            }
++
++            if (!seen) {
++                fprintf(stderr, "ggml_metal: Infinity Fabric peer transfer enabled: %s -> %s (peer group %llu)\n",
++                        dev_src.name.UTF8String, dev_dst.name.UTF8String,
++                        (unsigned long long) peer_group);
++                if (n_logged < (int) (sizeof(logged)/sizeof(logged[0]))) {
++                    logged[n_logged++] = peer_group;
++                }
++            }
++
 +            link->peer_logged = true;
 +        }
 +        return true;
-     }
++    }
 +#else
 +    GGML_UNUSED(ctx_src);
 +    GGML_UNUSED(ctx_dst);
@@ -1061,8 +1098,8 @@ index 32d97cd5d..7a3e4acad 100644
 +    }
 +
 +    return true;
- }
- 
++}
++
  bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
 +    // A Metal blit can't reach a buffer owned by another device, so a multi-GPU layer
 +    // hand-off goes through host memory (GGML_METAL_CROSS_STAGING_DISABLE uses the generic copy).
@@ -1133,7 +1170,7 @@ index 32d97cd5d..7a3e4acad 100644
  
          [encoder copyFromBuffer:bid_src.metal
                     sourceOffset:bid_src.offs
-@@ -502,11 +958,11 @@
+@@ -502,11 +973,11 @@
                  }
              }
          }
@@ -1146,7 +1183,7 @@ index 32d97cd5d..7a3e4acad 100644
          // cmd_buf[n_cb]
          {
              id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
-@@ -624,11 +1080,11 @@
+@@ -624,11 +1095,11 @@
      //printf("%s: graph optimize took %.3f ms\n", __func__, (ggml_time_us() - t_start) / 1000.0);
  }
  
@@ -1159,7 +1196,7 @@ index 32d97cd5d..7a3e4acad 100644
          ggml_metal_event_encode_signal(ev, cmd_buf);
  
          [cmd_buf commit];
-@@ -640,11 +1096,11 @@
+@@ -640,11 +1111,11 @@
      }
  }
  
@@ -6130,3 +6167,22 @@ index 28f8bb793..cf6683d5a 100644
          if (progress_callback) {
              // Even though the model is done loading, we still honor
              // cancellation since we need to free allocations.
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index 075689388..75ba8a514 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -2039,11 +2039,13 @@
+         }
+         fprintf(fout, "\n");
+     }
+ 
+     void print_footer() override {
+-        fprintf(fout, "\nbuild: %s (%d)\n", test::build_commit.c_str(), test::build_number);
++        // the build number only tracks upstream, so name the engine version too
++        fprintf(fout, "\nbuild: %s (%d), ToshLLM engine %s\n", test::build_commit.c_str(), test::build_number,
++                common_tosh_version());
+     }
+ };
+ 
+ struct sql_printer : public printer {
+     static std::string get_sql_field_type(const std::string & field) {

@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Benchmark output now names the ToshLLM version that produced it**... the footer only carried the upstream build id, which stays the same across releases that change our engine, so a pasted result could not be attributed to a version.
+- **The Infinity Fabric confirmation line no longer repeats**... it printed once per model load, filling a benchmark log with one copy per row.
+
 ## [0.83.5] - 2026-07-27
 
 ### Changed
