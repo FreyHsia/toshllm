@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Improved
 - **Faster batched generation on Q4_K models**... the kernel keeps the quants raw and applies the scale once per chunk instead of expanding every value to a float first, measured 18% faster with four concurrent requests.
 - **The same kernel reads each block's scales once instead of twice**... they were fetched again for every chunk of the block, measured a further 10% with four concurrent requests and 12% with eight.
+- **And it unpacks each weight once instead of once per column**... the quant was masked and converted for every column that reuses it, measured a further 3%.
 
 ## [0.83.6] - 2026-07-28
 

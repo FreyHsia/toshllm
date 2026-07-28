@@ -3548,7 +3548,7 @@ index a1003b3ac..cc736d24d 100644
                  reg_ctx->devices.push_back(dev);
              }
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 969fddfa5..32df97676 100644
+index 969fddfa5..83224fff6 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -203,22 +203,27 @@
@@ -6187,12 +6187,12 @@ index 969fddfa5..32df97676 100644
 -              //const short ly = (tiitg/NL0)%8;
 -                const short lx = (tiitg/NL0)%8;
 -                const short ly = i%8;
+-
+-                const short ib = 8*sx + sy;
 +            if (FC_mul_mm_manual) {
 +                const short ib0 = 8*(2*il0    ) + sy;
 +                const short ib1 = 8*(2*il0 + 1) + sy;
  
--                const short ib = 8*sx + sy;
--
 -                // NOTE: this is massively slower.. WTF?
 -                //sa[64*ib + 8*ly + lx] = temp_a[i/4][i%4];
 +                *(threadgroup vec<S0, 4> *)(sa + 64*ib0 + 8*lx + 0) = temp_a[0];
@@ -6377,7 +6377,7 @@ index 969fddfa5..32df97676 100644
  #if defined(GGML_METAL_HAS_BF16)
  template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
  #endif
-@@ -11214,5 +12485,220 @@
+@@ -11214,5 +12485,232 @@
  }
  
  typedef decltype(kernel_count_equal<int32_t>) kernel_count_equal_t;
@@ -6476,7 +6476,7 @@ index 969fddfa5..32df97676 100644
 +        const ushort mask1 = mask0 << 8;
 +
 +        uint4 qsv[nr0];
-+        float dl[nr0], dl2[nr0], ml[nr0];
++        float dl[nr0], ml[nr0];
 +
 +#pragma unroll(nr0)
 +        for (short ir0 = 0; ir0 < nr0; ++ir0) {
@@ -6489,8 +6489,22 @@ index 969fddfa5..32df97676 100644
 +            const float  d  = ilm < 2 ? (float) dm[0] : (float) (dm[0] / 16.h);
 +
 +            dl [ir0] = d * sc[0];
-+            dl2[ir0] = dl[ir0] / 256.f;
 +            ml [ir0] = (float) dm[1] * sc[1];
++        }
++
++        // unpack every weight of the chunk once, reused across the r1ptg columns instead
++        // of re-doing the mask and int-to-float per column
++        half w0[nr0][8];
++        half w1[nr0][8];
++
++#pragma unroll(nr0)
++        for (short ir0 = 0; ir0 < nr0; ++ir0) {
++#pragma unroll(8)
++            for (short i = 0; i < 8; ++i) {
++                const ushort qsi = (i & 1) ? (ushort)(qsv[ir0][i/2] >> 16) : (ushort)(qsv[ir0][i/2] & 0xFFFF);
++                w0[ir0][i] = (half)(qsi & mask0);
++                w1[ir0][i] = (half)((qsi & mask1) >> 8);
++            }
 +        }
 +
 +#pragma unroll(r1ptg)
@@ -6516,16 +6530,14 @@ index 969fddfa5..32df97676 100644
 +
 +#pragma unroll(nr0)
 +                for (short ir0 = 0; ir0 < nr0; ++ir0) {
-+                    const ushort qsi = (i & 1) ? (ushort)(qsv[ir0][i/2] >> 16) : (ushort)(qsv[ir0][i/2] & 0xFFFF);
-+
-+                    s0[ir0] += y0 * (float)(qsi & mask0);
-+                    s1[ir0] += y1 * (float)(qsi & mask1);
++                    s0[ir0] += y0 * (float) w0[ir0][i];
++                    s1[ir0] += y1 * (float) w1[ir0][i];
 +                }
 +            }
 +
 +#pragma unroll(nr0)
 +            for (short ir0 = 0; ir0 < nr0; ++ir0) {
-+                sumf[ir0][ir1] += dl[ir0]*s0[ir0] + dl2[ir0]*s1[ir0] - ml[ir0]*sy;
++                sumf[ir0][ir1] += dl[ir0]*s0[ir0] + dl[ir0]*s1[ir0] - ml[ir0]*sy;
 +            }
 +        }
 +
