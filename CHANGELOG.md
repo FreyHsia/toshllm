@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Faster batched generation on Q4_K models**... the kernel keeps the quants raw and applies the scale once per chunk instead of expanding every value to a float first, measured 18% faster with four concurrent requests.
+
 ## [0.83.6] - 2026-07-28
 
 ### Improved
