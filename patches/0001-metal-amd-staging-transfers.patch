@@ -1210,7 +1210,7 @@ index 32d97cd5d..7e384ed8e 100644
  
          [cmd_buf commit];
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 270c1411a..c4dbed3ce 100644
+index 270c1411a..ffe8a1964 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
 @@ -381,11 +381,12 @@
@@ -1279,7 +1279,7 @@ index 270c1411a..c4dbed3ce 100644
      GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
  
      GGML_ASSERT(ggml_is_contiguous(op->src[0]));
-@@ -640,32 +669,35 @@
+@@ -640,37 +669,40 @@
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri(ggml_metal_library_t lib, const ggml_tensor * op) {
      char base[256];
@@ -1317,8 +1317,31 @@ index 270c1411a..c4dbed3ce 100644
      return res;
  }
  
- ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_metal_library_t lib, const ggml_tensor * op, int nsg, int nxpsg, int r1ptg) {
-@@ -711,11 +743,12 @@
+-ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_metal_library_t lib, const ggml_tensor * op, int nsg, int nxpsg, int r1ptg) {
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_metal_library_t lib, const ggml_tensor * op, int nsg, int nxpsg, int r1ptg, int nr0) {
+     char base[256];
+     char name[256];
+ 
+     const ggml_type tsrc0 = op->src[0]->type;
+     const ggml_type tsrc1 = op->src[1]->type;
+@@ -678,11 +710,15 @@
+     const int       r2    = ne12 / op->src[0]->ne[2];
+     const int       r3    = op->src[1]->ne[3] / op->src[0]->ne[3];
+ 
+     GGML_ASSERT(ne12 <= INT16_MAX && r2 <= INT16_MAX && r3 <= INT16_MAX);
+ 
+-    snprintf(base, 256, "kernel_mul_mv_ext_%s_%s_r1_%d", ggml_type_name(tsrc0), ggml_type_name(tsrc1), r1ptg);
++    if (nr0 > 1) {
++        snprintf(base, 256, "kernel_mul_mv_ext_%s_%s_r1_%d_nr0_%d", ggml_type_name(tsrc0), ggml_type_name(tsrc1), r1ptg, nr0);
++    } else {
++        snprintf(base, 256, "kernel_mul_mv_ext_%s_%s_r1_%d", ggml_type_name(tsrc0), ggml_type_name(tsrc1), r1ptg);
++    }
+     snprintf(name, 256, "%s_nsg=%d_nxpsg=%d_ne12=%d_r2=%d_r3=%d", base, nsg, nxpsg, ne12, r2, r3);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         ggml_metal_cv_t cv = ggml_metal_cv_init();
+@@ -711,11 +747,12 @@
      const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
  
      constexpr int NRA = SZ_SIMDGROUP * N_MM_BLOCK_Y * N_MM_SIMD_GROUP_Y;
@@ -1332,7 +1355,7 @@ index 270c1411a..c4dbed3ce 100644
          ? (op->ne[0] % NRA != 0 || op->ne[1] % NRB != 0)
          : (op->ne[0] % 64  != 0 || op->ne[1] % 32  != 0);
  
-@@ -723,24 +756,45 @@
+@@ -723,24 +760,45 @@
      const int16_t ne12 = (int16_t) op->src[1]->ne[2];
      const int16_t ne13 = (int16_t) op->src[1]->ne[3];
      const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
@@ -1381,7 +1404,7 @@ index 270c1411a..c4dbed3ce 100644
  
          ggml_metal_cv_free(cv);
      }
-@@ -751,16 +805,16 @@
+@@ -751,16 +809,16 @@
  
          const size_t smem_a = NRA * N_MM_NK_TOTAL * sizeof(ggml_fp16_t);
          res.smem = smem_a;
@@ -1401,7 +1424,7 @@ index 270c1411a..c4dbed3ce 100644
  }
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_metal_library_t lib, const ggml_tensor * op) {
-@@ -852,12 +906,20 @@
+@@ -852,12 +910,20 @@
                  nsg = N_SG_Q3_K;
                  nr0 = N_R0_Q3_K;
              } break;
@@ -1424,7 +1447,7 @@ index 270c1411a..c4dbed3ce 100644
              {
                  nsg = N_SG_Q5_K;
                  nr0 = N_R0_Q5_K;
-@@ -927,21 +989,41 @@
+@@ -927,21 +993,41 @@
  
      GGML_ASSERT(ne12 <= INT16_MAX && ne13 <= INT16_MAX);
      const int16_t r2 = (int16_t) (ne12 / ne02);
@@ -1467,7 +1490,7 @@ index 270c1411a..c4dbed3ce 100644
  
          ggml_metal_cv_free(cv);
      }
-@@ -978,18 +1060,21 @@
+@@ -978,18 +1064,21 @@
      const ggml_type tsrc0 = op->src[0]->type;
      const ggml_type tsrc1 = op->src[1]->type;
  
@@ -1491,7 +1514,7 @@ index 270c1411a..c4dbed3ce 100644
  
          ggml_metal_cv_free(cv);
      }
-@@ -1152,21 +1237,36 @@
+@@ -1152,21 +1241,36 @@
                  GGML_LOG_ERROR("Asserting on type %d\n", (int)op->src[2]->type);
                  GGML_ABORT("not implemented");
              }
@@ -1529,7 +1552,7 @@ index 270c1411a..c4dbed3ce 100644
  
          ggml_metal_cv_free(cv);
      }
-@@ -1645,11 +1745,12 @@
+@@ -1645,11 +1749,12 @@
      if (!res.pipeline) {
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
      }
@@ -1543,7 +1566,7 @@ index 270c1411a..c4dbed3ce 100644
  }
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_group_norm(ggml_metal_library_t lib, const ggml_tensor * op) {
-@@ -1666,11 +1767,11 @@
+@@ -1666,11 +1771,11 @@
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
      if (!res.pipeline) {
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
@@ -1556,7 +1579,7 @@ index 270c1411a..c4dbed3ce 100644
  }
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm(ggml_metal_library_t lib, const ggml_tensor * op, int n_fuse) {
-@@ -1709,11 +1810,13 @@
+@@ -1709,11 +1814,13 @@
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
      if (!res.pipeline) {
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
@@ -1572,10 +1595,10 @@ index 270c1411a..c4dbed3ce 100644
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope(ggml_metal_library_t lib, const ggml_tensor * op) {
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index b36fa8110..5409f4a31 100644
+index b36fa8110..d65b05da1 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -123,10 +123,11 @@
+@@ -123,16 +123,17 @@
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cumsum_blk        (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cumsum_add        (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tri               (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -1587,6 +1610,13 @@ index b36fa8110..5409f4a31 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rwkv              (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_gated_delta_net   (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+-struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext        (ggml_metal_library_t lib, const struct ggml_tensor * op, int nsg, int nxpsg, int r1ptg);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext        (ggml_metal_library_t lib, const struct ggml_tensor * op, int nsg, int nxpsg, int r1ptg, int nr0);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
 @@ -252,11 +253,21 @@
      size_t max_working_set_size;
      size_t max_theadgroup_memory_size;
@@ -2890,7 +2920,7 @@ index 330278d00..9766f78b4 100644
      int32_t  nrows;
  } ggml_metal_kargs_flash_attn_ext_vec_reduce;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index c716f118f..5f242394d 100644
+index c716f118f..69c60152d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -1035,11 +1035,12 @@
@@ -2997,7 +3027,47 @@ index c716f118f..5f242394d 100644
          int16_t nxpsg = 0;
          if (ne00 % 256 == 0 && ne11 < 3) {
              nxpsg = 16;
-@@ -2172,11 +2198,11 @@
+@@ -2117,11 +2143,10 @@
+         } else {
+             nxpsg = 4;
+         }
+ 
+         const int16_t nypsg  = 32/nxpsg;          // num threads along col per simdgroup (i.e. a simdgroup processes that many src0 rows at a time)
+-        const int16_t r0ptg  = nypsg*nsg;         // num src0 rows per threadgroup
+               int16_t r1ptg  = 4;                 // num src1 rows per threadgroup
+ 
+         // note: not sure how optimal are those across all different hardware. there might be something cleverer
+         switch (ne11) {
+             case 2:
+@@ -2137,11 +2162,26 @@
+                 r1ptg = 5; break;
+             default:
+                 GGML_ABORT("unsupported ne11");
+         };
+ 
+-        auto pipeline = ggml_metal_library_get_pipeline_mul_mv_ext(lib, op, nsg, nxpsg, r1ptg);
++        // 2 rows per thread: the activation chunk is loaded once and reused across them
++        const bool nr0_2 = op->src[0]->type == GGML_TYPE_Q4_K ||
++                           op->src[0]->type == GGML_TYPE_Q5_K ||
++                           op->src[0]->type == GGML_TYPE_Q6_K ||
++                           op->src[0]->type == GGML_TYPE_Q2_K ||
++                           op->src[0]->type == GGML_TYPE_Q3_K;
++
++        static const int nr0_env = []() {
++            const char * s = getenv("TOSH_EXT_NR0");
++            return s ? atoi(s) : 0;
++        }();
++
++        const int16_t nr0   = nr0_env ? nr0_env : (nr0_2 ? 2 : 1);
++        const int16_t r0ptg = nypsg*nsg*nr0;       // num src0 rows per threadgroup
++
++        auto pipeline = ggml_metal_library_get_pipeline_mul_mv_ext(lib, op, nsg, nxpsg, r1ptg, nr0);
+ 
+         ggml_metal_kargs_mul_mv_ext args = {
+             /*.ne00  =*/ ne00,
+             /*.ne01  =*/ ne01,
+             /*.ne02  =*/ ne02,
+@@ -2172,11 +2212,11 @@
      } else if (
          !ggml_is_transposed(op->src[0]) &&
          !ggml_is_transposed(op->src[1]) &&
@@ -3010,7 +3080,7 @@ index c716f118f..5f242394d 100644
          // some Metal matrix data types require aligned pointers
          // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
          //switch (op->src[0]->type) {
-@@ -2257,17 +2283,35 @@
+@@ -2257,17 +2297,35 @@
          ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
          ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
  
@@ -3048,7 +3118,7 @@ index c716f118f..5f242394d 100644
  
      return 1;
  }
-@@ -2327,11 +2371,15 @@
+@@ -2327,11 +2385,15 @@
      // to the matrix-vector kernel
      // ne20 = n_used_experts
      // ne21 = n_rows (batch size)
@@ -3065,7 +3135,7 @@ index c716f118f..5f242394d 100644
          //switch (op->src[0]->type) {
          //    case GGML_TYPE_F32:  GGML_ASSERT(nb01 % 16 == 0); break;
          //    case GGML_TYPE_F16:  GGML_ASSERT(nb01 % 8  == 0); break;
-@@ -2462,17 +2510,35 @@
+@@ -2462,17 +2524,35 @@
          const int64_t _ne1 = 1;
          const int64_t ne123 = ne20*ne21;
  
@@ -3103,7 +3173,7 @@ index c716f118f..5f242394d 100644
  
      return 1;
  }
-@@ -2521,10 +2587,25 @@
+@@ -2521,10 +2601,25 @@
      ggml_metal_encoder_dispatch_threadgroups(enc, ne01, ne02, 1, nth, 1, 1);
  
      return 1;
@@ -3129,7 +3199,7 @@ index c716f118f..5f242394d 100644
  
      const int64_t ne00 = op->src[0]->ne[0]; // head size
      const int64_t ne01 = op->src[0]->ne[1]; // batch size
-@@ -2667,11 +2748,10 @@
+@@ -2667,11 +2762,10 @@
      GGML_TENSOR_LOCALS( int32_t, nb,  op,         nb);
  
      GGML_ASSERT(ne00 % 4 == 0);
@@ -3141,7 +3211,7 @@ index c716f118f..5f242394d 100644
      GGML_ASSERT(ne11 == ne21);
      GGML_ASSERT(ne12 == ne22);
  
-@@ -2719,10 +2799,209 @@
+@@ -2719,10 +2813,209 @@
      bid_blk.offs += ggml_metal_op_flash_attn_ext_extra_pad(op);
  
      ggml_metal_buffer_id bid_tmp = bid_blk;
@@ -3351,7 +3421,7 @@ index c716f118f..5f242394d 100644
          const int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
          const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
  
-@@ -3005,10 +3284,12 @@
+@@ -3005,10 +3298,12 @@
              /*.max_bias      =*/ max_bias,
              /*.m0            =*/ m0,
              /*.m1            =*/ m1,
@@ -3467,7 +3537,7 @@ index a1003b3ac..cc736d24d 100644
                  reg_ctx->devices.push_back(dev);
              }
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 969fddfa5..f5e15c2bd 100644
+index 969fddfa5..45e362765 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -203,22 +203,27 @@
@@ -4159,7 +4229,276 @@ index 969fddfa5..f5e15c2bd 100644
      device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
  
      helper_mv_reduce_and_write<NR0>(dst_f32, sumf, r0, args.ne01, tiisg, sgitg, shmem);
-@@ -4247,13 +4467,16 @@
+@@ -4013,11 +4233,12 @@
+         }
+     }
+ }
+ 
+ // mat-vec kernel processing in chunks of float4x4
+-template<short r1ptg, typename q_t, short chpb, void (*deq_t4x4)(device const q_t *, short, thread float4x4 &) >
++// nr0 rows per thread so the activation chunk is loaded once and reused across them
++template<short r1ptg, short nr0, typename q_t, short chpb, void (*deq_t4x4)(device const q_t *, short, thread float4x4 &) >
+ void kernel_mul_mv_ext_q4x4_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+@@ -4033,91 +4254,115 @@
+     const short nypsg = (32/nxpsg);
+ 
+     const short tx = tiisg%nxpsg;
+     const short ty = tiisg/nxpsg;
+ 
+-    const int i01 = tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty;
++    const int i01 = (tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty)*nr0;
+     const int i11 = tgpig.y*r1ptg;
+     const int i1m = tgpig.z;
+ 
+     const int i12 = i1m%FC_mul_mv_ne12;
+     const int i13 = i1m/FC_mul_mv_ne12;
+ 
+     const uint64_t offset0 = i01*args.nb01 + (i12/FC_mul_mv_r2)*args.nb02 + (i13/FC_mul_mv_r3)*args.nb03;
+     const uint64_t offset1 = i11*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
+ 
+-    device const q_t * xq = (i01 < args.ne01) ? (device const q_t *) (src0 + offset0) + tx/chpb : (device const q_t *) src0;
++    device const q_t * xq[nr0];
++
++    for (short ir0 = 0; ir0 < nr0; ++ir0) {
++        xq[ir0] = (i01 + ir0 < args.ne01) ? (device const q_t *) (src0 + offset0 + ir0*args.nb01) + tx/chpb : (device const q_t *) src0;
++    }
+ 
+     device const float4x4 * y4x4[r1ptg];
+ 
+     for (int ir1 = 0; ir1 < r1ptg; ++ir1) {
+         y4x4[ir1] = (i11 + ir1 < args.ne11) ? (device const float4x4 *) (src1 + offset1 + ir1*args.nb11) + tx : (device const float4x4 *) src1;
+     }
+ 
+-    float sumf[r1ptg] = { [ 0 ... r1ptg - 1 ] = 0.0f };
++    float sumf[nr0][r1ptg];
++
++#pragma unroll(nr0)
++    for (short ir0 = 0; ir0 < nr0; ++ir0) {
++#pragma unroll(r1ptg)
++        for (short ir1 = 0; ir1 < r1ptg; ++ir1) {
++            sumf[ir0][ir1] = 0.0f;
++        }
++    }
+ 
+     short cch = tx%chpb;
+ 
+     for (int ich = tx; 16*ich < args.ne00; ich += chpt*nxpsg) {
+-        float4x4 lx[chpt];
++        float4x4 lx[chpt][nr0];
+ 
+ #pragma unroll(chpt)
+         for (short ch = 0; ch < chpt; ++ch) {
+-            deq_t4x4(xq, cch, lx[ch]);
++#pragma unroll(nr0)
++            for (short ir0 = 0; ir0 < nr0; ++ir0) {
++                deq_t4x4(xq[ir0], cch, lx[ch][ir0]);
++            }
+ 
+             cch += nxpsg;
+             if (cch >= chpb) {
+-                xq  += cch/chpb;
++#pragma unroll(nr0)
++                for (short ir0 = 0; ir0 < nr0; ++ir0) {
++                    xq[ir0] += cch/chpb;
++                }
+                 cch %= chpb;
+             }
+         }
+ 
+ #pragma unroll(chpt)
+         for (short ch = 0; ch < chpt; ++ch) {
+ #pragma unroll(r1ptg)
+             for (short ir1 = 0; ir1 < r1ptg; ++ir1) {
+-                sumf[ir1] +=
+-                    dot(lx[ch][0], y4x4[ir1][ch*nxpsg][0]) +
+-                    dot(lx[ch][1], y4x4[ir1][ch*nxpsg][1]) +
+-                    dot(lx[ch][2], y4x4[ir1][ch*nxpsg][2]) +
+-                    dot(lx[ch][3], y4x4[ir1][ch*nxpsg][3]);
+-
++                const float4x4 ly = y4x4[ir1][ch*nxpsg];
++
++#pragma unroll(nr0)
++                for (short ir0 = 0; ir0 < nr0; ++ir0) {
++                    sumf[ir0][ir1] +=
++                        dot(lx[ch][ir0][0], ly[0]) +
++                        dot(lx[ch][ir0][1], ly[1]) +
++                        dot(lx[ch][ir0][2], ly[2]) +
++                        dot(lx[ch][ir0][3], ly[3]);
++                }
+             }
+         }
+ 
+ #pragma unroll(r1ptg)
+         for (short ir1 = 0; ir1 < r1ptg; ++ir1) {
+             y4x4[ir1] += chpt*nxpsg;
+         }
+     }
+ 
+-    for (short ir1 = 0; ir1 < r1ptg; ++ir1) {
+-        if (nxpsg >= 32) {
+-            sumf[ir1] += simd_shuffle_down(sumf[ir1], 16);
+-        }
+-        if (nxpsg >= 16) {
+-            sumf[ir1] += simd_shuffle_down(sumf[ir1],  8);
+-        }
+-        if (nxpsg >= 8) {
+-            sumf[ir1] += simd_shuffle_down(sumf[ir1],  4);
+-        }
+-        if (nxpsg >= 4) {
+-            sumf[ir1] += simd_shuffle_down(sumf[ir1],  2);
+-        }
+-        if (nxpsg >= 2) {
+-            sumf[ir1] += simd_shuffle_down(sumf[ir1],  1);
++    for (short ir0 = 0; ir0 < nr0; ++ir0) {
++        for (short ir1 = 0; ir1 < r1ptg; ++ir1) {
++            if (nxpsg >= 32) {
++                sumf[ir0][ir1] += simd_shuffle_down(sumf[ir0][ir1], 16);
++            }
++            if (nxpsg >= 16) {
++                sumf[ir0][ir1] += simd_shuffle_down(sumf[ir0][ir1],  8);
++            }
++            if (nxpsg >= 8) {
++                sumf[ir0][ir1] += simd_shuffle_down(sumf[ir0][ir1],  4);
++            }
++            if (nxpsg >= 4) {
++                sumf[ir0][ir1] += simd_shuffle_down(sumf[ir0][ir1],  2);
++            }
++            if (nxpsg >= 2) {
++                sumf[ir0][ir1] += simd_shuffle_down(sumf[ir0][ir1],  1);
++            }
+         }
+-
+-        //sumf[ir1] = simd_sum(sumf[ir1]);
+     }
+ 
+     if (tx == 0) {
+         for (short ir1 = 0; ir1 < r1ptg && i11 + ir1 < args.ne11; ++ir1) {
+             device float * dst_f32 = (device float *) dst + (uint64_t)i1m*args.ne0*args.ne1 + (uint64_t)(i11 + ir1)*args.ne0;
+ 
+-            if (i01 < args.ne01) {
+-                dst_f32[i01] = sumf[ir1];
++            for (short ir0 = 0; ir0 < nr0; ++ir0) {
++                if (i01 + ir0 < args.ne01) {
++                    dst_f32[i01 + ir0] = sumf[ir0][ir1];
++                }
+             }
+         }
+     }
+ }
+ 
+@@ -4133,24 +4378,24 @@
+         ushort  tiisg[[thread_index_in_simdgroup]],
+         ushort  sgitg[[simdgroup_index_in_threadgroup]]) {
+     kernel_mul_mv_ext_q4_f32_impl<r1ptg, q_t, epb/4, deq_t4>(args, src0, src1, dst, tgpig, tiisg, sgitg);
+ }
+ 
+-template<short r1ptg, typename q_t, short epb, void (*deq_t4x4)(device const q_t *, short, thread float4x4 &)>
++template<short r1ptg, short nr0, typename q_t, short epb, void (*deq_t4x4)(device const q_t *, short, thread float4x4 &)>
+ kernel void kernel_mul_mv_ext_q4x4_f32_disp(
+         constant ggml_metal_kargs_mul_mv_ext & args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+         uint3   tgpig[[threadgroup_position_in_grid]],
+         ushort  tiisg[[thread_index_in_simdgroup]],
+         ushort  sgitg[[simdgroup_index_in_threadgroup]]) {
+-    kernel_mul_mv_ext_q4x4_f32_impl<r1ptg, q_t, epb/16, deq_t4x4>(args, src0, src1, dst, tgpig, tiisg, sgitg);
++    kernel_mul_mv_ext_q4x4_f32_impl<r1ptg, nr0, q_t, epb/16, deq_t4x4>(args, src0, src1, dst, tgpig, tiisg, sgitg);
+ }
+ 
+ typedef decltype(kernel_mul_mv_ext_q4_f32_disp  <2, block_q8_0, 32,  dequantize_q8_0_t4>) mul_mv_ext_q4_f32_t;
+-typedef decltype(kernel_mul_mv_ext_q4x4_f32_disp<2, block_q4_K, 256, dequantize_q4_K>)    mul_mv_ext_q4x4_f32_t;
++typedef decltype(kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q4_K, 256, dequantize_q4_K>) mul_mv_ext_q4x4_f32_t;
+ 
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_2")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, float4,       4,  dequantize_f32_t4>;
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_3")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, float4,       4,  dequantize_f32_t4>;
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_4")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, float4,       4,  dequantize_f32_t4>;
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_5")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, float4,       4,  dequantize_f32_t4>;
+@@ -4210,34 +4455,55 @@
+ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_2")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
+ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_3")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
+ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_4")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
+ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_5")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
+ 
+-template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q4_K, 256, dequantize_q4_K>;
+-template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q4_K, 256, dequantize_q4_K>;
+-template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q4_K, 256, dequantize_q4_K>;
+-template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, block_q4_K, 256, dequantize_q4_K>;
+-
+-template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q5_K, 256, dequantize_q5_K>;
+-template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q5_K, 256, dequantize_q5_K>;
+-template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q5_K, 256, dequantize_q5_K>;
+-template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, block_q5_K, 256, dequantize_q5_K>;
+-
+-template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q6_K, 256, dequantize_q6_K>;
+-template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q6_K, 256, dequantize_q6_K>;
+-template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q6_K, 256, dequantize_q6_K>;
+-template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, block_q6_K, 256, dequantize_q6_K>;
+-
+-template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q2_K, 256, dequantize_q2_K>;
+-template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q2_K, 256, dequantize_q2_K>;
+-template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q2_K, 256, dequantize_q2_K>;
+-template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, block_q2_K, 256, dequantize_q2_K>;
+-
+-template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q3_K, 256, dequantize_q3_K>;
+-template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q3_K, 256, dequantize_q3_K>;
+-template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q3_K, 256, dequantize_q3_K>;
+-template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 2, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 1, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 2, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 1, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 2, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 1, block_q4_K, 256, dequantize_q4_K>;
++template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 2, block_q4_K, 256, dequantize_q4_K>;
++
++
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 2, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 1, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 2, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 1, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 2, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 1, block_q5_K, 256, dequantize_q5_K>;
++template [[host_name("kernel_mul_mv_ext_q5_K_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 2, block_q5_K, 256, dequantize_q5_K>;
++
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 2, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 1, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 2, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 1, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 2, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 1, block_q6_K, 256, dequantize_q6_K>;
++template [[host_name("kernel_mul_mv_ext_q6_K_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 2, block_q6_K, 256, dequantize_q6_K>;
++
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 2, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 1, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 2, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 1, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 2, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 1, block_q2_K, 256, dequantize_q2_K>;
++template [[host_name("kernel_mul_mv_ext_q2_K_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 2, block_q2_K, 256, dequantize_q2_K>;
++
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 2, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 1, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 2, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 1, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 2, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_5")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 1, block_q3_K, 256, dequantize_q3_K>;
++template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<5, 2, block_q3_K, 256, dequantize_q3_K>;
+ 
+ template<typename T0, typename T1, short NR0, typename args_t>
+ void kernel_mul_mv_t_t_impl(
+         args_t args,
+         device const char * src0,
+@@ -4247,13 +4513,16 @@
          uint3  tgpig,
          ushort tiisg,
          ushort sgitg) {
@@ -4177,7 +4516,7 @@ index 969fddfa5..f5e15c2bd 100644
  
      const int r0 = tgpig.x*NR0;
      const int r1 = tgpig.y;
-@@ -4276,20 +4499,20 @@
+@@ -4276,20 +4545,20 @@
          ax[row] = (device const T0 *) ((device char *) src0 + offset0);
      }
  
@@ -4202,7 +4541,7 @@ index 969fddfa5..f5e15c2bd 100644
          }
  
          for (short row = 0; row < NR0; row++) {
-@@ -4301,11 +4524,11 @@
+@@ -4301,11 +4570,11 @@
              }
  
              sumf[row] += sumq;
@@ -4215,7 +4554,7 @@ index 969fddfa5..f5e15c2bd 100644
      for (int i = nb*NB + sgitg*NW + tiisg; i < args.ne00; i += NW*NSG) {
          for (short row = 0; row < NR0; row++) {
              sumf[row] += ax[row][i] * y[i];
-@@ -4368,14 +4591,17 @@
+@@ -4368,14 +4637,17 @@
          uint3  tgpig,
          ushort tiisg,
          ushort sgitg) {
@@ -4234,7 +4573,7 @@ index 969fddfa5..f5e15c2bd 100644
  
      const int r0 = tgpig.x*NR0;
      const int r1 = tgpig.y;
-@@ -4400,20 +4626,20 @@
+@@ -4400,20 +4672,20 @@
          ax4[row] = (device const T04 *) ((device char *) src0 + offset0);
      }
  
@@ -4259,7 +4598,7 @@ index 969fddfa5..f5e15c2bd 100644
          }
  
          for (short row = 0; row < NR0; row++) {
-@@ -4425,11 +4651,11 @@
+@@ -4425,11 +4697,11 @@
              }
  
              sumf[row] += sumq;
@@ -4272,7 +4611,7 @@ index 969fddfa5..f5e15c2bd 100644
      for (int i = nb*NB + sgitg*NW + tiisg; i < args.ne00; i += NW*NSG) {
          for (short row = 0; row < NR0; row++) {
              sumf[row] += ax[row][i] * y[i];
-@@ -7645,10 +7871,803 @@
+@@ -7645,10 +7917,803 @@
  #undef NSG
  #undef NS10
  #undef NS20
@@ -5076,7 +5415,7 @@ index 969fddfa5..f5e15c2bd 100644
  //
  #define FA_TYPES \
             half4,  \
-@@ -8305,16 +9324,19 @@
+@@ -8305,16 +9370,19 @@
          threadgroup  char * shmem,
          uint3  tgpig,
          ushort tiisg,
@@ -5097,7 +5436,7 @@ index 969fddfa5..f5e15c2bd 100644
      const short ir = it%4;     // 0...3
  
      const int nb = args.ne00/QK_K;
-@@ -8342,44 +9364,46 @@
+@@ -8342,44 +9410,46 @@
      device const float * y4 = y + ix * QK_K + 64 * iq + 8 * ir;
  
      uint16_t sc16[4];
@@ -5155,7 +5494,7 @@ index 969fddfa5..f5e15c2bd 100644
              sumf[row] += dh[0] * ((acc1[0] + 1.f/256.f * acc1[1]) * sc8[0] +
                                    (acc1[2] + 1.f/256.f * acc1[3]) * sc8[1] * 1.f/16.f +
                                    (acc2[0] + 1.f/256.f * acc2[1]) * sc8[4] +
-@@ -8389,11 +9413,11 @@
+@@ -8389,11 +9459,11 @@
              q1 += args.nb01/2;
              sc += args.nb01/2;
              dh += args.nb01/2;
@@ -5168,7 +5507,7 @@ index 969fddfa5..f5e15c2bd 100644
      device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
  
      for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-@@ -8415,10 +9439,25 @@
+@@ -8415,10 +9485,25 @@
          ushort sgitg[[simdgroup_index_in_threadgroup]]) {
  
      kernel_mul_mv_q4_K_f32_impl<N_R0_Q4_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
@@ -5194,7 +5533,7 @@ index 969fddfa5..f5e15c2bd 100644
          args_t args,
          device const char * src0,
          device const char * src1,
-@@ -8452,12 +9491,15 @@
+@@ -8452,12 +9537,15 @@
  
      constexpr uint16_t kmask1 = 0x3f3f;
      constexpr uint16_t kmask2 = 0x0f0f;
@@ -5212,7 +5551,7 @@ index 969fddfa5..f5e15c2bd 100644
  
      const short l0 = 8*ir;
      const short q_offset = 32*iq + l0;
-@@ -8471,11 +9513,11 @@
+@@ -8471,11 +9559,11 @@
      uint16_t sc16[4];
      thread const uint8_t * sc8 = (thread const uint8_t *)sc16;
  
@@ -5225,7 +5564,7 @@ index 969fddfa5..f5e15c2bd 100644
          device const half * dh = &x[i].d;
          device const uint16_t * a = (device const uint16_t *)x[i].scales + iq;
  
-@@ -8496,16 +9538,24 @@
+@@ -8496,16 +9584,24 @@
              sc16[2] = ((a[4] >> 0) & kmask2) | ((a[0] & kmask3) >> 2);
              sc16[3] = ((a[4] >> 4) & kmask2) | ((a[2] & kmask3) >> 2);
  
@@ -5255,7 +5594,7 @@ index 969fddfa5..f5e15c2bd 100644
                  acc2[2] += h & hm3 ? yh[l+0] : 0.f;
                  acc2[3] += h & hm4 ? yh[l+8] : 0.f;
              }
-@@ -8520,11 +9570,11 @@
+@@ -8520,11 +9616,11 @@
              qh += args.nb01;
              dh += args.nb01/2;
              a  += args.nb01/2;
@@ -5268,7 +5607,7 @@ index 969fddfa5..f5e15c2bd 100644
      device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
  
      for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-@@ -8584,22 +9634,25 @@
+@@ -8584,22 +9680,25 @@
  
      float sumf[nr0] = { 0.f };
  
@@ -5297,7 +5636,7 @@ index 969fddfa5..f5e15c2bd 100644
          device const uint8_t * qh = x[i].qh + q_offset_h;
          device const int8_t  * sc = x[i].scales + is;
          device const half    * dh = &x[i].d;
-@@ -9957,18 +11010,20 @@
+@@ -9957,18 +11056,20 @@
  constant bool FC_mul_mm_bc_out [[function_constant(FC_MUL_MM + 1)]];
  constant short FC_mul_mm_ne12  [[function_constant(FC_MUL_MM + 2)]];
  constant short FC_mul_mm_ne13  [[function_constant(FC_MUL_MM + 3)]];
@@ -5319,7 +5658,7 @@ index 969fddfa5..f5e15c2bd 100644
          device const char * srcA,
          device const char * srcB,
          device       char * dst,
-@@ -10089,11 +11144,11 @@
+@@ -10089,11 +11190,11 @@
  
  template<
      typename S0, typename S0_4x4, typename S0_8x8,
@@ -5332,7 +5671,7 @@ index 969fddfa5..f5e15c2bd 100644
          device const char * src0,
          device const char * src1,
          device       char * dst,
-@@ -10104,11 +11159,13 @@
+@@ -10104,11 +11205,13 @@
  
      threadgroup S0 * sa = (threadgroup S0 *)(shmem);
      threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
@@ -5347,7 +5686,7 @@ index 969fddfa5..f5e15c2bd 100644
      constexpr int NL0 = NK/16;
      constexpr int NL1 = NK/8;
  
-@@ -10120,11 +11177,12 @@
+@@ -10120,11 +11223,12 @@
      const short nr0 = (args.ne0 - r0 < NR0) ? (args.ne0 - r0) : NR0;
      const short nr1 = (args.ne1 - r1 < NR1) ? (args.ne1 - r1) : NR1;
  
@@ -5361,7 +5700,7 @@ index 969fddfa5..f5e15c2bd 100644
  
      short il = il0;
  
-@@ -10142,136 +11200,217 @@
+@@ -10142,136 +11246,217 @@
          + args.nb13*i13
          + args.nb12*i12
          + args.nb11*(r1 + lr1)
@@ -5641,7 +5980,7 @@ index 969fddfa5..f5e15c2bd 100644
          threadgroup float * temp_str = ((threadgroup float *) shmem) + 32*(sgitg&1) + (16*(sgitg >> 1))*NR0;
  
          for (short i = 0; i < 8; i++) {
-@@ -10358,10 +11497,12 @@
+@@ -10358,10 +11543,12 @@
      tpe_u32[ide] = n_all;
  }
  
@@ -5654,7 +5993,7 @@ index 969fddfa5..f5e15c2bd 100644
  template [[host_name("kernel_mul_mm_id_map0_ne20_4" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<4>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_5" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<5>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_6" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<6>;
-@@ -10422,13 +11563,21 @@
+@@ -10422,13 +11609,21 @@
  
      short il = il0;
  
@@ -5679,7 +6018,7 @@ index 969fddfa5..f5e15c2bd 100644
      const short    offset1 = il0/nl;
  
      device const block_q * x = (device const block_q *)(src0 + args.nb01*(r0 + lr0) + offset0) + offset1;
-@@ -10440,17 +11589,28 @@
+@@ -10440,17 +11635,28 @@
          + args.nb12*i12
          + args.nb11*i11
          + args.nb10*iy);
@@ -5710,7 +6049,7 @@ index 969fddfa5..f5e15c2bd 100644
      auto tA = tensor<threadgroup S0, dextents<int32_t, 2>, tensor_inline>(sa, dextents<int32_t, 2>(NK,  NR0));
      auto tB = tensor<threadgroup S1, dextents<int32_t, 2>, tensor_inline>(sb, dextents<int32_t, 2>(NR1, NK ));
  
-@@ -10477,33 +11637,41 @@
+@@ -10477,33 +11683,41 @@
                  const short lx = (tiitg/NL0)%8;
                  const short ly = i%8;
  
@@ -5732,19 +6071,19 @@ index 969fddfa5..f5e15c2bd 100644
 -            FOR_UNROLL (short i = 0; i < 16; i++) {
 -                const short sx = 2*il0 + i/8;
 -                const short sy = (tiitg/NL0)/8;
--
++            const short sy = (tiitg/NL0)/8;
++            const short lx = (tiitg/NL0)%8;
+ 
 -              //const short lx = i%8;
 -              //const short ly = (tiitg/NL0)%8;
 -                const short lx = (tiitg/NL0)%8;
 -                const short ly = i%8;
-+            const short sy = (tiitg/NL0)/8;
-+            const short lx = (tiitg/NL0)%8;
- 
--                const short ib = 8*sx + sy;
 +            if (FC_mul_mm_manual) {
 +                const short ib0 = 8*(2*il0    ) + sy;
 +                const short ib1 = 8*(2*il0 + 1) + sy;
  
+-                const short ib = 8*sx + sy;
+-
 -                // NOTE: this is massively slower.. WTF?
 -                //sa[64*ib + 8*ly + lx] = temp_a[i/4][i%4];
 +                *(threadgroup vec<S0, 4> *)(sa + 64*ib0 + 8*lx + 0) = temp_a[0];
@@ -5765,7 +6104,7 @@ index 969fddfa5..f5e15c2bd 100644
  
          if (FC_mul_mm_bc_inp) {
              for (short i = 0; i < 8; ++i) {
-@@ -10600,34 +11768,70 @@
+@@ -10600,34 +11814,70 @@
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
  
@@ -5817,33 +6156,33 @@ index 969fddfa5..f5e15c2bd 100644
 +        } else {
 +            FOR_UNROLL (short ik = 0; ik < NK/8; ik++) {
 +                simdgroup_barrier(mem_flags::mem_none);
- 
--            simdgroup_barrier(mem_flags::mem_none);
++
 +                FOR_UNROLL (short i = 0; i < 4; i++) {
 +                    simdgroup_load(ma[i], lsma + 64*i, 8, 0, false);
 +                }
  
+-            simdgroup_barrier(mem_flags::mem_none);
++                simdgroup_barrier(mem_flags::mem_none);
+ 
 -            FOR_UNROLL (short i = 0; i < 2; i++) {
 -                simdgroup_load(mb[i], lsmb + 64*i, 8, 0, false);
 -            }
-+                simdgroup_barrier(mem_flags::mem_none);
- 
--            simdgroup_barrier(mem_flags::mem_none);
 +                FOR_UNROLL (short i = 0; i < 2; i++) {
 +                    simdgroup_load(mb[i], lsmb + 64*i, 8, 0, false);
 +                }
  
+-            simdgroup_barrier(mem_flags::mem_none);
++                simdgroup_barrier(mem_flags::mem_none);
+ 
 -            FOR_UNROLL (short i = 0; i < 8; i++){
 -                simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
 -            }
-+                simdgroup_barrier(mem_flags::mem_none);
- 
--            lsma += 8*64;
--            lsmb += 4*64;
 +                FOR_UNROLL (short i = 0; i < 8; i++){
 +                    simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
 +                }
-+
+ 
+-            lsma += 8*64;
+-            lsmb += 4*64;
 +                lsma += 8*64;
 +                lsmb += 4*64;
 +            }
@@ -5852,7 +6191,7 @@ index 969fddfa5..f5e15c2bd 100644
          auto sA = tA.slice(0, 0);
          auto sB = tB.slice(0, 0);
  
-@@ -10640,37 +11844,48 @@
+@@ -10640,37 +11890,48 @@
  
  #ifdef GGML_METAL_HAS_TENSOR
      auto tC = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(sc, dextents<int32_t, 2>(NR0, NR1));
@@ -5909,7 +6248,7 @@ index 969fddfa5..f5e15c2bd 100644
          }
      }
  }
-@@ -10679,10 +11894,19 @@
+@@ -10679,10 +11940,19 @@
  // matrix-matrix multiplication
  //
  

@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Improved
+- **Faster generation when the engine serves several requests at once**... the batched matrix-vector kernel loads each activation chunk once for two rows instead of once per row, measured 12% faster with four concurrent requests on a dense Q4_K model.
+
 ### Fixed
 - **Benchmark output now names the ToshLLM version that produced it**... the footer only carried the upstream build id, which stays the same across releases that change our engine, so a pasted result could not be attributed to a version.
 - **The Infinity Fabric confirmation line no longer repeats**... it printed once per model load, filling a benchmark log with one copy per row.
