@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.6] - 2026-07-28
 
 ### Improved
 - **Faster generation when the engine serves several requests at once**... the batched matrix-vector kernel loads each activation chunk once for two rows instead of once per row, measured 12% faster with four concurrent requests on a dense Q4_K model.
