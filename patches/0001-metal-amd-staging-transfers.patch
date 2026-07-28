@@ -3548,7 +3548,7 @@ index a1003b3ac..cc736d24d 100644
                  reg_ctx->devices.push_back(dev);
              }
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 969fddfa5..2c498a390 100644
+index 969fddfa5..32df97676 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -203,22 +203,27 @@
@@ -6045,13 +6045,13 @@ index 969fddfa5..2c498a390 100644
 -                simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
 -            }
 +                simdgroup_barrier(mem_flags::mem_none);
- 
--            lsma += 8*64;
--            lsmb += 4*64;
++
 +                FOR_UNROLL (short i = 0; i < 8; i++){
 +                    simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
 +                }
-+
+ 
+-            lsma += 8*64;
+-            lsmb += 4*64;
 +                lsma += 8*64;
 +                lsmb += 4*64;
 +            }
@@ -6180,19 +6180,19 @@ index 969fddfa5..2c498a390 100644
 -            FOR_UNROLL (short i = 0; i < 16; i++) {
 -                const short sx = 2*il0 + i/8;
 -                const short sy = (tiitg/NL0)/8;
--
++            const short sy = (tiitg/NL0)/8;
++            const short lx = (tiitg/NL0)%8;
+ 
 -              //const short lx = i%8;
 -              //const short ly = (tiitg/NL0)%8;
 -                const short lx = (tiitg/NL0)%8;
 -                const short ly = i%8;
-+            const short sy = (tiitg/NL0)/8;
-+            const short lx = (tiitg/NL0)%8;
- 
--                const short ib = 8*sx + sy;
 +            if (FC_mul_mm_manual) {
 +                const short ib0 = 8*(2*il0    ) + sy;
 +                const short ib1 = 8*(2*il0 + 1) + sy;
  
+-                const short ib = 8*sx + sy;
+-
 -                // NOTE: this is massively slower.. WTF?
 -                //sa[64*ib + 8*ly + lx] = temp_a[i/4][i%4];
 +                *(threadgroup vec<S0, 4> *)(sa + 64*ib0 + 8*lx + 0) = temp_a[0];
@@ -6377,16 +6377,32 @@ index 969fddfa5..2c498a390 100644
  #if defined(GGML_METAL_HAS_BF16)
  template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
  #endif
-@@ -11214,5 +12485,191 @@
+@@ -11214,5 +12485,220 @@
  }
  
  typedef decltype(kernel_count_equal<int32_t>) kernel_count_equal_t;
  
  template [[host_name("kernel_count_equal_i32")]] kernel kernel_count_equal_t kernel_count_equal<int32_t>;
 +
++// byte of the 12-byte scale array held in three registers, no dynamic indexing
++static inline uint sbyte(uint s0, uint s1, uint s2, short idx) {
++    const uint w = idx < 4 ? s0 : (idx < 8 ? s1 : s2);
++    return (w >> (8*(idx & 3))) & 0xFF;
++}
++
++static inline uchar2 scale_pair_shift(uint s0, uint s1, uint s2, short j, short k) {
++    if (j < 4) {
++        return uchar2{uchar(sbyte(s0,s1,s2, j+0+k) & 63), uchar(sbyte(s0,s1,s2, j+4+k) & 63)};
++    }
++    const uint a = sbyte(s0,s1,s2, j+4+k);
++    return uchar2{uchar((a & 0xF) | ((sbyte(s0,s1,s2, j-4+k) & 0xc0) >> 2)),
++                  uchar((a >>  4) | ((sbyte(s0,s1,s2, j-0+k) & 0xc0) >> 2))};
++}
++
 +// same as above but keeping the quants raw: the scale is applied once per chunk on the
 +// accumulated products instead of dequantizing each value, which holds 4 registers per
-+// row instead of 16 and shortens the chain into the FMAs
++// row instead of 16 and shortens the chain into the FMAs. The block header (d, dmin and
++// the scale bytes) is read once per block, not once per chunk
 +template<short r1ptg, short nr0>
 +void kernel_mul_mv_ext_q4_K_raw_f32_impl(
 +        constant ggml_metal_kargs_mul_mv_ext & args,
@@ -6439,7 +6455,18 @@ index 969fddfa5..2c498a390 100644
 +
 +    short cch = tx%chpb;
 +
++    uint4 hdr[nr0];
++    bool  need_hdr = true;
++
 +    for (int ich = tx; 16*ich < args.ne00; ich += nxpsg) {
++        if (need_hdr) {
++#pragma unroll(nr0)
++            for (short ir0 = 0; ir0 < nr0; ++ir0) {
++                hdr[ir0] = *(device const uint4 *) xq[ir0];
++            }
++            need_hdr = false;
++        }
++
 +        const short il  = cch;
 +        const short ilm = il & 3;
 +        const int   qoff = (int) (il/4) * 32 + 16 * ((int) il & 1);
@@ -6457,12 +6484,13 @@ index 969fddfa5..2c498a390 100644
 +
 +            qsv[ir0] = *(device const uint4 *)(xb->qs + qoff);
 +
-+            const uchar2 sc = get_scale_min_k4_just2(is, ilm/2, xb->scales);
-+            const float  d  = ilm < 2 ? (float) xb->d : (float) (xb->d / 16.h);
++            const half2  dm = as_type<half2>(hdr[ir0].x);
++            const uchar2 sc = scale_pair_shift(hdr[ir0].y, hdr[ir0].z, hdr[ir0].w, is, ilm/2);
++            const float  d  = ilm < 2 ? (float) dm[0] : (float) (dm[0] / 16.h);
 +
 +            dl [ir0] = d * sc[0];
 +            dl2[ir0] = dl[ir0] / 256.f;
-+            ml [ir0] = (float) xb->dmin * sc[1];
++            ml [ir0] = (float) dm[1] * sc[1];
 +        }
 +
 +#pragma unroll(r1ptg)
@@ -6508,6 +6536,7 @@ index 969fddfa5..2c498a390 100644
 +                xq[ir0] += cch/chpb;
 +            }
 +            cch %= chpb;
++            need_hdr = true;
 +        }
 +
 +#pragma unroll(r1ptg)
