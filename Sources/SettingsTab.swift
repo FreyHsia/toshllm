@@ -489,15 +489,12 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(amdFlashActive ? .green : .secondary)
                 }
                 if !modelPath.isEmpty && ServerSettings.modelHasMTP(at: modelPath) {
-                    Label(ncmoe > 0
-                            ? loc.t("MTP automático activo", "Automatic MTP active")
-                            : loc.t("MTP automático en espera: requiere expertos MoE en CPU",
-                                    "Automatic MTP waiting: requires MoE experts on CPU"),
-                          systemImage: ncmoe > 0 ? "hare.fill" : "hare")
+                    Label(loc.t("MTP automático activo", "Automatic MTP active"),
+                          systemImage: "hare.fill")
                         .font(.caption)
-                        .foregroundStyle(ncmoe > 0 ? .green : .secondary)
-                        .infoTip(loc.t("MTP se activa automáticamente cuando el GGUF trae el cabezal y ncmoe es mayor que cero. Se omite en modelos densos o completamente en GPU, donde puede reducir la velocidad.",
-                                    "MTP turns on automatically when the GGUF has the head and ncmoe is greater than zero. It is skipped for dense or full-GPU models, where it can reduce speed."))
+                        .foregroundStyle(.green)
+                        .infoTip(loc.t("MTP se activa automáticamente cuando el GGUF trae el cabezal, tanto en modelos densos como MoE.",
+                                    "MTP turns on automatically whenever the GGUF includes the head, for both dense and MoE models."))
                 }
                 if engineSelection.wrappedValue != "custom" {
                     Toggle(loc.t("Prefetch de expertos MoE (prompt)", "MoE expert prefetch (prompt)"), isOn: $prefetchExperts)

@@ -50,6 +50,58 @@ index bffc1767a..d11a4de03 100644
  bool parse_cpu_range(const std::string & range, bool(&boolmask)[GGML_MAX_N_THREADS]);
  bool parse_cpu_mask(const std::string & mask, bool(&boolmask)[GGML_MAX_N_THREADS]);
  void postprocess_cpu_params(common_cpu_params & cpuparams, const common_cpu_params * role_model = nullptr);
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 3cb08767b..9280b0110 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -917,6 +917,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ 
+     int32_t     block_size    = 0;
+     llama_token mask_token_id = 0;
++    bool        gpu_greedy    = false;
+ 
+     const int32_t * target_layer_ids   = nullptr; // model_dft's extract layer indices
+     uint32_t        target_layer_ids_n = 0;
+@@ -984,9 +985,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ 
+         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+         llama_set_causal_attn(ctx_dft, false); // DFlash needs non-causal attention
++
++        gpu_greedy = this->params.p_min <= 0.0f && getenv("TOSH_DFLASH_GPU_GREEDY_DISABLE") == nullptr;
++        llama_set_sample_all_greedy(ctx_dft, gpu_greedy);
++        LOG_INF("%s: - all-row GPU greedy = %s\n", __func__, gpu_greedy ? "on" : "off");
+     }
+ 
+     ~common_speculative_impl_draft_dflash() override {
++        llama_set_sample_all_greedy(params.ctx_dft, false);
+         llama_batch_free(batch);
+         llama_batch_free(batch_inject);
+     }
+@@ -1150,6 +1156,10 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+             return;
+         }
+ 
++        if (gpu_greedy) {
++            llama_synchronize(ctx_dft);
++        }
++
+         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+             if (i_block_beg[seq_id] < 0) {
+                 continue;
+@@ -1165,6 +1175,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ 
+             // greedily read the predicted block at this sequence's noise positions 1..n_block_tokens-1
+             for (int32_t i = 1; i < n_block_tokens; ++i) {
++                if (gpu_greedy) {
++                    const llama_token id = llama_get_sampled_token_ith(ctx_dft, beg + i);
++                    GGML_ASSERT(id != LLAMA_TOKEN_NULL);
++                    result.push_back(id);
++                    continue;
++                }
++
+                 common_sampler_sample(smpl, ctx_dft, beg + i, true);
+ 
+                 const auto * cur_p = common_sampler_get_candidates(smpl, true);
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
 index 9c56ec30c..f889412d3 100644
 --- a/ggml/src/ggml-backend-impl.h
@@ -6286,11 +6338,237 @@ index 969fddfa5..71bbc9438 100644
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<4, 2, block_q3_K>;
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_5")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<5, 1, block_q3_K>;
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<5, 2, block_q3_K>;
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index eed041eef..37bf76674 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -116,6 +116,7 @@ llama_context::llama_context(
+     cparams.embeddings              = params.embeddings;
+     cparams.embeddings_nextn        = false;
+     cparams.embeddings_nextn_masked = false;
++    cparams.sample_all_greedy       = false;
+     cparams.offload_kqv             = params.offload_kqv;
+     cparams.no_perf                 = params.no_perf;
+     cparams.warmup                  = false;
+@@ -1169,6 +1170,15 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
+     sched_need_reserve = true;
+ }
+ 
++void llama_context::set_sample_all_greedy(bool value) {
++    if (cparams.sample_all_greedy == value) {
++        return;
++    }
++
++    cparams.sample_all_greedy = value;
++    sched_need_reserve = true;
++}
++
+ void llama_context::set_nextn_layer_offset(int32_t offset) {
+     cparams.nextn_layer_offset = offset;
+ }
+@@ -1900,7 +1910,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
+         }
+ 
+         // extract logits
+-        if (logits.data && t_logits && n_outputs > 0 && needs_raw_logits(ubatch, sampling.samplers)) {
++        if (logits.data && t_logits && n_outputs > 0 &&
++            !cparams.sample_all_greedy && needs_raw_logits(ubatch, sampling.samplers)) {
+             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
+             GGML_ASSERT(backend_res != nullptr);
+             GGML_ASSERT(logits.data != nullptr);
+@@ -1995,6 +2006,18 @@ int llama_context::decode(const llama_batch & batch_inp) {
+             }
+         }
+ 
++        // The all-row greedy path returns one token per output and intentionally
++        // leaves the full logits on the backend.
++        if (res->t_sampled_all) {
++            GGML_ASSERT(sampling.sampled.has_data());
++            GGML_ASSERT(n_outputs_prev + n_outputs <= (int64_t) sampling.sampled.size);
++            GGML_ASSERT(ggml_nelements(res->t_sampled_all) >= n_outputs);
++
++            ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), res->t_sampled_all);
++            ggml_backend_tensor_get_async(backend, res->t_sampled_all,
++                    sampling.sampled.data + n_outputs_prev, 0, n_outputs*sizeof(llama_token));
++        }
++
+         // Copy backend sampling output if this ubatch produced any sampling tensors.
+         if (has_samplers && (!res->t_sampled.empty() || !res->t_sampled_probs.empty() || !res->t_sampled_logits.empty())) {
+             const auto seq_to_output_row = build_seq_to_output_row(ubatch, n_outputs_prev);
+@@ -2113,11 +2136,15 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+         }
+     }
+ 
+-    // Allocate backend sampling output buffers if there are backend samplers configured.
+-    const bool has_sampling = !sampling.samplers.empty();
+-    if (has_sampling) {
++    // Allocate full sampler buffers only for general backend sampling. DFlash's
++    // all-row greedy path needs just one token per output row.
++    const bool has_backend_sampling = !sampling.samplers.empty();
++    const bool has_sampling = has_backend_sampling || cparams.sample_all_greedy;
++    if (has_backend_sampling) {
+         backend_float_count = 2 * n_vocab * n_outputs_max;      // logits + probs
+         backend_token_count = (1 + n_vocab) * n_outputs_max;    // sampled + candidates
++    } else if (cparams.sample_all_greedy) {
++        backend_token_count = n_outputs_max;
+     }
+ 
+     if (output_ids.empty()) {
+@@ -2189,24 +2216,33 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+     }
+ 
+     if (has_sampling) {
+-        sampling.logits = {(float *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
+-        offset += sampling.logits.size * sizeof(float);
++        if (has_backend_sampling) {
++            sampling.logits = {(float *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
++            offset += sampling.logits.size * sizeof(float);
+ 
+-        sampling.probs = {(float *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
+-        offset += sampling.probs.size * sizeof(float);
++            sampling.probs = {(float *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
++            offset += sampling.probs.size * sizeof(float);
++        } else {
++            sampling.logits = {nullptr, 0};
++            sampling.probs  = {nullptr, 0};
++        }
+ 
+         sampling.sampled = {(llama_token *) (base + offset), (size_t)n_outputs_max};
+         offset += sampling.sampled.size * sizeof(llama_token);
+ 
+-        sampling.candidates = {(llama_token *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
+-        offset += sampling.candidates.size * sizeof(llama_token);
++        if (has_backend_sampling) {
++            sampling.candidates = {(llama_token *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
++            offset += sampling.candidates.size * sizeof(llama_token);
++        } else {
++            sampling.candidates = {nullptr, 0};
++        }
+ 
+         // The count vectors keep track of the actual number of logits/probs/candidates
+         // copied from the backend for each output row.
+ 
+-        sampling.logits_count.resize(n_outputs_max);
+-        sampling.probs_count.resize(n_outputs_max);
+-        sampling.candidates_count.resize(n_outputs_max);
++        sampling.logits_count.resize(has_backend_sampling ? n_outputs_max : 0);
++        sampling.probs_count.resize(has_backend_sampling ? n_outputs_max : 0);
++        sampling.candidates_count.resize(has_backend_sampling ? n_outputs_max : 0);
+ 
+         std::fill(sampling.logits_count.begin(),     sampling.logits_count.end(),     0);
+         std::fill(sampling.probs_count.begin(),      sampling.probs_count.end(),      0);
+@@ -2298,31 +2334,29 @@ void llama_context::output_reorder() {
+             }
+         }
+ 
+-        if (!sampling.samplers.empty()) {
+-            assert(sampling.logits.size > 0);
+-            assert(sampling.probs.size > 0);
+-            assert(sampling.candidates.size > 0);
+-            assert(sampling.sampled.size > 0);
+-            assert(sampling.logits_count.size() > 0);
+-            assert(sampling.probs_count.size() > 0);
+-            assert(sampling.candidates_count.size() > 0);
+-
+-            for (uint64_t k = 0; k < n_vocab; ++k) {
+-                std::swap(sampling.logits.data[i0*n_vocab + k], sampling.logits.data[i1*n_vocab + k]);
++        if (sampling.sampled.has_data()) {
++            if (sampling.logits.has_data()) {
++                for (uint64_t k = 0; k < n_vocab; ++k) {
++                    std::swap(sampling.logits.data[i0*n_vocab + k], sampling.logits.data[i1*n_vocab + k]);
++                }
++                std::swap(sampling.logits_count[i0], sampling.logits_count[i1]);
+             }
+ 
+-            for (uint64_t k = 0; k < n_vocab; ++k) {
+-                std::swap(sampling.probs.data[i0*n_vocab + k], sampling.probs.data[i1*n_vocab + k]);
++            if (sampling.probs.has_data()) {
++                for (uint64_t k = 0; k < n_vocab; ++k) {
++                    std::swap(sampling.probs.data[i0*n_vocab + k], sampling.probs.data[i1*n_vocab + k]);
++                }
++                std::swap(sampling.probs_count[i0], sampling.probs_count[i1]);
+             }
+ 
+-            for (uint64_t k = 0; k < n_vocab; ++k) {
+-                std::swap(sampling.candidates.data[i0*n_vocab + k], sampling.candidates.data[i1*n_vocab + k]);
++            if (sampling.candidates.has_data()) {
++                for (uint64_t k = 0; k < n_vocab; ++k) {
++                    std::swap(sampling.candidates.data[i0*n_vocab + k], sampling.candidates.data[i1*n_vocab + k]);
++                }
++                std::swap(sampling.candidates_count[i0], sampling.candidates_count[i1]);
+             }
+ 
+-            std::swap(sampling.sampled.data[i0],     sampling.sampled.data[i1]);
+-            std::swap(sampling.logits_count[i0],     sampling.logits_count[i1]);
+-            std::swap(sampling.probs_count[i0],      sampling.probs_count[i1]);
+-            std::swap(sampling.candidates_count[i0], sampling.candidates_count[i1]);
++            std::swap(sampling.sampled.data[i0], sampling.sampled.data[i1]);
+         }
+     }
+ 
+@@ -3720,6 +3754,10 @@ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool valu
+     ctx->set_embeddings_layer_inp(lid, value);
+ }
+ 
++void llama_set_sample_all_greedy(llama_context * ctx, bool value) {
++    ctx->set_sample_all_greedy(value);
++}
++
+ void llama_set_nextn_layer_offset(llama_context * ctx, int32_t offset) {
+     ctx->set_nextn_layer_offset(offset);
+ }
+diff --git a/src/llama-context.h b/src/llama-context.h
+index bf91daa8b..8b033752e 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -115,6 +115,7 @@ struct llama_context {
+     void set_embeddings (bool value);
+     void set_embeddings_nextn(bool value, bool masked);
+     void set_embeddings_layer_inp(uint32_t lid, bool enable);
++    void set_sample_all_greedy(bool value);
+     void set_nextn_layer_offset(int32_t offset);
+     void set_causal_attn(bool value);
+     void set_warmup(bool value);
+diff --git a/src/llama-cparams.h b/src/llama-cparams.h
+index 5018170ed..0891f3ac1 100644
+--- a/src/llama-cparams.h
++++ b/src/llama-cparams.h
+@@ -34,6 +34,7 @@ struct llama_cparams {
+     bool embeddings;
+     bool embeddings_nextn;        // also extract the hidden state before the final output norm
+     bool embeddings_nextn_masked; // extract for only rows where batch.logits != 0
++    bool sample_all_greedy;       // return argmax token for every output row without copying raw logits
+     bool causal_attn;
+     bool offload_kqv;
+     bool flash_attn;
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 348bbae95..a5286ac9e 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -110,6 +110,10 @@ LLAMA_API float * llama_get_embeddings_nextn_ith(struct llama_context * ctx, int
+ // Set whether the context outputs the input embeddings of a specific layer
+ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid, bool value);
+ 
++// Compute one greedy token per output row on the model backend. This avoids
++// copying full-vocabulary logits when a caller only needs argmax results.
++LLAMA_API void llama_set_sample_all_greedy(struct llama_context * ctx, bool value);
++
+ // mirrors:
+ // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
+ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index c8ecb0a28..373e4c952 100644
+index c8ecb0a28..60fc641b4 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2404,7 +2404,44 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -1194,6 +1194,7 @@ void llm_graph_result::reset() {
+     t_embd        = nullptr;
+     t_embd_pooled = nullptr;
+     t_h_nextn     = nullptr;
++    t_sampled_all = nullptr;
+ 
+     t_layer_inp.resize(LLAMA_MAX_LAYERS);
+     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
+@@ -2404,7 +2405,44 @@ ggml_tensor * llm_graph_context::build_attn_mha(
  
      ggml_tensor * cur;
  
@@ -6336,7 +6614,7 @@ index c8ecb0a28..373e4c952 100644
      if (use_flash_attn) {
          GGML_ASSERT(kq_b == nullptr && "Flash attention does not support KQ bias yet");
  
-@@ -2447,6 +2484,11 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2447,6 +2485,11 @@ ggml_tensor * llm_graph_context::build_attn_mha(
  
          cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*cur->ne[1], cur->ne[2]*cur->ne[3]);
      } else {
@@ -6348,7 +6626,7 @@ index c8ecb0a28..373e4c952 100644
          ggml_tensor * kq = ggml_mul_mat(ctx0, k, q);
          cb(kq, "kq", il);
  
-@@ -2487,6 +2529,11 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2487,6 +2530,11 @@ ggml_tensor * llm_graph_context::build_attn_mha(
  
          if (!v_trans) {
              // note: avoid this branch
@@ -6360,6 +6638,45 @@ index c8ecb0a28..373e4c952 100644
              v = ggml_cont(ctx0, ggml_transpose(ctx0, v));
              cb(v, "v_cont", il);
          }
+@@ -3399,7 +3447,17 @@ void llm_graph_context::build_pooling(
+ }
+ 
+ void llm_graph_context::build_sampling() const {
+-    if (samplers.empty() || !res->t_logits) {
++    if (!res->t_logits) {
++        return;
++    }
++
++    if (cparams.sample_all_greedy) {
++        res->t_sampled_all = ggml_argmax(ctx0, res->t_logits);
++        ggml_set_name(res->t_sampled_all, "greedy_argmax_all");
++        ggml_build_forward_expand(gf, res->t_sampled_all);
++    }
++
++    if (samplers.empty()) {
+         return;
+     }
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 7ed490ce6..d77167511 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -776,6 +776,7 @@ struct llm_graph_params {
+             cparams.embeddings              == other.cparams.embeddings              &&
+             cparams.embeddings_nextn        == other.cparams.embeddings_nextn        &&
+             cparams.embeddings_nextn_masked == other.cparams.embeddings_nextn_masked &&
++            cparams.sample_all_greedy       == other.cparams.sample_all_greedy       &&
+             cparams.causal_attn             == other.cparams.causal_attn             &&
+             arch  == other.arch  &&
+             gtype == other.gtype &&
+@@ -837,6 +838,7 @@ public:
+     ggml_tensor * t_embd        = nullptr;
+     ggml_tensor * t_embd_pooled = nullptr;
+     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
++    ggml_tensor * t_sampled_all = nullptr; // [n_outputs] greedy token ids
+ 
+     std::vector<ggml_tensor *> t_layer_inp;
+ 
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 index e70583e64..950788019 100644
 --- a/src/llama-kv-cache.cpp

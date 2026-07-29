@@ -183,15 +183,14 @@ struct ServerSettings {
         }
         if reasoningInline { args += ["--reasoning-format", "none"] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
-        // A compatible downloaded DFlash draft takes precedence over MTP when its
-        // per-model policy permits it. Auto is restricted to CPU expert offload.
+        // A compatible downloaded DFlash draft takes precedence over embedded MTP.
         if let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
             // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
             // q8_0 halves that footprint at no measurable quality cost for a draft.
             args += ["-md", selection.draft, "--spec-type", "draft-dflash",
                      "-ngld", String(selection.ngld),
                      "-ctkd", "q8_0", "-ctvd", "q8_0"]
-        } else if ncmoe > 0 && Self.modelHasMTP(at: modelPath) {
+        } else if Self.modelHasMTP(at: modelPath) {
             args += ["--spec-type", "draft-mtp"]
         }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
@@ -278,7 +277,7 @@ struct ServerSettings {
                 lines.append("gpu-layers-draft = \(selection.ngld)")
                 lines.append("cache-type-k-draft = q8_0")
                 lines.append("cache-type-v-draft = q8_0")
-            } else if (ncmoeByPath[path] ?? 0) > 0 && Self.modelHasMTP(at: path) {
+            } else if Self.modelHasMTP(at: path) {
                 lines.append("spec-type = draft-mtp")
             }
             sections.append(lines.joined(separator: "\n"))
@@ -595,9 +594,6 @@ struct ServerSettings {
         guard let draft = Self.dflashDraftPath(forModel: modelPath) else { return "not installed" }
         let mode = Self.dflashMode(forModel: modelPath)
         guard mode != .off else { return "off by user" }
-        if mode == .auto && (ncmoe == 0 || !Self.modelIsMoE(at: modelPath)) {
-            return "off in auto mode (requires MoE with ncmoe > 0)"
-        }
         guard let plan = dflashMemoryPlan(modelPath: modelPath, draftPath: draft, ncmoe: ncmoe,
                                           honorReserve: mode == .auto) else {
             return "off (metadata or GPU capacity unavailable)"

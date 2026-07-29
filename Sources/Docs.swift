@@ -152,7 +152,7 @@ Cada modelo conserva su propia configuración de expertos MoE y visión. MTP se 
 
 Última medición en este equipo: **+34% de velocidad de generación** (19.3 → 25.7 t/s en Qwen3.6-35B) con 82% de aceptación. Esa cifra es previa al fix de staging persistente, que ya subió el "sin MTP" de ~19 a ~25 t/s por sí solo. Falta remedir la ganancia real de MTP sobre el motor actual.
 
-MTP se activa automáticamente cuando el GGUF trae el cabezal y hay expertos MoE en CPU (`ncmoe > 0`). Se omite en densos y modelos completamente en GPU, donde la sincronización extra puede hacerlo más lento. `llama-bench` no puede medirlo: compara siempre con generación real desde el chat o el servidor.
+MTP se activa automáticamente cuando el GGUF trae el cabezal, tanto en modelos densos como MoE. `llama-bench` no puede medirlo: compara siempre con generación real desde el chat o el servidor.
 """),
         DocSection(title: "API para desarrolladores", icon: "terminal", body: """
 Con el servidor activo, tienes una **API compatible con OpenAI** en `http://127.0.0.1:8080` (puerto configurable). Funciona con cualquier librería o app que hable ese protocolo.
@@ -396,7 +396,7 @@ Last measurement on this machine: **+34% generation speed** (19.3 → 25.7 t/s o
 
 You need a GGUF with the MTP head: look for repos with "MTP" in the name, e.g. unsloth's `Qwen3.6-35B-A3B-MTP-GGUF`, since regular GGUFs don't include it.
 
-There is nothing to switch on. MTP engages by itself when the GGUF ships the head and there are MoE experts on the CPU (`ncmoe > 0`). It stays out of dense and fully-GPU models, where the extra synchronization can make it slower. `llama-bench` can't measure it: always compare using real generation from chat or the server.
+There is nothing to switch on. MTP engages by itself whenever the GGUF ships the head, for both dense and MoE models. `llama-bench` can't measure it: always compare using real generation from chat or the server.
 """),
         DocSection(title: "API for developers", icon: "terminal", body: """
 With the server running, you get an **OpenAI-compatible API** at `http://127.0.0.1:8080` (configurable port). Works with any library or app that speaks the protocol.

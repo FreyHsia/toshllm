@@ -1,8 +1,8 @@
 import Foundation
 
 enum DflashPolicy {
-    static func autoEligible(isMoE: Bool, ncmoe: Int) -> Bool {
-        isMoE && ncmoe > 0
+    static func autoEligible(isMoE _: Bool, ncmoe _: Int) -> Bool {
+        true
     }
 
     static func shouldWarn(fractions: [Double]) -> Bool {

@@ -167,10 +167,10 @@ final class EstimatorTests: XCTestCase {
 }
 
 final class DflashPolicyTests: XCTestCase {
-    func testAutoRequiresMoEAndCPUExpertOffload() {
+    func testAutoAllowsDenseAndFullGPUModels() {
         XCTAssertTrue(DflashPolicy.autoEligible(isMoE: true, ncmoe: 1))
-        XCTAssertFalse(DflashPolicy.autoEligible(isMoE: true, ncmoe: 0))
-        XCTAssertFalse(DflashPolicy.autoEligible(isMoE: false, ncmoe: 12))
+        XCTAssertTrue(DflashPolicy.autoEligible(isMoE: true, ncmoe: 0))
+        XCTAssertTrue(DflashPolicy.autoEligible(isMoE: false, ncmoe: 0))
     }
 
     func testRuntimeWarningRequiresThreeCriticalSamples() {
@@ -533,13 +533,13 @@ final class ServerSettingsTests: XCTestCase {
                       "MTP must apply automatically when the model has a head and experts are offloaded")
     }
 
-    func testMTPIsSkippedWithoutExpertOffload() {
+    func testMTPAppliesAutomaticallyWithoutExpertOffload() {
         var s = makeSettings()
         s.ncmoe = 0
         s.specMTP = true
         s.modelPath = makeGGUF(nextnLayers: 1, tensorName: "blk.0.nextn.eh_proj.weight").path
-        XCTAssertFalse(s.arguments.contains("--spec-type"),
-                       "MTP must stay off for dense and full-GPU models")
+        XCTAssertTrue(s.arguments.contains("--spec-type"),
+                      "MTP must apply to dense and full-GPU models when the head is present")
     }
 
     func testStabilityEnvironment() {

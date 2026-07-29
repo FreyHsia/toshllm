@@ -42,7 +42,7 @@ struct DflashControl: View {
         .onChange(of: active) { _, on in
             withAnimation(on ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default) { glow = on }
         }
-        .help(loc.t("Auto solo usa DFlash en modelos MoE con expertos en CPU y memoria suficiente. Forzado también lo intenta con ncmoe=0, donde puede ser más lento, y avisa si la VRAM supera 95 %.",
-                    "Auto only uses DFlash for MoE models with CPU-offloaded experts and enough memory. Forced also tries it with ncmoe=0, where it may be slower, and warns if VRAM exceeds 95%."))
+        .help(loc.t("Auto usa DFlash cuando hay un draft compatible y el planificador deja memoria suficiente. Forzado ignora la reserva de seguridad y avisa si la VRAM supera 95 %.",
+                    "Auto uses DFlash when a compatible draft is installed and the memory planner leaves enough headroom. Forced ignores the safety reserve and warns if VRAM exceeds 95%."))
     }
 }

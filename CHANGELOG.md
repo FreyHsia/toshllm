@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Improved
+- **DFlash keeps draft logits on the GPU for greedy decoding**... Metal now computes one argmax per draft row and copies only the token ids instead of several full 248K-vocabulary rows, measured 68.39 → 70.72 t/s (+3.4%) on Qwen3.5-4B Q4_K_M with byte-identical output; DFlash now beats the 62.35 t/s autoregressive base by 13.4% and can activate automatically on dense/full-GPU models when its memory plan fits.
+- **MTP now activates on dense and full-GPU models too**... the embedded head no longer requires `ncmoe > 0`; measured 79.51 vs 62.46 t/s autoregressive (+27%) on dense Qwen3.5-4B MTP Q4_K_M with 86.25% draft acceptance.
 - **Faster batched generation on Q4_K models**... the kernel keeps the quants raw and applies the scale once per chunk instead of expanding every value to a float first, measured 18% faster with four concurrent requests.
 - **The same kernel reads each block's scales once instead of twice**... they were fetched again for every chunk of the block, measured a further 10% with four concurrent requests and 12% with eight.
 - **And it unpacks each weight once instead of once per column**... the quant was masked and converted for every column that reuses it, measured a further 3%.
