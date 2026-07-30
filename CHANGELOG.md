@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.7] - 2026-07-30
 
 ### Improved
 - **DFlash keeps draft logits on the GPU for greedy decoding**... Metal now computes one argmax per draft row and copies only the token ids instead of several full 248K-vocabulary rows, measured 68.39 → 70.72 t/s (+3.4%) on Qwen3.5-4B Q4_K_M with byte-identical output; DFlash now beats the 62.35 t/s autoregressive base by 13.4% and can activate automatically on dense/full-GPU models when its memory plan fits.
