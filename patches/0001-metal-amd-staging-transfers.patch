@@ -60,10 +60,10 @@ index bffc1767a..d11a4de03 100644
  bool set_process_priority(enum ggml_sched_priority prio);
  
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 3cb08767b..7b681b9ce 100644
+index 3cb08767b..f11a30dd3 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -915,17 +915,24 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -915,17 +915,25 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
      int32_t n_embd_enc = 0;  // target_layer_ids_n * target_hidden_size
      int32_t n_embd_tgt = 0;  // target model hidden size
  
@@ -82,13 +82,14 @@ index 3cb08767b..7b681b9ce 100644
 +    std::vector<float>   acc_ewma;     // per-seq EWMA of acceptance, starts at 1.0 (warm)
 +    std::vector<int32_t> n_last_draft; // per-seq tokens drafted last step, 0 if skipped
 +    std::vector<int32_t> steps_cold;   // per-seq skipped steps since the last probe
++    std::vector<int32_t> probe_gap;    // per-seq probe interval, doubles on a failed probe
 +
      common_speculative_impl_draft_dflash(const common_params_speculative & params, uint32_t n_seq)
          : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH, n_seq)
          , params(params.draft)
      {
          auto * ctx_tgt = this->params.ctx_tgt;
-@@ -982,13 +989,18 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -982,13 +990,18 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
              llama_set_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k], true);
          }
  
@@ -107,19 +108,21 @@ index 3cb08767b..7b681b9ce 100644
      }
  
      void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
-@@ -1114,24 +1126,41 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1114,24 +1127,50 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          // build one batch holding every drafting sequence's noise block into a single decode)
          // record where each block starts and its size
          std::vector<int32_t> i_block_beg(n_seq, -1);
          std::vector<int32_t> n_block    (n_seq,  0);
  
++        static const float acc_min    = getenv("TOSH_DFLASH_ACC_MIN")   ? (float) atof(getenv("TOSH_DFLASH_ACC_MIN"))   : 0.6f;
++        static const int   probe_base = getenv("TOSH_DFLASH_PROBE")     ?         atoi(getenv("TOSH_DFLASH_PROBE"))     : 8;
++        static const int   probe_cap  = getenv("TOSH_DFLASH_PROBE_CAP") ?         atoi(getenv("TOSH_DFLASH_PROBE_CAP")) : 64;
 +        if ((int) acc_ewma.size() != (int) n_seq) {
 +            acc_ewma.assign(n_seq, 1.0f);
 +            n_last_draft.assign(n_seq, 0);
 +            steps_cold.assign(n_seq, 0);
++            probe_gap.assign(n_seq, probe_base);
 +        }
-+        static const float acc_min     = getenv("TOSH_DFLASH_ACC_MIN") ? (float) atof(getenv("TOSH_DFLASH_ACC_MIN")) : 0.6f;
-+        static const int   probe_every = getenv("TOSH_DFLASH_PROBE")   ?         atoi(getenv("TOSH_DFLASH_PROBE"))   : 8;
 +
          for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
              auto & dp = dparams[seq_id];
@@ -127,13 +130,20 @@ index 3cb08767b..7b681b9ce 100644
                  continue;
              }
  
-+            // skip the draft while backed off, but probe every probe_every steps to re-measure
-+            if (acc_ewma[seq_id] < acc_min && steps_cold[seq_id] < probe_every) {
-+                n_last_draft[seq_id] = 0;
-+                steps_cold[seq_id]++;
-+                continue;
++            // while backed off, probe every probe_gap steps and double the gap on a failed probe,
++            // so a durable cold streak decays toward AR yet a late recovery is still caught
++            if (acc_ewma[seq_id] < acc_min) {
++                if (steps_cold[seq_id] < probe_gap[seq_id]) {
++                    n_last_draft[seq_id] = 0;
++                    steps_cold[seq_id]++;
++                    continue;
++                }
++                steps_cold[seq_id] = 0;
++                probe_gap[seq_id] = std::min(probe_gap[seq_id] * 2, probe_cap);
++            } else {
++                steps_cold[seq_id] = 0;
++                probe_gap[seq_id] = probe_base;
 +            }
-+            steps_cold[seq_id] = 0;
 +
              common_sampler_reset(smpls[seq_id].get());
  
@@ -149,7 +159,7 @@ index 3cb08767b..7b681b9ce 100644
              i_block_beg[seq_id] = batch.n_tokens;
              n_block    [seq_id] = n_block_tokens;
              for (int32_t i = 0; i < n_block_tokens; ++i) {
-@@ -1148,10 +1177,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1148,10 +1187,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          if (ret != 0) {
              LOG_WRN("%s: llama_decode returned %d\n", __func__, ret);
              return;
@@ -164,7 +174,7 @@ index 3cb08767b..7b681b9ce 100644
                  continue;
              }
              auto & dp = dparams[seq_id];
-@@ -1163,10 +1196,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1163,10 +1206,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
  
              auto & result = *dp.result;
  
@@ -182,7 +192,7 @@ index 3cb08767b..7b681b9ce 100644
                  const auto * cur_p = common_sampler_get_candidates(smpl, true);
  
                  for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
-@@ -1190,12 +1230,21 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1190,12 +1240,22 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                  result.clear();
              }
          }
@@ -199,13 +209,114 @@ index 3cb08767b..7b681b9ce 100644
 +        }
 +        static const float alpha = getenv("TOSH_DFLASH_EWMA") ? (float) atof(getenv("TOSH_DFLASH_EWMA")) : 0.5f;
 +        const float acc = std::min(1.0f, (float) n_accepted / (float) n_last_draft[seq_id]);
-+        acc_ewma[seq_id] = alpha * acc_ewma[seq_id] + (1.0f - alpha) * acc;
++        const float a = acc > acc_ewma[seq_id] ? 0.2f : alpha;  // rise fast, fall at alpha
++        acc_ewma[seq_id] = a * acc_ewma[seq_id] + (1.0f - a) * acc;
 +        n_last_draft[seq_id] = 0;
      }
  
      bool need_embd() const override {
          return false;
      }
+@@ -1235,10 +1295,17 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+     std::vector<int32_t> verify_h_rows;
+ 
+     std::vector<int>                i_last;
+     std::vector<std::vector<float>> chain_h;
+ 
++    // acceptance backoff: skip drafting while recent acceptance stays low (fall back to AR),
++    // probing periodically, so unpredictable content does not regress below the AR baseline
++    std::vector<float>   acc_ewma;
++    std::vector<int32_t> n_last_draft;
++    std::vector<int32_t> steps_cold;
++    std::vector<int32_t> probe_gap;
++
+     common_speculative_impl_draft_mtp(const common_params_speculative & params, uint32_t n_seq)
+         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_MTP, n_seq)
+         , params(params.draft)
+     {
+         auto * ctx_tgt = this->params.ctx_tgt;
+@@ -1478,22 +1545,51 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+         common_batch_clear(batch);
+ 
+         // keep track of which sequences are still drafting
+         int n_drafting = 0;
+         std::vector<bool> drafting(n_seq);
++        // "drafting" is cleared inside the loop when a seq drops out (p_min/n_max), so it can't
++        // report which seqs drafted; this latches that for the acceptance-backoff bookkeeping
++        std::vector<bool> drafted_this_step(n_seq, false);
+ 
+         const size_t row_bytes = (size_t) n_embd * sizeof(float);
+ 
++        static const float acc_min    = getenv("TOSH_MTP_ACC_MIN")   ? (float) atof(getenv("TOSH_MTP_ACC_MIN"))   : 0.5f;
++        static const int   probe_base = getenv("TOSH_MTP_PROBE")     ?         atoi(getenv("TOSH_MTP_PROBE"))     : 8;
++        static const int   probe_cap  = getenv("TOSH_MTP_PROBE_CAP") ?         atoi(getenv("TOSH_MTP_PROBE_CAP")) : 24;
++        if ((int) acc_ewma.size() != (int) n_seq) {
++            acc_ewma.assign(n_seq, 1.0f);
++            n_last_draft.assign(n_seq, 0);
++            steps_cold.assign(n_seq, 0);
++            probe_gap.assign(n_seq, probe_base);
++        }
++
+         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+             auto & dp = dparams[seq_id];
+ 
+             if (!dp.drafting) {
+                 continue;
+             }
+ 
++            // while backed off, probe every probe_gap steps and double the gap on a failed probe,
++            // so a durable cold streak decays toward AR yet a late recovery is still caught
++            if (acc_ewma[seq_id] < acc_min) {
++                if (steps_cold[seq_id] < probe_gap[seq_id]) {
++                    n_last_draft[seq_id] = 0;
++                    steps_cold[seq_id]++;
++                    continue;
++                }
++                steps_cold[seq_id] = 0;
++                probe_gap[seq_id] = std::min(probe_gap[seq_id] * 2, probe_cap);
++            } else {
++                steps_cold[seq_id] = 0;
++                probe_gap[seq_id] = probe_base;
++            }
++
+             n_drafting++;
+             drafting[seq_id] = true;
++            drafted_this_step[seq_id] = true;
+             common_sampler_reset(smpls[seq_id].get());
+ 
+             common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
+             std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
+ 
+@@ -1618,18 +1714,29 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             }
+ 
+             if (dp.result->size() < (size_t) params.n_min) {
+                 dp.result->clear();
+             }
++            if (drafted_this_step[seq_id]) {
++                n_last_draft[seq_id] = (int32_t) dp.result->size();
++            }
+         }
+     }
+ 
+     void accept(llama_seq_id seq_id, uint16_t n_accepted, bool /*is_other*/) override {
+         if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+             return;
+         }
+ 
++        if ((int) acc_ewma.size() == (int) n_seq && n_last_draft[seq_id] > 0) {
++            static const float alpha = getenv("TOSH_MTP_EWMA") ? (float) atof(getenv("TOSH_MTP_EWMA")) : 0.5f;
++            const float acc = std::min(1.0f, (float) n_accepted / (float) n_last_draft[seq_id]);
++            const float a = acc > acc_ewma[seq_id] ? 0.2f : alpha;  // rise fast, fall at alpha
++            acc_ewma[seq_id] = a * acc_ewma[seq_id] + (1.0f - a) * acc;
++            n_last_draft[seq_id] = 0;
++        }
++
+         const int32_t n_rows = verify_h_rows[seq_id];
+         if (n_rows <= 0) {
+             return;
+         }
+ 
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
 index 9c56ec30c..f889412d3 100644
 --- a/ggml/src/ggml-backend-impl.h
