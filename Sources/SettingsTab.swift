@@ -58,7 +58,9 @@ struct SettingsView: View {
         // back to a ~3.7x slower path on Intel/AMD, so don't offer them there.
         // Keep an already-selected slow type visible so a migrated config isn't blank.
         if ServerSettings.isAppleSilicon { return ServerSettings.kvCacheTypes }
-        var types = ["f16", "q8_0", "q4_0"]
+        // turbo3/4 have a dedicated FA-AMD dequant kernel; heads not a multiple of
+        // 128 are zero-padded to 128 in the KV cache.
+        var types = ["f16", "q8_0", "q4_0", "turbo4", "turbo3"]
         for t in [cacheTypeK, cacheTypeV] where !types.contains(t) { types.append(t) }
         return types
     }

@@ -132,7 +132,7 @@ struct ServerSettings {
     }
 
     static let defaultFaAmd = true
-    static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"]
+    static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3"]
 
     var arguments: [String] {
         if routerMode { return routerArguments }

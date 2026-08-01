@@ -241,7 +241,8 @@ build_image_engine() {
 # 1. Official engine (skip with SKIP_LLAMA=1 when iterating on the image engine)
 if [ -z "$SKIP_LLAMA" ]; then
 build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" \
-    0001-metal-amd-staging-transfers.patch
+    0001-metal-amd-staging-transfers.patch \
+    0005-turboquant-kv.patch
 fi
 
 
