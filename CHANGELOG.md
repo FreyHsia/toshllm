@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.8] - 2026-08-01
 
 ### Added
 - **TurboQuant KV cache is back in the bundled engine**... Turbo3 and Turbo4 now work without the retired experimental binary, including cooperative GPU writes, cache reuse and context shifts. The AMD attention path covers regular and padded head sizes from 128 through 640 on both wave32 and wave64 GPUs. Turbo4 is recommended from 4B models upward; Turbo3 trades more quality for memory and is intended for larger models and very long contexts.
