@@ -206,6 +206,50 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertTrue((header.uint32(forSuffix: "expert_count") ?? 0) > 0)
     }
 
+    func testTurboKVCompatibilityUsesGGUFHeadDimensions() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let head64 = dir.appendingPathComponent("head64.gguf")
+        try writeGGUF(to: head64, uint32: [
+            "llama.attention.key_length": 64,
+            "llama.attention.value_length": 64,
+        ])
+        XCTAssertTrue(ServerSettings.modelSupportsTurboKV(at: head64.path))
+
+        let derived128 = dir.appendingPathComponent("derived128.gguf")
+        try writeGGUF(to: derived128, uint32: [
+            "qwen3.embedding_length": 4096,
+            "qwen3.attention.head_count": 32,
+        ])
+        XCTAssertTrue(ServerSettings.modelSupportsTurboKV(at: derived128.path))
+
+        let invalidDerived = dir.appendingPathComponent("invalid-derived.gguf")
+        try writeGGUF(to: invalidDerived, uint32: [
+            "custom.embedding_length": 4097,
+            "custom.attention.head_count": 32,
+        ])
+        XCTAssertFalse(ServerSettings.modelSupportsTurboKV(at: invalidDerived.path))
+
+        let head320 = dir.appendingPathComponent("head320.gguf")
+        try writeGGUF(to: head320, uint32: ["custom.attention.key_length": 320])
+        XCTAssertTrue(ServerSettings.modelSupportsTurboKV(at: head320.path))
+
+        let mla = dir.appendingPathComponent("mla.gguf")
+        try writeGGUF(to: mla, uint32: [
+            "deepseek2.attention.key_length": 576,
+            "deepseek2.attention.value_length": 512,
+            "deepseek2.attention.key_length_mla": 576,
+            "deepseek2.attention.value_length_mla": 512,
+        ])
+        XCTAssertTrue(ServerSettings.modelSupportsTurboKV(at: mla.path))
+        XCTAssertTrue(ServerSettings.modelUsesMLA(at: mla.path))
+
+        let tooWide = dir.appendingPathComponent("head641.gguf")
+        try writeGGUF(to: tooWide, uint32: ["custom.attention.key_length": 641])
+        XCTAssertFalse(ServerSettings.modelSupportsTurboKV(at: tooWide.path))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("toshllm-detection-\(UUID().uuidString)")

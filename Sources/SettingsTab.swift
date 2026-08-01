@@ -57,12 +57,25 @@ struct SettingsView: View {
         // Only f16/q8_0/q4_0 have an FA-AMD KV kernel; the other quant types fall
         // back to a ~3.7x slower path on Intel/AMD, so don't offer them there.
         // Keep an already-selected slow type visible so a migrated config isn't blank.
-        if ServerSettings.isAppleSilicon { return ServerSettings.kvCacheTypes }
-        // turbo3/4 have a dedicated FA-AMD dequant kernel; heads not a multiple of
-        // 128 are zero-padded to 128 in the KV cache.
-        var types = ["f16", "q8_0", "q4_0", "turbo4", "turbo3"]
+        if ServerSettings.isAppleSilicon { return ["f16", "q8_0", "q4_0"] }
+        var types = ["f16", "q8_0", "q4_0"]
+        if !modelPath.isEmpty && ServerSettings.modelSupportsTurboKV(at: modelPath) {
+            types += ["turbo4", "turbo3"]
+        }
         for t in [cacheTypeK, cacheTypeV] where !types.contains(t) { types.append(t) }
         return types
+    }
+    private var turboKVIncompatible: Bool {
+        (cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")) &&
+        (ServerSettings.isAppleSilicon ||
+         !ServerSettings.modelSupportsTurboKV(at: modelPath) ||
+         (cacheTypeV.hasPrefix("turbo") && !cacheTypeK.hasPrefix("turbo") &&
+          ServerSettings.modelUsesMLA(at: modelPath)) ||
+         ((cacheTypeK.hasPrefix("turbo") && cacheTypeV == "q4_0") ||
+          (cacheTypeV.hasPrefix("turbo") && cacheTypeK == "q4_0")))
+    }
+    private var turboKVSelected: Bool {
+        cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
     }
     private var serverIsStopped: Bool {
         if case .stopped = server.state { return true }
@@ -461,6 +474,19 @@ struct SettingsView: View {
                             "Quantization for KV cache values. With the AMD Flash Attention kernel any standard value type (f16/q8_0/q4_0) runs on the GPU at full speed, including the fast long-prompt route. Quantizing values saves more memory; keeping them at f16 (with quantized keys) preserves more quality... both run equally fast.")
                     : loc.t("Cuantización de los valores del KV cache. ⚠️ En GPU AMD (sin el kernel Flash Attention AMD) esto fuerza Flash Attention en CPU: la generación baja ~3× (de ~50 a ~15-19 t/s en un 8B). Úsalo solo cuando necesites contexto enorme; si no, déjalo en f16 y cuantiza solo las claves.",
                             "Quantization for KV cache values. ⚠️ On AMD GPUs (without the AMD Flash Attention kernel) this forces Flash Attention onto the CPU: generation drops ~3× (from ~50 to ~15-19 t/s on an 8B). Use only when you need huge context; otherwise keep f16 and quantize keys only."))
+                if turboKVIncompatible {
+                    Label(loc.t("TurboQuant KV no es compatible con este modelo, backend o combinación. q4_0 no se puede mezclar con Turbo.",
+                                "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if turboKVSelected {
+                    Label(loc.t("La pérdida de calidad disminuye con el tamaño del modelo. Turbo4 es la opción recomendada desde 4B; reserva Turbo3 para modelos grandes cuando priorices VRAM.",
+                                "Quality loss decreases with model size. Turbo4 is recommended from 4B; reserve Turbo3 for large models when VRAM savings matter most."),
+                          systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle(loc.t("Reuso de caché de prompt (rápido)", "Prompt cache reuse (fast)"), isOn: $cacheReuse)
                     .infoTip(loc.t("Cuando reescribes/editas el prompt (asistentes de código) o se recorta el razonamiento entre turnos, reutiliza la caché desplazándola en vez de reprocesar — mucho más rápido. Es una aproximación: la salida sigue coherente pero puede variar levemente frente a un cálculo exacto. Desactívalo si quieres resultados idénticos y reproducibles.",
                                 "When the prompt is rewritten/edited (coding assistants) or the reasoning is trimmed between turns, it reuses the cache by shifting it instead of reprocessing — much faster. It's an approximation: output stays coherent but can differ slightly from an exact recompute. Turn it off for identical, reproducible results."))
@@ -477,8 +503,8 @@ struct SettingsView: View {
                             "Standard llama.cpp Flash Attention path. On AMD GPUs it falls back to CPU; it is forced to 'on' when KV is quantized. For GPU attention use the AMD kernel below."))
                 if engineSelection.wrappedValue != "custom" {
                     Toggle(loc.t("Kernel Flash Attention AMD (GPU)", "AMD Flash Attention kernel (GPU)"), isOn: $faAmd)
-                        .infoTip(loc.t("Kernel Metal propio, activo por defecto, que ejecuta la atención (prompt y generación) en la GPU AMD: cabezas 128/256/512 y KV estándar f16/q8_0/q4_0. Si lo apagas, el KV cuantizado sigue requiriendo Flash Attention pero usa la ruta estándar en CPU.",
-                                    "Custom Metal kernel, on by default, that runs attention (prompt and generation) on the AMD GPU: head dims 128/256/512 and standard KV f16/q8_0/q4_0. If you turn it off, quantized KV still requires Flash Attention but uses the standard CPU path."))
+                        .infoTip(loc.t("Kernel Metal propio, activo por defecto, que ejecuta la atención (prompt y generación) en la GPU AMD: cabezas estándar 64/72/128/256/512 y TurboQuant con padding 128/256/384/512/640. Si lo apagas, el KV cuantizado sigue requiriendo Flash Attention pero usa la ruta estándar en CPU.",
+                                    "Custom Metal kernel, on by default, that runs attention (prompt and generation) on the AMD GPU: standard heads 64/72/128/256/512 and TurboQuant padded heads 128/256/384/512/640. If you turn it off, quantized KV still requires Flash Attention but uses the standard CPU path."))
                     Label(amdFlashActive
                             ? loc.t("Usando kernel AMD en GPU; Flash Attention queda forzado a 'on'.",
                                     "Using the AMD GPU kernel; Flash Attention is forced to 'on'.")

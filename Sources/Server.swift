@@ -134,6 +134,19 @@ struct ServerSettings {
     static let defaultFaAmd = true
     static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3"]
 
+    var usesTurboKV: Bool {
+        cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
+    }
+
+    var usesTurboValuesWithoutKeys: Bool {
+        cacheTypeV.hasPrefix("turbo") && !cacheTypeK.hasPrefix("turbo")
+    }
+
+    var usesUnsupportedTurboQ4Mix: Bool {
+        (cacheTypeK.hasPrefix("turbo") && cacheTypeV == "q4_0") ||
+        (cacheTypeV.hasPrefix("turbo") && cacheTypeK == "q4_0")
+    }
+
     var arguments: [String] {
         if routerMode { return routerArguments }
         // Quantized KV requires FA, so it stays forced. Elsewhere the AMD kernel rides
@@ -158,10 +171,7 @@ struct ServerSettings {
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
         if mlock { args.append("--mlock") }
         args += ["--cache-ram", String(cacheRAM)]
-        // A turbo KV type left in an old profile crashes on a shift (no requantize
-        // kernel), so cache-reuse stays off for those.
-        let turboKV = cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
-        if cacheReuse && !turboKV && mmproj == nil {
+        if cacheReuse && mmproj == nil {
             args += ["--cache-reuse", "256"]
         }
         if parallelSlots > 0 { args += ["--parallel", String(parallelSlots)] }
@@ -244,7 +254,6 @@ struct ServerSettings {
     func routerPresetINI(modelPaths: [String], ncmoeByPath: [String: Int]) -> String {
         // Same FA policy as `arguments`: force only for quantized KV.
         let faValue = kvNeedsFlashAttention ? "on" : (effectiveFaAmd ? "auto" : flashAttn)
-        let turboKV = cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
         var seenAliases = Set<String>()
         var sections: [String] = []
         for path in modelPaths.sorted() {
@@ -263,7 +272,7 @@ struct ServerSettings {
             if cacheTypeV != "f16" { lines.append("cache-type-v = \(cacheTypeV)") }
             if mlock { lines.append("mlock = true") }
             lines.append("cache-ram = \(cacheRAM)")
-            if cacheReuse && !turboKV && mmproj == nil { lines.append("cache-reuse = 256") }
+            if cacheReuse && mmproj == nil { lines.append("cache-reuse = 256") }
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }
             if parallelSlots > 1 { lines.append("kv-unified = true") }
             if multiGPU || gpuList.count >= 2 { lines.append("split-mode = layer") }
@@ -507,6 +516,29 @@ struct ServerSettings {
     /// use key_length 512).
     nonisolated static func modelHasBigHeadDim(at path: String) -> Bool {
         (GGUFMetadataCache.metadata(at: path)?.uint32(forSuffix: "attention.key_length") ?? 0) > 256
+    }
+
+    nonisolated static func modelSupportsTurboKV(at path: String) -> Bool {
+        guard let metadata = GGUFMetadataCache.metadata(at: path) else { return false }
+        let keyLength = metadata.uint32(forSuffix: "attention.key_length") ??
+            metadata.uint32(forSuffix: "attention.key_length_mla") ?? {
+            guard let embedding = metadata.uint32(forSuffix: "embedding_length"),
+                  let heads = metadata.uint32(forSuffix: "attention.head_count"), heads > 0,
+                  embedding % heads == 0 else { return nil }
+            return embedding / heads
+        }()
+        let valueLength = metadata.uint32(forSuffix: "attention.value_length") ??
+            metadata.uint32(forSuffix: "attention.value_length_mla") ?? keyLength
+
+        guard let keyLength, let valueLength, keyLength > 0, valueLength > 0 else { return false }
+        let sharedPadded = ((max(keyLength, valueLength) + 127) / 128) * 128
+        return [128, 256, 384, 512, 640].contains(sharedPadded)
+    }
+
+    nonisolated static func modelUsesMLA(at path: String) -> Bool {
+        guard let metadata = GGUFMetadataCache.metadata(at: path) else { return false }
+        return metadata.uint32(forSuffix: "attention.key_length_mla") != nil ||
+            metadata.uint32(forSuffix: "attention.value_length_mla") != nil
     }
 
     var kvNeedsFlashAttention: Bool {
@@ -1034,11 +1066,26 @@ final class ServerController: ObservableObject {
             return
         }
         if settings.routerMode {
-            guard !LocalModel.scan(in: ServerSettings.modelsDirectory).isEmpty else {
+            let models = LocalModel.scan(in: ServerSettings.modelsDirectory)
+            guard !models.isEmpty else {
                 let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
                 state = .failed(lang == "es"
                     ? "No hay modelos descargados en la carpeta de modelos"
                     : "No models downloaded in the models folder")
+                return
+            }
+            if settings.usesTurboKV,
+               let incompatible = models.first(where: { !ServerSettings.modelSupportsTurboKV(at: $0.url.path) }) {
+                failTurboKV(model: incompatible.url.lastPathComponent)
+                return
+            }
+            if settings.usesTurboValuesWithoutKeys,
+               let mla = models.first(where: { ServerSettings.modelUsesMLA(at: $0.url.path) }) {
+                failTurboKV(model: mla.url.lastPathComponent)
+                return
+            }
+            if settings.usesUnsupportedTurboQ4Mix {
+                failTurboKV(model: "router")
                 return
             }
         } else {
@@ -1053,6 +1100,19 @@ final class ServerController: ObservableObject {
                 state = .failed(lang == "es"
                     ? "Modelo TurboQuant no soportado: la cuantización de pesos TurboQuant (tq3_1s/tq4_1s) produce salida incorrecta en este motor, tanto en modelos densos como MoE. Usa un modelo en cuantización estándar (Q4_K, Q5_K, Q6_K, Q8_0…)."
                     : "TurboQuant model not supported: TurboQuant weight quantization (tq3_1s/tq4_1s) produces incorrect output on this engine, for both dense and MoE models. Use a standard-quant model (Q4_K, Q5_K, Q6_K, Q8_0…).")
+                return
+            }
+            if settings.usesTurboKV &&
+               (ServerSettings.isAppleSilicon || !ServerSettings.modelSupportsTurboKV(at: settings.modelPath)) {
+                failTurboKV(model: URL(fileURLWithPath: settings.modelPath).lastPathComponent)
+                return
+            }
+            if settings.usesTurboValuesWithoutKeys && ServerSettings.modelUsesMLA(at: settings.modelPath) {
+                failTurboKV(model: URL(fileURLWithPath: settings.modelPath).lastPathComponent)
+                return
+            }
+            if settings.usesUnsupportedTurboQ4Mix {
+                failTurboKV(model: URL(fileURLWithPath: settings.modelPath).lastPathComponent)
                 return
             }
         }
@@ -1080,6 +1140,13 @@ final class ServerController: ObservableObject {
             }
             self?.launch(settings)
         }
+    }
+
+    private func failTurboKV(model: String) {
+        let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
+        state = .failed(lang == "es"
+            ? "TurboQuant KV no es compatible con \(model) o con la combinación elegida: requiere Metal AMD y cabezas con padding 128, 256, 384, 512 o 640; en MLA, Turbo en valores también requiere Turbo en claves; q4_0 no se puede mezclar con Turbo."
+            : "TurboQuant KV is not compatible with \(model) or the selected combination: it requires AMD Metal and heads padded to 128, 256, 384, 512 or 640; on MLA, Turbo values also require Turbo keys; q4_0 cannot be mixed with Turbo.")
     }
 
     /// Header at the top of the server log: version, engine, model, GPUs and the

@@ -508,6 +508,16 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "-ctk")! + 1], "q8_0")
         XCTAssertEqual(args[args.firstIndex(of: "-ctv")! + 1], "turbo3")
         XCTAssertTrue(args.contains("--mlock"))
+        XCTAssertTrue(args.contains("--cache-reuse"),
+                      "TurboQuant has a dequantize/shift/requantize path")
+        XCTAssertFalse(s.usesUnsupportedTurboQ4Mix)
+
+        s.cacheTypeK = "q4_0"
+        XCTAssertTrue(s.usesUnsupportedTurboQ4Mix)
+
+        s.cacheTypeK = "turbo4"
+        s.cacheTypeV = "q4_0"
+        XCTAssertTrue(s.usesUnsupportedTurboQ4Mix)
     }
 
     func testExtraArgsAreAppended() {

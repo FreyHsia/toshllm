@@ -4,8 +4,8 @@
 #
 #   ./scripts/test-wave64-fa.sh /path/to/model.gguf
 #
-# Any model works; one per head size (64/128/256/512) covers the most ground.
-set -e
+# A Turbo-compatible model also exercises the padded DK and cooperative-store paths.
+set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODEL="${1:?usage: $0 <model.gguf>}"
@@ -34,6 +34,18 @@ TOSH_METAL_SIMD_WIDTH="$WIDTH" "$EXPORT" -m "$MODEL" -c 8192 -ub 512 -b 512 -fa 
 awk '$1==74' "$TMP/ops.txt" > "$TMP/fa.txt"
 echo "shapes: $(wc -l < "$TMP/fa.txt")"
 "$BIN/test-backend-ops" test -b MTL0 --test-file "$TMP/fa.txt" 2>&1 | grep -E "tests passed|FAIL"
+
+echo "\n=== directed wave64 matrix"
+"$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'kv=257' 2>&1 | grep -E "tests passed|FAIL"
+"$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'kv=1025' 2>&1 | grep -E "tests passed|FAIL"
+"$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'hsk=(384|640).*kv=113.*type_K=turbo' 2>&1 | grep -E "tests passed|FAIL"
+"$BIN/test-backend-ops" test -b MTL0 -o SET_ROWS -p 'ne=\[(128|256|384|512|640),7,1,2\]' 2>&1 | grep -E "tests passed|FAIL"
+
+echo "\n=== TurboQuant model smoke"
+for kv in turbo4 turbo3; do
+    "$BIN/llama-bench" -m "$MODEL" --no-mmap -ngl 99 -fa on -ctk "$kv" -ctv "$kv" -p 64 -n 32 -r 1 2>&1 |
+        grep -E "probed SIMD-group width|model|pp|tg|error|failed"
+done
 
 echo "\n=== speed, Flash Attention on vs off (higher is better)"
 for d in 0 8192; do
