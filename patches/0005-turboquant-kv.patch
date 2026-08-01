@@ -491,7 +491,7 @@ index 4c1642a67..4f4a523af 100644
  void ggml_compute_forward_dsv4_hc_comb(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_dsv4_hc_pre(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 0cfb2181e..d0f0f25c2 100644
+index 3f752027e..3ac893e67 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
 @@ -160,7 +160,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows(ggml_me
@@ -1057,7 +1057,7 @@ index 89a6ad82f..5dc14b173 100644
  int ggml_metal_op_rwkv              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_gated_delta_net   (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 71bbc9438..6bd944d38 100644
+index 74ef0b438..5bd0a11f7 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -3080,6 +3080,160 @@ template [[host_name("kernel_gated_delta_net_f32_2")]] kernel kernel_gated_delta
