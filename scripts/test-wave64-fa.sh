@@ -38,7 +38,7 @@ echo "shapes: $(wc -l < "$TMP/fa.txt")"
 echo "\n=== directed wave64 matrix"
 "$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'kv=257' 2>&1 | grep -E "tests passed|FAIL"
 "$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'kv=1025' 2>&1 | grep -E "tests passed|FAIL"
-"$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'hsk=(384|640).*kv=113.*type_K=turbo' 2>&1 | grep -E "tests passed|FAIL"
+"$BIN/test-backend-ops" test -b MTL0 -o FLASH_ATTN_EXT -p 'hsk=(128|384|640).*kv=113.*type_K=turbo' 2>&1 | grep -E "tests passed|FAIL"
 "$BIN/test-backend-ops" test -b MTL0 -o SET_ROWS -p 'ne=\[(128|256|384|512|640),7,1,2\]' 2>&1 | grep -E "tests passed|FAIL"
 
 echo "\n=== TurboQuant model smoke"
