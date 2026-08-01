@@ -3,6 +3,23 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **TurboQuant KV cache is back in the bundled engine**... Turbo3 and Turbo4 now work without the retired experimental binary, including cooperative GPU writes, cache reuse and context shifts. The AMD attention path covers regular and padded head sizes from 128 through 640 on both wave32 and wave64 GPUs. Turbo4 is recommended from 4B models upward; Turbo3 trades more quality for memory and is intended for larger models and very long contexts.
+
+### Improved
+- **Batched generation is substantially faster on GCN/Vega GPUs**... the small-batch matrix-vector kernels now use the detected 64-lane SIMD width instead of being limited to wave32. Across the validated model set this raised generation by about 60% and prompt processing by about 35%, with output matching the previous path.
+- **Decode projections are fused on GCN/Vega too**... compatible Q, K and V matrix-vector operations now share one Wave64 dispatch. Llama 2 7B Q4_0 generation improved from 55.57 to 57.37 t/s (+3.2%) with identical output; Q4_K/Q6_K models also pass deterministic A/B validation.
+- **Long-context generation uses all available Wave64 workgroups**... attention for 256-, 512- and MLA 576/512-wide heads can split a long KV cache into 32 parts and merge them safely on a 64-lane GPU. GLM-4.7-Flash at 4096 context improved from 7.85 to 10.69 t/s (+36.2%).
+- **Long prompt attention is optimized for GCN/Vega**... the parallel-prefill kernel now runs on Wave64 where its logical 16-lane groups are valid. Qwen3.5-4B at pp2048 improved from 542.44 to 567.76 t/s (+4.7%).
+- **Dense prompt matrix multiplication overlaps tile loading with computation**... ToshGEMM now double-buffers dense tiles, measured +2.5% on an 8B model and +6.5% on Llama 2 7B, while keeping the existing path for MoE workloads where this scheduling regressed.
+
+### Fixed
+- **Wave64 vision attention no longer corrupts 72-wide heads**... the kernel now pins the same safe 16-lane logical subgroup used by the validated wave32 path instead of deriving an invalid reduction shape from the physical width.
+- **Large-batch perplexity remains finite on Vega**... the previous context-4096 reproduction that produced NaN now completes six WikiText-2 chunks at `PPL 4.3980 +/- 0.08084`, with the model offloaded to Metal.
+- **Image-to-image generation runs correctly on Vega**... SDXL Turbo now completes VAE encode, diffusion and tiled VAE decode on the GPU at 512x512. The validated run kept all 6.6 GB of model parameters in VRAM and loaded its matrix kernels at the native 64-lane width instead of moving the workload to CPU.
+
 ## [0.83.7] - 2026-07-30
 
 ### Improved
