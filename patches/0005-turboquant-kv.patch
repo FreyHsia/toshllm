@@ -709,7 +709,7 @@ index 9766f78b4..f786cc3f2 100644
      int32_t  ne00;
      int32_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 69c60152d..9038ecbeb 100644
+index 69c60152d..2cc4be0c8 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -10,6 +10,8 @@
@@ -814,7 +814,7 @@ index 69c60152d..9038ecbeb 100644
          nk0 = ne00/16;
      } else if (ggml_is_quantized(op->type)) {
          nk0 = ne00/ggml_blck_size(op->type);
-@@ -2063,6 +2116,119 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
+@@ -2063,6 +2116,133 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
      return 1;
  }
  
@@ -830,18 +830,15 @@ index 69c60152d..9038ecbeb 100644
 +    ggml_tensor * v = ctx->node(idx + 1);
 +    ggml_tensor * k = ctx->node(idx + 2);
 +
-+    // Restrict this first fused path to the exact layout used by Q4_K_M Qwen
-+    // models. Besides avoiding false-positive graph fusion, this preserves the
-+    // independently selected quantization of Q, V and K without extra weights.
++    // Avoid false-positive graph fusion: these must be the three independent
++    // decode projections over exactly the same activation. The quant pattern is
++    // selected separately below so every segment keeps its GGUF representation.
 +    if (q->op != GGML_OP_MUL_MAT || v->op != GGML_OP_MUL_MAT || k->op != GGML_OP_MUL_MAT ||
 +        (q->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
 +        (v->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
 +        (k->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
 +        q->src[1] != v->src[1] || q->src[1] != k->src[1] ||
 +        q->src[1]->type != GGML_TYPE_F32 ||
-+        q->src[0]->type != GGML_TYPE_Q4_K ||
-+        v->src[0]->type != GGML_TYPE_Q6_K ||
-+        k->src[0]->type != GGML_TYPE_Q4_K ||
 +        q->src[1]->ne[1] != 1 || v->src[1]->ne[1] != 1 || k->src[1]->ne[1] != 1 ||
 +        q->src[0]->ne[0] != q->src[1]->ne[0] ||
 +        v->src[0]->ne[0] != v->src[1]->ne[0] ||
@@ -852,6 +849,28 @@ index 69c60152d..9038ecbeb 100644
 +        strstr(ggml_get_name(q->src[0]), ".attn_q.weight") == nullptr ||
 +        strstr(ggml_get_name(v->src[0]), ".attn_v.weight") == nullptr ||
 +        strstr(ggml_get_name(k->src[0]), ".attn_k.weight") == nullptr) {
++        return 0;
++    }
++
++    struct qvk_pattern {
++        const char * kernel;
++        uint32_t nsg;
++        uint32_t nr_q;
++        uint32_t nr_v;
++        uint32_t nr_k;
++    } pattern = {};
++
++    const ggml_type tq = q->src[0]->type;
++    const ggml_type tv = v->src[0]->type;
++    const ggml_type tk = k->src[0]->type;
++
++    if (tq == GGML_TYPE_Q4_0 && tv == GGML_TYPE_Q4_0 && tk == GGML_TYPE_Q4_0) {
++        pattern = { "kernel_mul_mv_qvk_q4_0_q4_0_q4_0_f32", 1, 4, 4, 4 };
++    } else if (tq == GGML_TYPE_Q2_K && tv == GGML_TYPE_Q4_K && tk == GGML_TYPE_Q2_K) {
++        pattern = { "kernel_mul_mv_qvk_q2_K_q4_K_q2_K_f32", 2, 4, 2, 4 };
++    } else if (tq == GGML_TYPE_Q4_K && tv == GGML_TYPE_Q6_K && tk == GGML_TYPE_Q4_K) {
++        pattern = { "kernel_mul_mv_qvk_q4_K_q6_K_q4_K_f32", 2, 2, 2, 4 };
++    } else {
 +        return 0;
 +    }
 +
@@ -885,35 +904,30 @@ index 69c60152d..9038ecbeb 100644
 +        };
 +    };
 +
-+    constexpr uint32_t nsg = 2;
-+    constexpr uint32_t nr_q = 2;
-+    constexpr uint32_t nr_v = 2;
-+    constexpr uint32_t nr_k = 4;
-+
 +    ggml_metal_kargs_mul_mv_qvk args = {
-+        /*.q     =*/ make_args(q, nr_q),
-+        /*.v     =*/ make_args(v, nr_v),
-+        /*.k     =*/ make_args(k, nr_k),
-+        /*.nwg_q =*/ (uint32_t) ((q->src[0]->ne[1] + nr_q*nsg - 1)/(nr_q*nsg)),
-+        /*.nwg_v =*/ (uint32_t) ((v->src[0]->ne[1] + nr_v*nsg - 1)/(nr_v*nsg)),
++        /*.q     =*/ make_args(q, pattern.nr_q),
++        /*.v     =*/ make_args(v, pattern.nr_v),
++        /*.k     =*/ make_args(k, pattern.nr_k),
++        /*.nwg_q =*/ (uint32_t) ((q->src[0]->ne[1] + pattern.nr_q*pattern.nsg - 1)/(pattern.nr_q*pattern.nsg)),
++        /*.nwg_v =*/ (uint32_t) ((v->src[0]->ne[1] + pattern.nr_v*pattern.nsg - 1)/(pattern.nr_v*pattern.nsg)),
 +    };
-+    const uint32_t nwg_k = (uint32_t) ((k->src[0]->ne[1] + nr_k*nsg - 1)/(nr_k*nsg));
++    const uint32_t nwg_k = (uint32_t) ((k->src[0]->ne[1] + pattern.nr_k*pattern.nsg - 1)/(pattern.nr_k*pattern.nsg));
 +
-+    constexpr const char * base = "kernel_mul_mv_qvk_q4_K_q6_K_q4_K_f32";
-+    constexpr const char * name = "kernel_mul_mv_qvk_q4_K_q6_K_q4_K_f32_nsg=2_ne12=1_r2=1_r3=1_nw=32";
++    char name[256];
++    snprintf(name, sizeof(name), "%s_nsg=%u_ne12=1_r2=1_r3=1_nw=32", pattern.kernel, pattern.nsg);
 +    ggml_metal_pipeline_with_params pipeline = ggml_metal_library_get_pipeline(ctx->lib, name);
 +    if (!pipeline.pipeline) {
 +        ggml_metal_cv_t cv = ggml_metal_cv_init();
-+        ggml_metal_cv_set_int16(cv, nsg, FC_MUL_MV + 0);
++        ggml_metal_cv_set_int16(cv, pattern.nsg, FC_MUL_MV + 0);
 +        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 2);
 +        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 3);
 +        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 4);
 +        ggml_metal_cv_set_int16(cv, 32,  FC_MUL_MV + 5);
-+        pipeline = ggml_metal_library_compile_pipeline(ctx->lib, base, name, cv);
++        pipeline = ggml_metal_library_compile_pipeline(ctx->lib, pattern.kernel, name, cv);
 +        ggml_metal_cv_free(cv);
 +    }
 +
-+    if (!pipeline.pipeline || ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < 32*(int) nsg) {
++    if (!pipeline.pipeline || ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < 32*(int) pattern.nsg) {
 +        return 0;
 +    }
 +
@@ -926,7 +940,7 @@ index 69c60152d..9038ecbeb 100644
 +    ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(q),         5);
 +    ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(v),         6);
 +    ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(k),         7);
-+    ggml_metal_encoder_dispatch_threadgroups(ctx->enc, args.nwg_q + args.nwg_v + nwg_k, 1, 1, 32, nsg, 1);
++    ggml_metal_encoder_dispatch_threadgroups(ctx->enc, args.nwg_q + args.nwg_v + nwg_k, 1, 1, 32, pattern.nsg, 1);
 +
 +    return 3;
 +}
@@ -934,7 +948,7 @@ index 69c60152d..9038ecbeb 100644
  int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
      ggml_tensor * op = ctx->node(idx);
  
-@@ -2071,6 +2237,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2071,6 +2251,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
  
      const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
  
@@ -945,7 +959,7 @@ index 69c60152d..9038ecbeb 100644
      GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
      GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
      GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
-@@ -2609,12 +2779,21 @@ static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
+@@ -2609,12 +2793,21 @@ static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
          case GGML_TYPE_F16:  return "f16";
          case GGML_TYPE_Q8_0: return "q8_0";
          case GGML_TYPE_Q4_0: return "q4_0";
@@ -968,7 +982,7 @@ index 69c60152d..9038ecbeb 100644
      return ggml_metal_fa_amd_type_suffix(kt) != nullptr && ggml_metal_fa_amd_type_suffix(vt) != nullptr;
  }
  
-@@ -2822,13 +3001,21 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -2822,13 +3015,21 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
      // dk 72 is instantiated for f16 K/V only (vision towers); see the .metal side.
      const bool fa_amd_dk72 = ne00 == 72 &&
          op->src[1]->type == GGML_TYPE_F16 && op->src[2]->type == GGML_TYPE_F16;
@@ -991,7 +1005,7 @@ index 69c60152d..9038ecbeb 100644
      }
      // wave32 rides on simdgroup_reduction; wave64 uses the _w64 instantiations and
      // is gated by wave64_decode (simdgroup_reduction is forced off there).
-@@ -2880,7 +3067,9 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -2880,7 +3081,9 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          const int fa_pf_bq = ne00 == 256 ? 32 : 64;
          const bool fa_pf_head_ok =
              ne00 == 64 || ne00 == 128 || ne00 == 256 || fa_amd_dk72;
@@ -1002,7 +1016,7 @@ index 69c60152d..9038ecbeb 100644
              char fa_pf_pipeline[80];
              snprintf(fa_pf_pipeline, sizeof(fa_pf_pipeline), "kernel_flash_attn_ext_pf_amd_dk%d_k%s_v%s", (int) ne00,
                       ggml_metal_fa_amd_type_suffix(op->src[1]->type), ggml_metal_fa_amd_type_suffix(op->src[2]->type));
-@@ -2914,9 +3103,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -2914,9 +3117,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // decode keeps the per-query vec kernel
          if (ne01 >= 16 && getenv("TOSH_FA_TILE_DISABLE") == NULL) {
              char fa_tile_pipeline[80];
@@ -1021,7 +1035,7 @@ index 69c60152d..9038ecbeb 100644
  
              auto pipeline = ggml_metal_library_get_pipeline(lib, fa_tile_pipeline);
              if (!pipeline.pipeline) {
-@@ -2957,7 +3152,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -2957,7 +3166,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // one threadgroup per query head leaves most of the GPU idle on models with
          // few heads; split the cache across 32 and let upstream's reduce merge them
          const int fa_amd_nwg =
@@ -1043,7 +1057,7 @@ index 89a6ad82f..5dc14b173 100644
  int ggml_metal_op_rwkv              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_gated_delta_net   (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 71bbc9438..d9d5a77a9 100644
+index 71bbc9438..6bd944d38 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -3080,6 +3080,160 @@ template [[host_name("kernel_gated_delta_net_f32_2")]] kernel kernel_gated_delta
@@ -2152,7 +2166,7 @@ index 71bbc9438..d9d5a77a9 100644
  template<typename T4x4, typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread T4x4 &)>
  kernel void kernel_cpy_q_f32(
          constant ggml_metal_kargs_cpy & args,
-@@ -9756,6 +10601,44 @@ kernel void kernel_mul_mv_q6_K_f32(
+@@ -9756,6 +10601,106 @@ kernel void kernel_mul_mv_q6_K_f32(
      kernel_mul_mv_q6_K_f32_impl<N_R0_Q6_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
  }
  
@@ -2194,10 +2208,72 @@ index 71bbc9438..d9d5a77a9 100644
 +        args.k, wk, src, dst_k, nullptr, local, tiisg, sgitg);
 +}
 +
++// Legacy homogeneous quants use the same matvec implementation and launch
++// geometry for all three projections. Llama 2 Q4_0 is the important case: its
++// Q/V/K matrices are all full-width, so one segmented grid saves two dispatches
++// without changing either the row tiling or the reduction order.
++[[host_name("kernel_mul_mv_qvk_q4_0_q4_0_q4_0_f32")]]
++kernel void kernel_mul_mv_qvk_q4_0_q4_0_q4_0_f32(
++        constant ggml_metal_kargs_mul_mv_qvk & args,
++        device const char * wq,
++        device const char * wv,
++        device const char * wk,
++        device const char * src,
++        device       char * dst_q,
++        device       char * dst_v,
++        device       char * dst_k,
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++    uint3 local = tgpig;
++
++    if (local.x < args.nwg_q) {
++        mul_vec_q_n_f32_impl<block_q4_0, N_R0_Q4_0, constant ggml_metal_kargs_mul_mv &>(
++            args.q, wq, src, dst_q, nullptr, local, tiisg, sgitg);
++        return;
++    }
++
++    local.x -= args.nwg_q;
++    if (local.x < args.nwg_v) {
++        mul_vec_q_n_f32_impl<block_q4_0, N_R0_Q4_0, constant ggml_metal_kargs_mul_mv &>(
++            args.v, wv, src, dst_v, nullptr, local, tiisg, sgitg);
++        return;
++    }
++
++    local.x -= args.nwg_v;
++    mul_vec_q_n_f32_impl<block_q4_0, N_R0_Q4_0, constant ggml_metal_kargs_mul_mv &>(
++        args.k, wk, src, dst_k, nullptr, local, tiisg, sgitg);
++}
++
++// Q2_K promotes V to Q4_K. The Q3_K/Q5_K mix was also tested, but its register
++// pressure erased the dispatch saving on RDNA, so it deliberately stays on the
++// three standalone kernels. Q4_K_M is handled by the specialization above.
++[[host_name("kernel_mul_mv_qvk_q2_K_q4_K_q2_K_f32")]]
++kernel void kernel_mul_mv_qvk_q2_K_q4_K_q2_K_f32(
++        constant ggml_metal_kargs_mul_mv_qvk & args,
++        device const char * wq, device const char * wv, device const char * wk, device const char * src,
++        device char * dst_q, device char * dst_v, device char * dst_k,
++        uint3 tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++    uint3 local = tgpig;
++    if (local.x < args.nwg_q) {
++        kernel_mul_mv_q2_K_f32_impl<4, constant ggml_metal_kargs_mul_mv &>(args.q, wq, src, dst_q, nullptr, local, tiisg, sgitg);
++        return;
++    }
++    local.x -= args.nwg_q;
++    if (local.x < args.nwg_v) {
++        kernel_mul_mv_q4_K_f32_impl<2, constant ggml_metal_kargs_mul_mv &>(args.v, wv, src, dst_v, nullptr, local, tiisg, sgitg);
++        return;
++    }
++    local.x -= args.nwg_v;
++    kernel_mul_mv_q2_K_f32_impl<4, constant ggml_metal_kargs_mul_mv &>(args.k, wk, src, dst_k, nullptr, local, tiisg, sgitg);
++}
++
  // ======================= "True" 2-bit
  
  template<int nr0, typename args_t>
-@@ -11033,6 +11916,564 @@ template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t k
+@@ -11033,6 +11978,564 @@ template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t k
  template [[host_name("kernel_set_rows_f32_i64_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int64_t, block_iq4_nl, quantize_iq4_nl>;
  template [[host_name("kernel_set_rows_f32_i32_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int32_t, block_iq4_nl, quantize_iq4_nl>;
  
