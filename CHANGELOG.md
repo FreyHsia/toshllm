@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.9] - 2026-08-02
 
 ### Improved
 - **Q2_K, Q3_K and IQ models now generate on the GPU on GCN/Vega**... their matrix-vector kernels read the detected 64-lane SIMD width instead of a hard-coded 32, so generation no longer falls back to the CPU: Qwen3 4B Q3_K_M went from 3.96 to 44.04 t/s on a Radeon RX Vega 64 (8 GB).
