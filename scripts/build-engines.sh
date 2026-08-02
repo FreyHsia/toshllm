@@ -130,6 +130,9 @@ build_engine() {
     retry_git git fetch origin "$fetch_ref" 2>/dev/null || retry_git git fetch origin
     git checkout -qf "$ref"
     git checkout -- . 2>/dev/null || true
+    # files a patch creates are untracked, so the checkout above leaves them behind
+    # and the next apply fails; build dirs are gitignored and survive this
+    git clean -qfd 2>/dev/null || true
 
     for patch in "${patches[@]}"; do
         git apply "$ROOT/patches/$patch"
@@ -234,6 +237,10 @@ build_image_engine() {
             echo "precompiled default.metallib for image engine"
         else
             rm -f build-static/bin/ggml-metal.air build-static/bin/default.metallib
+            # a compile error here means our hunks landed wrong in the older ggml of
+            # sd.cpp, which would also break the runtime compile
+            echo "ERROR: image engine shaders do not compile" >&2
+            exit 1
         fi
     fi
     echo "image engine ready at $PWD/build-static/bin (arch: $ARCH)"
