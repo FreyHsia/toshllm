@@ -251,7 +251,8 @@ build_image_engine() {
 if [ -z "$SKIP_LLAMA" ]; then
 build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" \
     0001-metal-amd-staging-transfers.patch \
-    0005-turboquant-kv.patch
+    0005-turboquant-kv.patch \
+    0006-mrope-kv-shift.patch
 fi
 
 

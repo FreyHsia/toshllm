@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Models with very large activations no longer produce garbage on AMD GPUs when Flash Attention is off**... the tiled matrix multiplication accumulated attention products in half precision, which overflowed to infinity and left the softmax as NaN: Qwen2.5 1.5B answered `@@@@@` and now answers normally.
 
 ### Improved
+- **Qwen3-VL, Qwen3.5 and Qwen3.6 models now reuse the prompt cache and can shift context**... the engine refused every cache shift on these models, so editing the beginning of a prompt reprocessed all of it: an 821-token prompt whose opening note was deleted is now reused whole instead of processed again.
 - **BF16 models and vision towers are faster on AMD GPUs**... their matrix multiplications now accumulate in float instead of emulated bfloat: prompt processing measured 77% faster on Qwen3 0.6B BF16, and a BF16 vision encoder went from 8.6 to 7.6 seconds per image on a Radeon RX Vega 64.
 
 ## [0.83.9] - 2026-08-02
