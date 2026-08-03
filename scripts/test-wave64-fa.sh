@@ -43,7 +43,7 @@ echo "\n=== directed wave64 matrix"
 
 echo "\n=== TurboQuant model smoke"
 for kv in turbo4 turbo3; do
-    "$BIN/llama-bench" -m "$MODEL" --no-mmap -ngl 99 -fa on -ctk "$kv" -ctv "$kv" -p 64 -n 32 -r 1 2>&1 |
+    "$BIN/llama-bench" -m "$MODEL" -mmp 0 -ngl 99 -fa on -ctk "$kv" -ctv "$kv" -p 64 -n 32 -r 1 2>&1 |
         grep -E "probed SIMD-group width|model|pp|tg|error|failed"
 done
 
