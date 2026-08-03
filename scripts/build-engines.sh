@@ -199,7 +199,8 @@ build_image_engine() {
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/0003-image-metal-ncb.patch"
     # sd.cpp core (outside the ggml submodule): per-op CPU fallback for wave64.
     git apply -p1 "$ROOT/patches/0004-image-cpu-fallback-sched.patch"
-    echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 to stable-diffusion.cpp"
+    git apply -p1 "$ROOT/patches/0008-image-ext-wave64.patch"
+    echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
     # function and still exit 0. Patch context is -U5 to avoid it; assert it anyway.
