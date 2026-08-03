@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Models with very large activations no longer produce garbage on AMD GPUs when Flash Attention is off**... the tiled matrix multiplication accumulated attention products in half precision, which overflowed to infinity and left the softmax as NaN: Qwen2.5 1.5B answered `@@@@@` and now answers normally.
 
 ### Improved
+- **Long prompts are much faster on GCN/Vega**... attention during prompt processing was decomposed into separate matrix multiplications there, because the blocked Flash Attention kernel had only been validated on 32-lane GPUs: on a Radeon RX Vega 64, Qwen3 4B went from 295 to 457 t/s at 8k of context, and Llama 3.2 1B from 917 to 1553 t/s, with identical perplexity.
 - **More operations run on the GPU on GCN/Vega**... sums, argmax, count-equal and the SSM scan were gated on a 32-lane reduction and fell back to the CPU: they now size their reductions and shared memory by the detected 64-lane width. Argmax matters for speculative decoding, and the SSM scan for Mamba-style models.
 - **Ternary Q1_0 and Q2_0 models generate on the GPU there too** (#41)... they loaded and processed prompts on the GPU but decoded on the CPU, because their matrix-vector kernels split work across a fixed 32 lanes.
 - **Fused Q/K/V decode covers Q2_K on GCN/Vega**... the specialization was held back to 32-lane GPUs while its matrix-vector kernel was ported, which finished in 0.83.9.

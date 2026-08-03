@@ -8088,7 +8088,7 @@ index 348bbae95..a5286ac9e 100644
  
  LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index c8ecb0a28..60fc641b4 100644
+index c8ecb0a28..57df76d73 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
 @@ -1192,10 +1192,11 @@ void llm_graph_result::reset() {
@@ -8103,25 +8103,24 @@ index c8ecb0a28..60fc641b4 100644
      std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
  
      t_sampled.clear();
-@@ -2402,11 +2403,48 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2402,11 +2403,47 @@ ggml_tensor * llm_graph_context::build_attn_mha(
      k = ggml_permute(ctx0, k, 0, 2, 1, 3);
      v = ggml_permute(ctx0, v, 0, 2, 1, 3);
  
      ggml_tensor * cur;
  
 -    const bool use_flash_attn = cparams.flash_attn && kq_b == nullptr;
-+    // Independent RDNA prefill optimization (not the Qwen3-0.6B wave64 issue):
-+    // AMD FA wins decode, while the decomposed graph wins long f16/f16 prefill
-+    // for the measured head sizes. Quantized KV and wave64 keep AMD FA unchanged.
++    // AMD FA wins decode, while the decomposed graph wins long prefill for the
++    // measured head sizes.
 +    const char * metal_simd_width = getenv("TOSH_METAL_SIMD_WIDTH");
 +    const bool measured_head_size =
 +        q->ne[0] == 64 || q->ne[0] == 128 || q->ne[0] == 256 || q->ne[0] == 512;
-+    // Head 64/128 go to the blocked FA prefill kernel, which beat this route at
-+    // every depth. Bias and softcap have no such kernel and would land on the slow
-+    // generic path; wave64 is left here because there is no hardware to check on.
++    // Head 64/128 beat the decomposed route at every depth on both wave widths; bias
++    // and softcap have no blocked kernel and would land on the slow generic path.
 +    const bool amd_prefill_fa_blocked =
 +        (q->ne[0] == 64 || q->ne[0] == 128) &&
-+        metal_simd_width != nullptr && strcmp(metal_simd_width, "32") == 0 &&
++        metal_simd_width != nullptr &&
++        (strcmp(metal_simd_width, "32") == 0 || strcmp(metal_simd_width, "64") == 0) &&
 +        hparams.f_max_alibi_bias == 0.0f && !hparams.attn_soft_cap &&
 +        getenv("TOSH_FA_PF_DISABLE") == nullptr;
 +    // Head-256 is neutral through 1024 tokens and only pulls ahead on longer
@@ -8153,7 +8152,7 @@ index c8ecb0a28..60fc641b4 100644
  
          if (v_trans) {
              v = ggml_transpose(ctx0, v);
-@@ -2445,10 +2483,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2445,10 +2482,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
  #endif
          }
  
@@ -8169,7 +8168,7 @@ index c8ecb0a28..60fc641b4 100644
  
          // note: this op tends to require high floating point range
          //       while for some models F16 is enough, for others it is not, so we default to F32 here
-@@ -2485,10 +2528,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2485,10 +2527,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
          ggml_soft_max_add_sinks(kq, sinks);
          cb(kq, "kq_soft_max", il);
  
@@ -8185,7 +8184,7 @@ index c8ecb0a28..60fc641b4 100644
          }
  
          ggml_tensor * kqv = ggml_mul_mat(ctx0, v, kq);
-@@ -3397,11 +3445,21 @@ void llm_graph_context::build_pooling(
+@@ -3397,11 +3444,21 @@ void llm_graph_context::build_pooling(
  
      ggml_build_forward_expand(gf, cur);
  }
