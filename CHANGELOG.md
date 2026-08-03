@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.10] - 2026-08-03
 
 ### Fixed
 - **Models with very large activations no longer produce garbage on AMD GPUs when Flash Attention is off**... the tiled matrix multiplication accumulated attention products in half precision, which overflowed to infinity and left the softmax as NaN: Qwen2.5 1.5B answered `@@@@@` and now answers normally.
