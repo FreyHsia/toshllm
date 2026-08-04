@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.11] - 2026-08-04
 
 ### Improved
 - **Models load four times faster with `--split-mode tensor`**... each split tensor was uploaded one row at a time, and every row paid for its own command buffer and its own wait: Qwen3 8B went from 12.6 to 3.0 seconds, which is what the same model takes on a single GPU.
