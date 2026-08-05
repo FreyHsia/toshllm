@@ -3,6 +3,14 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.83.12] - 2026-08-05
+
+### Fixed
+- **Tensor-split peer transfers no longer allow the sending GPU to overwrite data still being read**... the receiving queue now signals completion back to the sender before that source can be reused. The two-queue regression that produced corrupted text in three out of three runs now matches the generic transfer path byte for byte.
+
+### Improved
+- **Tensor split now uses Metal's native two-GPU all-reduce when the tensors are compatible**... eligible reductions copy into reusable private scratch buffers and encode the addition directly instead of submitting a one-node graph per GPU. It handled all 9,360 reductions in a 128-token validation run, while unsupported shapes keep the existing fallback.
+
 ## [0.83.11] - 2026-08-04
 
 ### Improved
