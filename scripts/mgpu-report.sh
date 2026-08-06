@@ -22,21 +22,33 @@ echo "=== version"
 "$BIN/llama-server" --version 2>&1 | head -2
 
 echo "\n=== devices (maxBufferLength decides the ':1154 multi buffers' abort)"
-swift -e 'import Metal; MTLCopyAllDevices().forEach { print($0.name, "maxBufferLength", $0.maxBufferLength/1024/1024/1024, "GB") }' 2>/dev/null \
+swift -e 'import Metal; MTLCopyAllDevices().forEach { print($0.name, "maxBufferLength", $0.maxBufferLength, "bytes =", Double($0.maxBufferLength)/1073741824.0, "GiB") }' 2>/dev/null \
     || echo "swift not available, skipped"
-echo "GGML_METAL_DEVICE_LIST=${GGML_METAL_DEVICE_LIST:-unset}  TOSH_MGPU_PEER=${TOSH_MGPU_PEER:-unset}"
+echo "GGML_METAL_DEVICE_LIST=${GGML_METAL_DEVICE_LIST:-unset}"
+echo "inherited sync flags (ignored, every run below sets its own):" \
+     "TOSH_MGPU_PEER=${TOSH_MGPU_PEER:-unset}  TOSH_MGPU_EVENTS=${TOSH_MGPU_EVENTS:-unset}  TOSH_MGPU_DEFER_WAITS=${TOSH_MGPU_DEFER_WAITS:-unset}"
 
-echo "\n=== layer vs tensor"
-"${BENCH[@]}" --split-mode layer  2>&1 | grep -vE "^ggml_metal|^load_"
-"${BENCH[@]}" --split-mode tensor 2>&1 | grep -vE "^ggml_metal|^load_"
+# Sync flags are set per run, so the numbers never depend on what the caller exported.
+CLEAN=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS -u TOSH_MGPU_DEFER_WAITS)
+
+echo "\n=== layer vs tensor (no sync flags)"
+"${CLEAN[@]}" "${BENCH[@]}" --split-mode layer  2>&1 | grep -vE "^ggml_metal|^load_"
+"${CLEAN[@]}" "${BENCH[@]}" --split-mode tensor 2>&1 | grep -vE "^ggml_metal|^load_"
+
+echo "\n=== tensor split: sync path matrix"
+for cfg in "none:" "peer:TOSH_MGPU_PEER=1" "events:TOSH_MGPU_EVENTS=1" \
+           "peer+events:TOSH_MGPU_PEER=1 TOSH_MGPU_EVENTS=1"; do
+    echo "-- ${cfg%%:*}"
+    "${CLEAN[@]}" ${=cfg#*:} "${BENCH[@]}" --split-mode tensor 2>&1 | grep -E "tg128|pp512"
+done
 
 echo "\n=== tensor split: deferred waits off/on"
-TOSH_MGPU_DEFER_WAITS=0 "${BENCH[@]}" --split-mode tensor 2>&1 | grep -E "tg128|pp512"
-TOSH_MGPU_DEFER_WAITS=1 "${BENCH[@]}" --split-mode tensor 2>&1 | grep -E "tg128|pp512"
+"${CLEAN[@]}" TOSH_MGPU_DEFER_WAITS=0 "${BENCH[@]}" --split-mode tensor 2>&1 | grep -E "tg128|pp512"
+"${CLEAN[@]}" TOSH_MGPU_DEFER_WAITS=1 "${BENCH[@]}" --split-mode tensor 2>&1 | grep -E "tg128|pp512"
 
 echo "\n=== layer split: event hand-off off/on"
-TOSH_MGPU_EVENTS=0 "${BENCH[@]}" --split-mode layer 2>&1 | grep -E "tg128|pp512"
-TOSH_MGPU_EVENTS=1 "${BENCH[@]}" --split-mode layer 2>&1 | grep -E "tg128|pp512"
+"${CLEAN[@]}" TOSH_MGPU_EVENTS=0 "${BENCH[@]}" --split-mode layer 2>&1 | grep -E "tg128|pp512"
+"${CLEAN[@]}" TOSH_MGPU_EVENTS=1 "${BENCH[@]}" --split-mode layer 2>&1 | grep -E "tg128|pp512"
 
 if [ -n "$MODEL_ABORT" ]; then
     echo "\n=== model that aborts (expected to fail, we want the exact line)"

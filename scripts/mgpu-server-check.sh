@@ -5,7 +5,9 @@
 #   ./scripts/mgpu-server-check.sh <model.gguf>
 #
 # Uses the installed app by default; override with TOSH_BIN=/path/to/bin.
-# TOSH_DEV=MTL0,MTL0 splits over a single card, which is how we reproduce this here.
+# Pick the GPUs with GGML_METAL_DEVICE_LIST (0,0 splits over a single card, which is how we
+# reproduce this here). Never with -dev: on tensor split it lands on a path that is neither
+# split nor single and hides the effect of the sync flags.
 set -uo pipefail
 
 MODEL="${1:?usage: $0 <model.gguf>}"
@@ -21,11 +23,11 @@ export TOSH_FA_AMD=1
 OUT="$(mktemp -d)"
 echo "logs in $OUT"
 
+MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS)
+
 serve() { # serve <log> <extra args...>
     local log="$1"; shift
-    local dev=()
-    [ -n "${TOSH_DEV:-}" ] && dev=(-dev "$TOSH_DEV")
-    "$BIN/llama-server" -m "$MODEL" -ngl 99 --no-mmap -fa on --jinja "${dev[@]}" \
+    "${MGPU_ENV[@]}" "$BIN/llama-server" -m "$MODEL" -ngl 99 --no-mmap -fa on --jinja \
         --host 127.0.0.1 --port $PORT "$@" > "$log" 2>&1 &
     SRV=$!
     for i in $(seq 1 300); do
@@ -83,3 +85,17 @@ if serve "$OUT/tensor.log" --split-mode tensor; then
 fi
 report "$OUT/tensor.log" "tensor"
 echo "\nattach $OUT/sample.txt"
+
+for cfg in "peer:TOSH_MGPU_PEER=1" "events:TOSH_MGPU_EVENTS=1" \
+           "peer+events:TOSH_MGPU_PEER=1 TOSH_MGPU_EVENTS=1"; do
+    label="${cfg%%:*}"
+    echo "\n=== 4. tensor split, coherence with $label"
+    MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS ${=cfg#*:})
+    if serve "$OUT/$label.log" --split-mode tensor; then
+        ask 120 > "$OUT/$label.json"
+        echo "output (must be coherent, no mixed scripts or garbage):"
+        show "$OUT/$label.json"
+        stop
+    fi
+    report "$OUT/$label.log" "$label"
+done
