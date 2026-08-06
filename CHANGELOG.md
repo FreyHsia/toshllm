@@ -3,6 +3,15 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Speculative decoding costs much less on the content where it does not help**... while acceptance stays low the engine disengages, but it kept the draft cache in step one decode per token and only disengaged below 50% acceptance, under the 54% break-even measured on this hardware: those catch-ups are now replayed in a single batch before the next attempt, and a 4B model on technical prose went from 58.5 to 60.5 t/s against 64.6 without speculation. Predictable content, where it does help, is unchanged at 91.4 t/s against the same 64.6.
+
+### Fixed
+- **The automatic parameter fit no longer reports `abort` with `--split-mode tensor`**... it is not implemented for that mode, so the model always loaded normally with the parameters as given, but the wording read like a fatal error.
+- **The GCN/Vega startup line no longer under-reports which formats decode on the GPU**... it named six quantization types while the engine covers twenty, Q4_0 among them, which made benchmark reports look like they had fallen back to the CPU.
+
 ## [0.83.12] - 2026-08-05
 
 ### Fixed

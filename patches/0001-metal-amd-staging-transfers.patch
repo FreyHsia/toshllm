@@ -59,8 +59,38 @@ index bffc1767a..d11a4de03 100644
  void postprocess_cpu_params(common_cpu_params & cpuparams, const common_cpu_params * role_model = nullptr);
  bool set_process_priority(enum ggml_sched_priority prio);
  
+diff --git a/common/fit.cpp b/common/fit.cpp
+index afbf0b10f..562176ba9 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -176,11 +176,11 @@ common_device_memory_data_vec common_get_device_memory_data(
+ static void common_params_fit_impl(
+         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
+         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
+         size_t * margins_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
+     if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
+-        throw common_params_fit_exception("llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort");
++        throw common_params_fit_exception("automatic fitting is not implemented for --split-mode tensor");
+     }
+     constexpr int64_t MiB = 1024*1024;
+     typedef std::vector<llama_device_memory_data> dmds_t;
+     const llama_model_params default_mparams = llama_model_default_params();
+ 
+@@ -799,11 +799,11 @@ enum common_params_fit_status common_fit_params(
+     common_params_fit_status status = COMMON_PARAMS_FIT_STATUS_SUCCESS;
+     try {
+         common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, margins, n_ctx_min, log_level);
+         LOG_TRC("%s: successfully fit params to free device memory\n", __func__);
+     } catch (const common_params_fit_exception & e) {
+-        LOG_WRN("%s: failed to fit params to free device memory: %s\n", __func__, e.what());
++        LOG_WRN("%s: not fitting params to free device memory: %s; continuing with the parameters as given\n", __func__, e.what());
+         status = COMMON_PARAMS_FIT_STATUS_FAILURE;
+     } catch (const std::runtime_error & e) {
+         LOG_ERR("%s: encountered an error while trying to fit params to free device memory: %s\n", __func__, e.what());
+         status = COMMON_PARAMS_FIT_STATUS_ERROR;
+     }
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 3cb08767b..f11a30dd3 100644
+index 3cb08767b..3b804af70 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -915,17 +915,25 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
@@ -217,12 +247,25 @@ index 3cb08767b..f11a30dd3 100644
      bool need_embd() const override {
          return false;
      }
-@@ -1235,10 +1295,17 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+@@ -1235,10 +1295,30 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
      std::vector<int32_t> verify_h_rows;
  
      std::vector<int>                i_last;
      std::vector<std::vector<float>> chain_h;
  
++    // catch-up rows stashed while a sequence is backed off, replayed in one decode when it is
++    // about to draft again: per-token catch-up decodes are pure overhead if no draft reads them
++    struct cold_row { llama_token id; llama_pos pos; };
++    std::vector<std::vector<cold_row>> cold_rows;
++    std::vector<std::vector<float>>    cold_h;
++
++    static constexpr size_t cold_max = 128;
++
++    bool  cold_defer = true;
++    float acc_min    = 0.65f;
++    int   probe_base = 8;
++    int   probe_cap  = 24;
++
 +    // acceptance backoff: skip drafting while recent acceptance stays low (fall back to AR),
 +    // probing periodically, so unpredictable content does not regress below the AR baseline
 +    std::vector<float>   acc_ewma;
@@ -235,7 +278,184 @@ index 3cb08767b..f11a30dd3 100644
          , params(params.draft)
      {
          auto * ctx_tgt = this->params.ctx_tgt;
-@@ -1478,22 +1545,51 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+@@ -1306,10 +1386,18 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             }
+         }
+ 
+         pending_h.assign(n_seq, std::vector<float>(n_embd, 0.0f));
+ 
++        cold_rows.assign(n_seq, {});
++        cold_h.assign(n_seq, {});
++
++        cold_defer = getenv("TOSH_MTP_COLD_DEFER_DISABLE") == nullptr;
++        acc_min    = getenv("TOSH_MTP_ACC_MIN")   ? (float) atof(getenv("TOSH_MTP_ACC_MIN"))   : acc_min;
++        probe_base = getenv("TOSH_MTP_PROBE")     ?         atoi(getenv("TOSH_MTP_PROBE"))     : probe_base;
++        probe_cap  = getenv("TOSH_MTP_PROBE_CAP") ?         atoi(getenv("TOSH_MTP_PROBE_CAP")) : probe_cap;
++
+         i_last.assign(n_seq, -1);
+         i_batch_beg.assign(n_seq, -1);
+         i_batch_end.assign(n_seq, -1);
+ 
+         verify_h.assign(n_seq, {});
+@@ -1334,16 +1422,72 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             batch.token = nullptr;
+         }
+         llama_batch_free(batch);
+     }
+ 
++    // true if draft() will skip this seq, i.e. nothing will read its draft KV this step. mirrors
++    // the backoff gate exactly, and process() runs before draft() without touching that state
++    bool cold_step(llama_seq_id seq_id) const {
++        if (!cold_defer || (int) acc_ewma.size() != (int) n_seq) {
++            return false;
++        }
++
++        // a batch that verifies a draft can have its tail rejected and resent, so its rows must
++        // reach the KV now: only a plain single-token append is safe to hold back
++        if (n_last_draft[seq_id] != 0 || i_batch_end[seq_id] != i_batch_beg[seq_id]) {
++            return false;
++        }
++
++        return acc_ewma[seq_id] < acc_min && steps_cold[seq_id] < probe_gap[seq_id];
++    }
++
++    bool cold_flush(llama_seq_id seq_id) {
++        if (cold_rows[seq_id].empty()) {
++            return true;
++        }
++
++        auto * ctx_dft = this->params.ctx_dft;
++
++        // a context shift or a checkpoint restore moves the draft KV under the stash; replaying it
++        // then would write at the wrong offset, so drop it and let the next catch-up decode resync
++        const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
++
++        bool ok = cold_rows[seq_id][0].pos == pos_max + 1;
++        if (ok) {
++            common_batch_clear(batch);
++            for (size_t i = 0; i < cold_rows[seq_id].size(); ++i) {
++                common_batch_add(batch, cold_rows[seq_id][i].id, cold_rows[seq_id][i].pos, { seq_id }, 0);
++                std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd,
++                        cold_h[seq_id].data() + (size_t) i * n_embd, (size_t) n_embd * sizeof(float));
++            }
++
++            const int32_t rc = llama_decode(ctx_dft, batch);
++            if (rc != 0) {
++                SPC_ERR("llama_decode(ctx_dft) cold flush failed rc=%d (seq_id=%d, n=%d)\n",
++                        (int) rc, (int) seq_id, (int) cold_rows[seq_id].size());
++                ok = false;
++            }
++        } else {
++            SPC_WRN("draft KV moved under the cold stash (seq_id=%d, pos_max=%d, stash pos=%d), dropping it\n",
++                    (int) seq_id, (int) pos_max, (int) cold_rows[seq_id][0].pos);
++        }
++
++        cold_rows[seq_id].clear();
++        cold_h[seq_id].clear();
++
++        return ok;
++    }
++
+     void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
+         const int32_t N = (int32_t) prompt.size();
+         if (N <= 0) {
+             return;
+         }
+ 
++        cold_rows[seq_id].clear();
++        cold_h[seq_id].clear();
++
+         auto * ctx_dft = this->params.ctx_dft;
+         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
+ 
+         if (pos_max < N - 1 && !is_mem_shared) {
+             SPC_WRN("ctx_dft pos_max=%d < N-1=%d - "
+@@ -1386,10 +1530,22 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+         auto * ctx_tgt = this->params.ctx_tgt;
+         auto * ctx_dft = this->params.ctx_dft;
+ 
+         const size_t row_bytes = (size_t) n_embd * sizeof(float);
+ 
++        const bool can_defer = !is_mem_shared && !chain_heads;
++
++        // flush before the batch is built: cold_flush reuses `batch`
++        if (!is_mem_shared && !chain_heads) {
++            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
++                const bool keep = can_defer && cold_step(seq_id) && cold_rows[seq_id].size() < cold_max;
++                if (!cold_rows[seq_id].empty() && !keep) {
++                    cold_flush(seq_id);
++                }
++            }
++        }
++
+         // if kv is shared with target (e.g Gemma4), then we can skip this catch-up decode
+         if (!is_mem_shared) {
+             common_batch_clear(batch);
+ 
+             for (int k = 0; k < n_tokens; ++k) {
+@@ -1419,10 +1575,42 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+                 set_h(i_batch_beg[seq_id], pending_h[seq_id].data());
+             }
+ 
+             auto * mem_dft = llama_get_memory(ctx_dft);
+ 
++            // stash the rows of backed-off sequences instead of decoding them
++            if (can_defer) {
++                static const size_t cold_max = 128;
++
++                int w = 0;
++                for (int k = 0; k < batch.n_tokens; ++k) {
++                    const llama_seq_id seq_id = batch.seq_id[k][0];
++
++                    if (cold_step(seq_id) && cold_rows[seq_id].size() < cold_max) {
++                        cold_rows[seq_id].push_back({ batch.token[k], batch.pos[k] });
++                        cold_h[seq_id].insert(cold_h[seq_id].end(),
++                                batch.embd + (size_t) k * n_embd, batch.embd + (size_t) (k + 1) * n_embd);
++                        continue;
++                    }
++
++                    if (w != k) {
++                        batch.token    [w]    = batch.token[k];
++                        batch.pos      [w]    = batch.pos[k];
++                        batch.n_seq_id [w]    = batch.n_seq_id[k];
++                        batch.seq_id   [w][0] = batch.seq_id[k][0];
++                        batch.logits   [w]    = batch.logits[k];
++                        std::memcpy(batch.embd + (size_t) w * n_embd, batch.embd + (size_t) k * n_embd, row_bytes);
++                    }
++                    w++;
++                }
++                batch.n_tokens = w;
++
++                if (batch.n_tokens == 0) {
++                    return finish_process(batch_in, row_bytes);
++                }
++            }
++
+             bool ok = true;
+             for (int head = 0; head < n_mtp_layers; ++head) {
+                 if (chain_heads) {
+                     // ref: https://github.com/ggml-org/llama.cpp/pull/24340/changes#r3413498544
+                     for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+@@ -1449,10 +1637,18 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             if (!ok) {
+                 return false;
+             }
+         }
+ 
++        return finish_process(batch_in, row_bytes);
++    }
++
++    bool finish_process(const llama_batch & batch_in, size_t row_bytes) {
++        GGML_UNUSED(batch_in);
++
++        auto * ctx_tgt = this->params.ctx_tgt;
++
+         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+             if (i_batch_end[seq_id] < 0) {
+                 continue;
+             }
+ 
+@@ -1478,22 +1674,48 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
          common_batch_clear(batch);
  
          // keep track of which sequences are still drafting
@@ -247,9 +467,6 @@ index 3cb08767b..f11a30dd3 100644
  
          const size_t row_bytes = (size_t) n_embd * sizeof(float);
  
-+        static const float acc_min    = getenv("TOSH_MTP_ACC_MIN")   ? (float) atof(getenv("TOSH_MTP_ACC_MIN"))   : 0.5f;
-+        static const int   probe_base = getenv("TOSH_MTP_PROBE")     ?         atoi(getenv("TOSH_MTP_PROBE"))     : 8;
-+        static const int   probe_cap  = getenv("TOSH_MTP_PROBE_CAP") ?         atoi(getenv("TOSH_MTP_PROBE_CAP")) : 24;
 +        if ((int) acc_ewma.size() != (int) n_seq) {
 +            acc_ewma.assign(n_seq, 1.0f);
 +            n_last_draft.assign(n_seq, 0);
@@ -287,7 +504,7 @@ index 3cb08767b..f11a30dd3 100644
              common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
              std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
  
-@@ -1618,18 +1714,29 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+@@ -1618,18 +1840,29 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
              }
  
              if (dp.result->size() < (size_t) params.n_min) {
