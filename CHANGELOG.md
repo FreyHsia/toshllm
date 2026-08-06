@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.83.14] - 2026-08-06
+
+### Improved
+- **Speculative decoding stops running a whole draft block whose output nobody reads**... after each accepted token the draft head was re-run end to end to keep its cache in step, including the attention, feed-forward and output stages, when only the cached keys and values are ever used again: that pass now ends once they are written, going from 50 graph nodes to 20, with byte-identical output. A 4B model gained 0.6% on the content where speculation struggles, which is where those catch-up passes are most frequent, and 0.4% where it already works well. Mixture-of-experts models measured unchanged, the saving diluted by a token that costs twice as much.
+- **Two-GPU tensor split now picks the faster transfer for each kind of hand-off**... the event-based transfer and the Infinity Fabric peer copy were tried in a fixed order, so enabling both meant the peer copy always won even where it is slower. Tensor split now prefers events, measured 24% faster in generation on a dual Vega II, while the per-layer hand-off keeps preferring the peer copy, which is the one ahead on prompt processing.
+
 ## [0.83.13] - 2026-08-05
 
 ### Improved
