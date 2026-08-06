@@ -1,27 +1,38 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Per-model vision control: an always-visible on/off switch plus, when on, a
-/// compact menu to pin a projector file or auto-pair it. Off runs text-only.
-/// Used on model cards and the server card.
+/// Per-model vision control: an on/off switch plus, when on, the projector to
+/// pin or auto-pair. `inline` is one compact row; `settings` is a form section.
 struct VisionProjectorControl: View {
+    enum Layout { case inline, settings }
+
     let modelPath: String
     /// Anchor the switch to the leading edge (model cards, left-aligned) or the
     /// trailing edge (server card, right-aligned) so revealing the menu never
     /// shifts the switch's position.
     var switchLeading: Bool = false
+    var layout: Layout = .inline
     @EnvironmentObject var loc: Localizer
     @State private var version = 0
 
+    @ViewBuilder
     var body: some View {
-        _ = version
+        let _ = version
         let override = ServerSettings.mmprojOverride(forModel: modelPath)
         let enabled = override != ""   // nil (auto) or a pinned path = on; "" = off
         let resolved = ServerSettings.mmprojPath(forModel: modelPath)
         let mismatch = resolved.map { ServerSettings.mmprojIncompatible(model: modelPath, projector: $0) } ?? false
         let current = resolved.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
-            ?? loc.t("auto", "auto")
-        return HStack(spacing: 8) {
+            ?? loc.t("automático", "automatic")
+        if layout == .settings {
+            settingsRows(enabled: enabled, current: current, mismatch: mismatch)
+        } else {
+            inlineRow(enabled: enabled, current: current, mismatch: mismatch)
+        }
+    }
+
+    private func inlineRow(enabled: Bool, current: String, mismatch: Bool) -> some View {
+        HStack(spacing: 8) {
             if switchLeading { toggle(enabled) }
             if enabled {
                 Menu {
@@ -44,6 +55,31 @@ struct VisionProjectorControl: View {
                 Text(loc.t("solo texto", "text-only")).font(.caption).foregroundStyle(.secondary)
             }
             if !switchLeading { toggle(enabled) }
+        }
+    }
+
+    private func settingsRows(enabled: Bool, current: String, mismatch: Bool) -> some View {
+        Group {
+            Toggle(loc.t("Leer imágenes", "Read images"),
+                   isOn: Binding(get: { enabled }, set: { set($0 ? nil : "") }))
+                .help(loc.t("Con la visión apagada el modelo responde solo a texto y no carga el proyector.",
+                            "With vision off the model answers text only and the projector is not loaded."))
+            if enabled {
+                LabeledContent(loc.t("Proyector", "Projector")) {
+                    Menu(current) {
+                        Button(loc.t("Automático", "Automatic")) { set(nil) }
+                        Button(loc.t("Elegir archivo…", "Choose file…")) { pick() }
+                    }
+                    .fixedSize()
+                }
+                if mismatch {
+                    Label(loc.t("El proyector no coincide con la dimensión del modelo; la visión podría fallar.",
+                                "The projector doesn't match the model's dimension; vision may fail."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

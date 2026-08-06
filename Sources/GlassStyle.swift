@@ -187,3 +187,69 @@ struct GlassSearchField: View {
         .overlay(Capsule().strokeBorder(.primary.opacity(0.07)))
     }
 }
+
+// MARK: - Toolbar symbols
+
+extension View {
+    /// Spins a toolbar symbol in place. Swapping the item for a `ProgressView`
+    /// rebuilds it and splits the shared glass background of the toolbar group.
+    @ViewBuilder
+    func spinningSymbol(_ active: Bool) -> some View {
+        #if compiler(>=6.0)
+        if #available(macOS 15.0, *) {
+            self.symbolEffect(.rotate, options: .repeating, isActive: active)
+        } else {
+            self.symbolEffect(.pulse, options: .repeating, isActive: active)
+        }
+        #else
+        self.symbolEffect(.pulse, options: .repeating, isActive: active)
+        #endif
+    }
+}
+
+// MARK: - Cards and controls in the macOS 26 idiom
+
+enum CardMetrics {
+    static let corner: CGFloat = 16
+    static let padding: CGFloat = 14
+    static let spacing: CGFloat = 8
+    static let minWidth: CGFloat = 320
+}
+
+extension View {
+    /// Content card. Glass is reserved for the controls on top of it: a grid of
+    /// blurred surfaces costs too much to scroll, and a tinted one drowns the card.
+    func cardSurface(tint: Color? = nil) -> some View {
+        let shape = RoundedRectangle(cornerRadius: CardMetrics.corner)
+        return background(tint.map { AnyShapeStyle($0.opacity(0.10)) } ?? AnyShapeStyle(.background.secondary),
+                          in: shape)
+            .overlay(shape.strokeBorder(tint?.opacity(0.35) ?? .primary.opacity(0.08)))
+    }
+
+    /// The one button identity in the app: same shape everywhere, tinted with the
+    /// accent chosen in Settings.
+    func glassButton(prominent: Bool = false) -> some View {
+        modifier(GlassButtonIdentity(prominent: prominent))
+    }
+}
+
+private struct GlassButtonIdentity: ViewModifier {
+    let prominent: Bool
+    @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        // Only the primary action carries the accent; tinting the rest makes every
+        // button in a row look like the same call to action.
+        let tinted = prominent ? content.tint(AppTheme.accent(accentRaw)) : content.tint(.primary)
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            if prominent { tinted.buttonStyle(.glassProminent) } else { tinted.buttonStyle(.glass) }
+        } else {
+            if prominent { tinted.buttonStyle(.borderedProminent) } else { tinted.buttonStyle(.bordered) }
+        }
+        #else
+        if prominent { tinted.buttonStyle(.borderedProminent) } else { tinted.buttonStyle(.bordered) }
+        #endif
+    }
+}

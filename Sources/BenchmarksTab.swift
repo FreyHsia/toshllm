@@ -173,7 +173,11 @@ struct BenchmarksView: View {
                 field(loc.t("Modelo", "Model")) {
                     Picker("", selection: modelBinding) {
                         Text(loc.t("— elegir —", "— pick —")).tag("")
-                        ForEach(models.models) { m in Text(ModelName.forPath(m.url.path).display).tag(m.url.path) }
+                        ForEach(models.models) { m in
+                            Text(ModelName.forPath(m.url.path).display
+                                 + ModelTraitsCache.traits(for: m.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                .tag(m.url.path)
+                        }
                     }
                     .labelsHidden().frame(maxWidth: 480, alignment: .leading)
                 }

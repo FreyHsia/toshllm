@@ -2396,7 +2396,9 @@ struct NativeChatView: View {
             if routerMode {
                 Picker(selection: $chatSelectedModel) {
                     ForEach(models.models) { m in
-                        Text(ModelName.forPath(m.url.path).display).tag(ServerSettings.routerAlias(for: m.url.path))
+                        Text(ModelName.forPath(m.url.path).display
+                             + ModelTraitsCache.traits(for: m.url.path).pickerSuffix(spanish: loc.isSpanish))
+                            .tag(ServerSettings.routerAlias(for: m.url.path))
                     }
                 } label: {
                     Label(loc.t("Modelo", "Model"), systemImage: "shippingbox")

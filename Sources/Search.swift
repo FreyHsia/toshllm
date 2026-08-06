@@ -4,6 +4,7 @@ struct HFRepo: Identifiable, Decodable {
     let id: String
     let downloads: Int?
     let likes: Int?
+    let lastModified: Date?
 }
 
 struct HFFile: Identifiable {
@@ -16,9 +17,24 @@ struct HFFile: Identifiable {
     var isMoE: Bool { ModelName.looksMoE(path) }
 }
 
+enum HFSortOrder: String, CaseIterable, Hashable {
+    case trending, downloads, likes, recent
+
+    /// The `sort` value the Hugging Face model API expects.
+    var apiValue: String {
+        switch self {
+        case .trending: return "trendingScore"
+        case .downloads: return "downloads"
+        case .likes: return "likes"
+        case .recent: return "lastModified"
+        }
+    }
+}
+
 @MainActor
 final class SearchStore: ObservableObject {
     @Published var query = ""
+    @Published var sort: HFSortOrder = .trending
     @Published var results: [HFRepo] = []
     @Published var files: [String: [HFFile]] = [:]
     /// Repos whose HF tree contains an `*mmproj*.gguf`; the model list filters
@@ -54,19 +70,21 @@ final class SearchStore: ObservableObject {
         loadingTrending = true
         defer { loadingTrending = false }
 
-        // trendingScore is HF's live trending order; fall back to all-time
-        // downloads if it ever yields nothing, so the tab is never empty.
-        for sort in ["trendingScore", "downloads"] {
+        // Fall back to all-time downloads if the chosen order yields nothing,
+        // so the tab is never empty.
+        for order in [sort.apiValue, HFSortOrder.downloads.apiValue] {
             var comps = URLComponents(string: "https://huggingface.co/api/models")!
             comps.queryItems = [
                 URLQueryItem(name: "filter", value: "gguf"),
-                URLQueryItem(name: "sort", value: sort),
-                URLQueryItem(name: "limit", value: "15"),
+                URLQueryItem(name: "sort", value: order),
+                URLQueryItem(name: "direction", value: "-1"),
+                URLQueryItem(name: "limit", value: String(requestLimit)),
             ]
             guard let url = comps.url,
                   let (data, _) = try? await URLSession.shared.data(from: url),
-                  let repos = try? JSONDecoder().decode([HFRepo].self, from: data) else { continue }
-            if !repos.isEmpty { trending = repos; return }
+                  let repos = try? Self.decoder.decode([HFRepo].self, from: data) else { continue }
+            let kept = usable(repos)
+            if !kept.isEmpty { trending = kept; return }
         }
     }
 
@@ -80,17 +98,32 @@ final class SearchStore: ObservableObject {
         comps.queryItems = [
             URLQueryItem(name: "search", value: q),
             URLQueryItem(name: "filter", value: "gguf"),
-            URLQueryItem(name: "sort", value: "downloads"),
-            URLQueryItem(name: "limit", value: "12"),
+            URLQueryItem(name: "sort", value: sort.apiValue),
+            URLQueryItem(name: "direction", value: "-1"),
+            URLQueryItem(name: "limit", value: String(requestLimit)),
         ]
         guard let url = comps.url,
               let (data, _) = try? await URLSession.shared.data(from: url) else {
             results = []
             return
         }
-        results = (try? JSONDecoder().decode([HFRepo].self, from: data)) ?? []
+        results = usable((try? Self.decoder.decode([HFRepo].self, from: data)) ?? [])
         expanded = nil
         files = [:]
+    }
+
+    /// A repo pushed minutes ago can be anything, so the recent order only shows
+    /// what people are actually downloading. Ask for more to filter from.
+    private static let recentMinDownloads = 500
+    private static let shownRepos = 20
+
+    private var requestLimit: Int { sort == .recent ? 100 : Self.shownRepos }
+
+    private func usable(_ repos: [HFRepo]) -> [HFRepo] {
+        let kept = sort == .recent
+            ? repos.filter { ($0.downloads ?? 0) >= Self.recentMinDownloads }
+            : repos
+        return Array(kept.prefix(Self.shownRepos))
     }
 
     func toggleFiles(repo: String) async {
@@ -207,6 +240,30 @@ final class SearchStore: ObservableObject {
 
     /// Generous: measured GGUFs put expert_count ~1.5 KB in.
     nonisolated private static let headerProbeBytes = 64 * 1024
+
+    /// Hugging Face timestamps carry fractional seconds; a strict ISO-8601 parse
+    /// fails on them and would drop the whole page of results.
+    nonisolated static let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: text) { return date }
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: text) ?? .distantPast
+        }
+        return d
+    }()
+
+    /// Re-runs whichever list is on screen after the order changes.
+    func reload() async {
+        if didSearch && !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            await search()
+        } else {
+            await loadTrending(force: true)
+        }
+    }
 
     func downloadURL(repo: String, file: String) -> String {
         "https://huggingface.co/\(repo)/resolve/main/\(file)"

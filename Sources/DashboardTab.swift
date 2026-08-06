@@ -199,7 +199,11 @@ struct DashboardView: View {
                         ncmoe = Estimator.ncmoeForSelection(path: p, models: models.models)
                     })) {
                         Text(loc.t("Sin modelo", "No model")).tag("")
-                        ForEach(models.models) { Text(ModelName.forPath($0.url.path).display).tag($0.url.path) }
+                        ForEach(models.models) {
+                            Text(ModelName.forPath($0.url.path).display
+                                 + ModelTraitsCache.traits(for: $0.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                .tag($0.url.path)
+                        }
                     }
                     .labelsHidden()
                     .disabled(server.state == .running || server.state == .starting)
@@ -547,7 +551,11 @@ struct AddedServerCard: View {
                         manager.persist()
                     })) {
                         Text(loc.t("Sin modelo", "No model")).tag("")
-                        ForEach(models.models) { Text(ModelName.forPath($0.url.path).display).tag($0.url.path) }
+                        ForEach(models.models) {
+                            Text(ModelName.forPath($0.url.path).display
+                                 + ModelTraitsCache.traits(for: $0.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                .tag($0.url.path)
+                        }
                     }
                     .labelsHidden().disabled(busy)
                 }

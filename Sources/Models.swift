@@ -90,9 +90,9 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
 
     /// Fetches integrity metadata, checks disk space, then starts the transfer.
     private func prepare() async {
-        if let meta = await Self.huggingFaceMetadata(for: remote) {
+        if let meta = await HuggingFaceAPI.fileMetadata(for: remote) {
             expectedSHA256 = meta.sha256
-            expectedBytes = meta.size
+            expectedBytes = meta.sizeBytes
         }
 
         if let needed = expectedBytes {
@@ -145,28 +145,6 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
         phase = .failed("Cancelada / cancelled")
     }
 
-    // MARK: integrity
-
-    /// repo + file path -> sha256/size from the Hugging Face tree API (LFS oid).
-    private static func huggingFaceMetadata(for url: URL) async -> (sha256: String?, size: Int64?)? {
-        guard url.host?.contains("huggingface.co") == true else { return nil }
-        let parts = url.path.split(separator: "/").map(String.init)
-        guard let resolve = parts.firstIndex(of: "resolve"), resolve >= 2, parts.count > resolve + 1 else { return nil }
-        let repo = parts[0] + "/" + parts[1]
-        let rev = parts[resolve + 1]
-        let filePath = parts[(resolve + 2)...].joined(separator: "/")
-        let dir = filePath.contains("/") ? "/" + filePath.split(separator: "/").dropLast().joined(separator: "/") : ""
-
-        guard let api = URL(string: "https://huggingface.co/api/models/\(repo)/tree/\(rev)\(dir)"),
-              let (data, _) = try? await URLSession.shared.data(from: api),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
-
-        guard let entry = entries.first(where: { ($0["path"] as? String) == filePath }) else { return nil }
-        let size = (entry["size"] as? NSNumber)?.int64Value
-        let sha = (entry["lfs"] as? [String: Any])?["oid"] as? String
-        return (sha, size)
-    }
-
     // MARK: URLSessionDownloadDelegate
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
@@ -209,6 +187,7 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
                 try? FileManager.default.removeItem(at: dest)
                 do {
                     try FileManager.default.moveItem(at: staging, to: dest)
+                    if let expected { ModelStore.recordDigest(expected, forFile: dest.lastPathComponent) }
                     self.progress = 1
                     self.phase = .finished
                     self.onFinish?()
@@ -292,11 +271,17 @@ final class ModelStore: ObservableObject {
     }
 
     func refresh() {
+        ModelTraitsCache.invalidate()
         models = LocalModel.scan(in: directory)
+        presentFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
     }
 
+    /// Every name in the folder, including the projectors and drafts the model
+    /// list filters out. The browse rows ask once per file on every redraw.
+    @Published private(set) var presentFiles: Set<String> = []
+
     func isDownloaded(fileName: String) -> Bool {
-        FileManager.default.fileExists(atPath: directory.appendingPathComponent(fileName).path)
+        presentFiles.contains(fileName)
     }
 
     func localModel(fileName: String) -> LocalModel? {
@@ -384,6 +369,25 @@ final class ModelStore: ObservableObject {
         (UserDefaults.standard.dictionary(forKey: SettingsKeys.modelSource) as? [String: String])?[fileName]
     }
 
+    static func recordDigest(_ sha256: String, forFile fileName: String) {
+        var map = UserDefaults.standard.dictionary(forKey: SettingsKeys.modelDigest) as? [String: String] ?? [:]
+        map[fileName] = sha256.lowercased()
+        UserDefaults.standard.set(map, forKey: SettingsKeys.modelDigest)
+    }
+
+    static func digest(forFile fileName: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: SettingsKeys.modelDigest) as? [String: String])?[fileName]
+    }
+
+    /// Re-downloads every shard from its recorded source.
+    func update(_ model: LocalModel) {
+        for part in model.partURLs {
+            let name = part.lastPathComponent
+            guard let source = Self.source(forFile: name) else { continue }
+            download(urlString: source, preferredName: name, fetchVisionProjector: false)
+        }
+    }
+
     /// For a local model that is a known catalog vision model whose multimodal
     /// projector isn't present in the folder, returns the catalog entry so the UI
     /// can offer to download the missing mmproj.
@@ -426,9 +430,12 @@ final class ModelStore: ObservableObject {
                         ServerSettings.dflashDraftPath(forModel: model.url.path)].compactMap({ $0 }) {
             try? FileManager.default.trashItem(at: URL(fileURLWithPath: sibling), resultingItemURL: nil)
         }
+        var digests = UserDefaults.standard.dictionary(forKey: SettingsKeys.modelDigest) as? [String: String] ?? [:]
         for url in model.partURLs {
+            digests[url.lastPathComponent] = nil
             try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
         }
+        UserDefaults.standard.set(digests, forKey: SettingsKeys.modelDigest)
         refresh()
     }
 }

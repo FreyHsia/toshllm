@@ -14,11 +14,9 @@ struct LogsView: View {
     var body: some View {
         VStack(spacing: 0) {
             if manager.servers.count > 1 {
-                Picker("", selection: Binding(get: { selected.id }, set: { selectedID = $0 })) {
-                    ForEach(manager.servers, id: \.id) { Text($0.name).tag($0.id) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 12).padding(.top, 10)
+                GlassSegmentedControl(selection: Binding(get: { selected.id }, set: { selectedID = $0 }),
+                                      segments: manager.servers.map { .init(value: $0.id, title: $0.name) })
+                    .padding(.horizontal, 12).padding(.top, 10)
             }
             ServerLogView(server: selected)
         }
@@ -67,35 +65,22 @@ struct ServerLogView: View {
 
     private var controls: some View {
         VStack(spacing: 8) {
-            Picker("", selection: $logSource) {
-                Text(loc.t("Servidor", "Server")).tag("server")
-                Text(loc.t("Imágenes", "Images")).tag("images")
-            }
-            .pickerStyle(.segmented).fixedSize()
+            GlassSegmentedControl(selection: $logSource, segments: [
+                .init(value: "server", title: loc.t("Servidor", "Server"), systemImage: "server.rack"),
+                .init(value: "images", title: loc.t("Imágenes", "Images"), systemImage: "photo"),
+            ])
             .help(loc.t("Registro del servidor de chat o del motor de imágenes.",
                         "Chat server log or the image engine log."))
             .onChange(of: logSource) { if logSource == "images" { reloadImageLog() } }
             serverControls
             HStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.caption)
-                    TextField(loc.t("Filtrar en el registro…", "Filter the log…"), text: $query)
-                        .textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.borderless).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                GlassSearchField(placeholder: loc.t("Filtrar en el registro…", "Filter the log…"), text: $query)
 
-                Picker("", selection: $minLevel) {
-                    Text(loc.t("Todo", "All")).tag(0)
-                    Text(loc.t("Avisos", "Warnings")).tag(1)
-                    Text(loc.t("Errores", "Errors")).tag(2)
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
+                GlassSegmentedControl(selection: $minLevel, segments: [
+                    .init(value: 0, title: loc.t("Todo", "All")),
+                    .init(value: 1, title: loc.t("Avisos", "Warnings"), systemImage: "exclamationmark.triangle"),
+                    .init(value: 2, title: loc.t("Errores", "Errors"), systemImage: "xmark.octagon"),
+                ])
                 .help(loc.t("Filtra por severidad mínima de cada línea.",
                             "Filter by each line's minimum severity."))
             }
@@ -105,51 +90,46 @@ struct ServerLogView: View {
                     Label(loc.t("Seguir", "Follow"), systemImage: "arrow.down.to.line")
                 }
                 .toggleStyle(.button)
+                .glassButton()
+                .controlSize(.small)
                 .help(loc.t("Sigue automáticamente las líneas nuevas al final.",
                             "Automatically follow new lines at the bottom."))
 
                 Spacer()
 
-                Text(loc.t("\(matchCount) líneas", "\(matchCount) lines"))
-                    .font(.caption2).foregroundStyle(.tertiary)
+                Text(loc.t("^[\(matchCount) línea](inflect: true)", "^[\(matchCount) line](inflect: true)"))
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
 
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(filteredLog, forType: .string)
-                    copied = true
-                    Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
-                } label: {
-                    Label(copied ? loc.t("Copiado", "Copied") : loc.t("Copiar", "Copy"),
-                          systemImage: copied ? "checkmark" : "doc.on.doc")
-                }
-                .help(loc.t("Copia lo que se muestra (con los filtros aplicados).",
-                            "Copies what's shown (with filters applied)."))
+                Button(copied ? loc.t("Copiado", "Copied") : loc.t("Copiar", "Copy"),
+                       systemImage: copied ? "checkmark" : "doc.on.doc") { copy() }
+                    .glassButton()
+                    .controlSize(.small)
+                    .contentTransition(.symbolEffect(.replace))
+                    .help(loc.t("Copia lo que se muestra (con los filtros aplicados).",
+                                "Copies what's shown (with filters applied)."))
 
-                Button {
-                    let file = logSource == "images" ? (ImageGenerator.latestLogURL ?? server.logsDirectory) : server.logFileURL
-                    revealInFinder(file: file, folder: server.logsDirectory)
-                } label: {
-                    Label(loc.t("Logs en Finder", "Logs in Finder"), systemImage: "folder")
+                Menu(loc.t("Más acciones", "More actions"), systemImage: "ellipsis") {
+                    Button(loc.t("Logs en Finder", "Logs in Finder"), systemImage: "folder") {
+                        let file = logSource == "images"
+                            ? (ImageGenerator.latestLogURL ?? server.logsDirectory) : server.logFileURL
+                        revealInFinder(file: file, folder: server.logsDirectory)
+                    }
+                    Button(loc.t("Exportar diagnóstico…", "Export diagnostics…"),
+                           systemImage: "square.and.arrow.up") { exportDiagnostics() }
+                    Divider()
+                    Button(loc.t("Limpiar en pantalla", "Clear on screen"),
+                           systemImage: "trash", role: .destructive) {
+                        if logSource == "images" { imageLog = "" } else { server.log = "" }
+                    }
                 }
-                .help(loc.t("Abre la carpeta con el registro de cada sesión (archivo con fecha y hora). Un cierre inesperado o un cuelgue conserva el registro; se borran solos a los 3 días.",
-                            "Opens the folder with each session's log (a date-and-time file). An unexpected quit or freeze keeps the log; they auto-delete after 3 days."))
-
-                Button { exportDiagnostics() } label: {
-                    Label(loc.t("Exportar diagnóstico…", "Export diagnostics…"), systemImage: "square.and.arrow.up")
-                }
-                .help(loc.t("Genera un archivo con tu hardware, configuración y el registro reciente, listo para adjuntar a un reporte.",
-                            "Creates a file with your hardware, settings and recent log, ready to attach to a report."))
-
-                Button(role: .destructive) {
-                    if logSource == "images" { imageLog = "" } else { server.log = "" }
-                } label: {
-                    Label(loc.t("Limpiar", "Clear"), systemImage: "trash")
-                }
-                .help(loc.t("Vacía el registro en pantalla (el archivo en disco se conserva).",
-                            "Clears the on-screen log (the file on disk is kept)."))
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .labelStyle(.iconOnly)
+                .fixedSize()
+                .help(loc.t("Abrir la carpeta de registros, exportar un diagnóstico o vaciar la vista. El archivo en disco se conserva.",
+                            "Open the logs folder, export diagnostics, or clear the view. The file on disk is kept."))
             }
             .font(.callout)
-            .buttonStyle(.borderless)
         }
         .padding(12)
     }
@@ -172,7 +152,8 @@ struct ServerLogView: View {
                                 modelPath = m.url.path
                                 ncmoe = Estimator.estimateCurrent(spec: Catalog.spec(forLocal: m), hw: hardware).suggestedNcmoe
                             } label: {
-                                Label(m.name, systemImage: modelPath == m.url.path ? "checkmark" : "cpu")
+                                Label(m.name + ModelTraitsCache.traits(for: m.url.path).pickerSuffix(spanish: loc.isSpanish),
+                                      systemImage: modelPath == m.url.path ? "checkmark" : "cpu")
                             }
                         }
                     }
@@ -180,7 +161,10 @@ struct ServerLogView: View {
                     Label(selectedModelName, systemImage: "cpu")
                         .lineLimit(1).truncationMode(.middle)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .glassButton()
+                .controlSize(.small)
+                .fixedSize()
                 .help(loc.t("Selecciona el modelo a cargar.", "Pick the model to load."))
             } else {
                 Label(selectedModelName, systemImage: "cpu")
@@ -192,19 +176,27 @@ struct ServerLogView: View {
             statusDot
             switch server.state {
             case .running, .starting:
-                Button(role: .destructive) { server.stop() } label: {
-                    Label(loc.t("Detener", "Stop"), systemImage: "stop.fill")
+                Button(loc.t("Detener", "Stop"), systemImage: "stop.fill", role: .destructive) {
+                    server.stop()
                 }
+                .glassButton()
             default:
-                Button { server.start(server.effectiveSettings()) } label: {
-                    Label(loc.t("Iniciar servidor", "Start server"), systemImage: "play.fill")
+                Button(loc.t("Iniciar servidor", "Start server"), systemImage: "play.fill") {
+                    server.start(server.effectiveSettings())
                 }
-                .buttonStyle(.borderedProminent)
+                .glassButton(prominent: true)
                 .disabled(server.effectiveSettings().modelPath.isEmpty)
             }
         }
         .font(.callout)
         .padding(.bottom, 2)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(filteredLog, forType: .string)
+        copied = true
+        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
     }
 
     private var selectedModelName: String {
@@ -224,19 +216,29 @@ struct ServerLogView: View {
 
     // MARK: log body
 
+    @ViewBuilder
     private var logBody: some View {
+        if filteredLog.isEmpty {
+            emptyState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background.secondary)
+        } else {
+            scrollingLog
+        }
+    }
+
+    private var scrollingLog: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                Text(filteredLog.isEmpty
-                     ? loc.t("(sin coincidencias)", "(no matches)")
-                     : filteredLog)
-                    .font(.system(size: 11, design: .monospaced))
+                Text(filteredLog)
+                    .font(.caption.monospaced())
+                    .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(12)
                     .id("logEnd")
             }
-            .background(.black.opacity(0.18))
+            .background(.background.secondary)
             .onChange(of: server.log) { _, _ in
                 if autoFollow { proxy.scrollTo("logEnd", anchor: .bottom) }
             }
@@ -244,6 +246,22 @@ struct ServerLogView: View {
                 if on { proxy.scrollTo("logEnd", anchor: .bottom) }
             }
             .onAppear { proxy.scrollTo("logEnd", anchor: .bottom) }
+        }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        if rawLog.isEmpty {
+            ContentUnavailableView(loc.t("Sin registro todavía", "No log yet"),
+                                   systemImage: "text.alignleft",
+                                   description: Text(loc.t("Inicia el servidor y su salida aparecerá aquí en vivo.",
+                                                           "Start the server and its output shows up here live.")))
+        } else if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            ContentUnavailableView.search(text: query)
+        } else {
+            ContentUnavailableView(loc.t("Nada en este nivel", "Nothing at this level"),
+                                   systemImage: "line.3.horizontal.decrease.circle",
+                                   description: Text(loc.t("El registro no tiene líneas de esa severidad.",
+                                                           "The log has no lines of that severity.")))
         }
     }
 

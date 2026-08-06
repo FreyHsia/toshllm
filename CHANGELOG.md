@@ -3,6 +3,17 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Downloaded models say when their repo has re-published the file**... the app already remembered where each model came from, and now compares it against the checksum Hugging Face publishes for that file: My models flags the difference and offers to download it again, replacing the local file only once the new one verifies.
+- **Model cards and model menus show what each GGUF brings**... experts, vision projector, multi-token prediction head and DFlash draft are now visible where you pick a model, instead of only where each one is configured.
+
+### Improved
+- **Models and Logs look and behave the same everywhere**... one button and segmented-control identity, tinted with the accent picked in Settings, uniform model cards, and proper empty states.
+- **Better filters**... My models filters by vision, MTP, DFlash or experts, and the Hugging Face browser sorts by trending, downloads, likes or last updated.
+- **Browsing and the model grid are quicker**... badges and download checks no longer hit the disk on every redraw, and long file lists render as you scroll.
+
 ## [0.83.14] - 2026-08-06
 
 ### Improved

@@ -22,8 +22,11 @@ enum SettingsKeys {
     /// vision, absent falls back to auto-pairing.
     static let mmprojOverride = "mmprojOverride"
     /// Per-file source URL a model was downloaded from, for sibling downloads
-    /// (mmproj, dflash draft) and a future model-update check.
+    /// (mmproj, dflash draft) and the model-update check.
     static let modelSource = "modelSource"
+    /// Per-file SHA-256 verified at download time, compared against the remote
+    /// digest to detect a re-uploaded model.
+    static let modelDigest = "modelDigest"
     /// Legacy model paths whose downloaded DFlash draft was turned off.
     static let dflashDisabled = "dflashDisabled"
     static let dflashModes = "dflashModes"

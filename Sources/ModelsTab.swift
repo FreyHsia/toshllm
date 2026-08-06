@@ -5,6 +5,7 @@ import SwiftUI
 struct ModelsView: View {
     @EnvironmentObject var models: ModelStore
     @EnvironmentObject var search: SearchStore
+    @EnvironmentObject var modelUpdates: ModelUpdateChecker
     @EnvironmentObject var loc: Localizer
     @State private var tab: Tab = .recommended
     @State private var refreshing = false
@@ -13,15 +14,13 @@ struct ModelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                Text(loc.t("Recomendados", "Recommended")).tag(Tab.recommended)
-                Text(loc.t("Buscar / Tendencia", "Browse")).tag(Tab.browse)
-                Label(loc.t("Mis modelos", "My models"),
-                      systemImage: models.downloads.contains { $0.phase == .downloading } ? "arrow.down.circle.fill" : "internaldrive")
-                    .tag(Tab.mine)
-            }
-            .pickerStyle(.segmented)
-            .labelStyle(.titleOnly)
+            GlassSegmentedControl(selection: $tab, segments: [
+                .init(value: .recommended, title: loc.t("Recomendados", "Recommended"), systemImage: "star"),
+                .init(value: .browse, title: loc.t("Buscar", "Browse"), systemImage: "magnifyingglass"),
+                .init(value: .mine, title: loc.t("Mis modelos", "My models"),
+                      systemImage: models.downloads.contains { $0.phase == .downloading }
+                          ? "arrow.down.circle.fill" : "internaldrive"),
+            ])
             .padding(12)
             Divider()
 
@@ -34,17 +33,33 @@ struct ModelsView: View {
             }
         }
         .toolbar {
-            Button {
-                models.refresh()
-                withAnimation { refreshing = true }
-                Task { try? await Task.sleep(for: .seconds(0.8)); withAnimation { refreshing = false } }
-            } label: {
-                Label(refreshing ? loc.t("Actualizado", "Refreshed") : loc.t("Actualizar", "Refresh"),
-                      systemImage: refreshing ? "checkmark" : "arrow.clockwise")
+            ToolbarItem(id: "modelUpdateCheck") {
+                Button {
+                    Task { await modelUpdates.check(models.models) }
+                } label: {
+                    Label(loc.t("Buscar actualizaciones", "Check for updates"),
+                          systemImage: "arrow.triangle.2.circlepath")
+                        .spinningSymbol(modelUpdates.checking)
+                }
+                .disabled(modelUpdates.checking || models.models.isEmpty)
+                .help(loc.t("Comprueba si los modelos descargados se han vuelto a publicar en su repositorio de Hugging Face.",
+                            "Checks whether the downloaded models have been re-published in their Hugging Face repo."))
             }
-            .disabled(refreshing)
-            .help(loc.t("Vuelve a escanear la carpeta de modelos para detectar archivos añadidos o eliminados.",
-                        "Re-scans the models folder to pick up files added or removed outside the app."))
+
+            ToolbarItem(id: "modelFolderRefresh") {
+                Button {
+                    models.refresh()
+                    withAnimation { refreshing = true }
+                    Task { try? await Task.sleep(for: .seconds(0.8)); withAnimation { refreshing = false } }
+                } label: {
+                    Label(loc.t("Actualizar", "Refresh"),
+                          systemImage: refreshing ? "checkmark" : "arrow.clockwise")
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .disabled(refreshing)
+                .help(loc.t("Vuelve a escanear la carpeta de modelos para detectar archivos añadidos o eliminados.",
+                            "Re-scans the models folder to pick up files added or removed outside the app."))
+            }
         }
     }
 }
@@ -53,7 +68,7 @@ struct ModelsView: View {
 private struct ModelGrid<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)],
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: CardMetrics.minWidth), spacing: 12)],
                   alignment: .leading, spacing: 12) {
             content
         }
@@ -76,6 +91,14 @@ private struct RecommendedTab: View {
         case .moe: return "MoE"
         }
     }
+    private func icon(_ f: CatalogFilter) -> String {
+        switch f {
+        case .all: return "square.grid.2x2"
+        case .vision: return "eye"
+        case .coder: return "chevron.left.forwardslash.chevron.right"
+        case .moe: return "square.stack.3d.up"
+        }
+    }
     private func matches(_ m: CatalogModel) -> Bool {
         switch filter {
         case .all: return true
@@ -91,19 +114,9 @@ private struct RecommendedTab: View {
         let rest = Catalog.models.filter { !recIDs.contains($0.id) && matches($0) }
 
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 6) {
-                ForEach(CatalogFilter.allCases, id: \.self) { f in
-                    Button { filter = f } label: {
-                        Text(label(f)).font(.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(filter == f ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.18),
-                                        in: Capsule())
-                            .overlay(Capsule().strokeBorder(filter == f ? Color.accentColor : .clear, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer(minLength: 0)
-            }
+            GlassSegmentedControl(selection: $filter, segments: CatalogFilter.allCases.map {
+                .init(value: $0, title: label($0), systemImage: icon($0))
+            })
 
             if !recs.isEmpty {
                 SectionHeader(icon: "star.fill",
@@ -143,50 +156,74 @@ private struct BrowseTab: View {
     @EnvironmentObject var search: SearchStore
     @EnvironmentObject var loc: Localizer
 
+    private func sortTitle(_ order: HFSortOrder) -> String {
+        switch order {
+        case .trending: return loc.t("Tendencia", "Trending")
+        case .downloads: return loc.t("Descargas", "Downloads")
+        case .likes: return loc.t("Favoritos", "Likes")
+        case .recent: return loc.t("Recientes", "Recent")
+        }
+    }
+
+    private func sortIcon(_ order: HFSortOrder) -> String {
+        switch order {
+        case .trending: return "flame"
+        case .downloads: return "arrow.down.circle"
+        case .likes: return "heart"
+        case .recent: return "clock"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField(loc.t("Buscar GGUF en Hugging Face…", "Search GGUF on Hugging Face…"),
-                              text: $search.query)
-                        .textFieldStyle(.plain)
-                        .onSubmit { Task { await search.search() } }
-                    if !search.query.isEmpty {
-                        Button { search.query = ""; search.didSearch = false } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }.buttonStyle(.borderless).foregroundStyle(.secondary)
+                GlassSearchField(placeholder: loc.t("Buscar GGUF en Hugging Face…", "Search GGUF on Hugging Face…"),
+                                 text: $search.query)
+                    .onSubmit { Task { await search.search() } }
+                    .onChange(of: search.query) {
+                        if search.query.isEmpty { search.didSearch = false }
                     }
-                }
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
-                Button { Task { await search.search() } } label: {
-                    if search.searching { ProgressView().controlSize(.small) }
-                    else { Text(loc.t("Buscar", "Search")) }
+                Button(loc.t("Buscar", "Search"), systemImage: "magnifyingglass") {
+                    Task { await search.search() }
                 }
-                .buttonStyle(.borderedProminent)
+                .glassButton(prominent: true)
+                .labelStyle(.titleOnly)
                 .disabled(search.query.isEmpty || search.searching)
+                .opacity(search.searching ? 0.6 : 1)
+            }
+
+            HStack(spacing: 10) {
+                GlassSegmentedControl(selection: $search.sort, segments: HFSortOrder.allCases.map {
+                    .init(value: $0, title: sortTitle($0), systemImage: sortIcon($0))
+                })
+                .onChange(of: search.sort) { Task { await search.reload() } }
+                .help(loc.t("Orden en el que Hugging Face devuelve los repositorios; siempre limitado a los que publican GGUF. «Recientes» además exige un mínimo de descargas, para no llenarse de repositorios recién subidos que nadie usa.",
+                            "The order Hugging Face returns repositories in, always limited to those publishing GGUF. “Recent” also requires a minimum number of downloads, so it doesn't fill up with freshly pushed repos nobody uses."))
+                if search.searching || search.loadingTrending {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer(minLength: 0)
             }
 
             if search.didSearch && !search.query.isEmpty {
                 if search.results.isEmpty && !search.searching {
-                    Text(loc.t("Sin resultados", "No results")).foregroundStyle(.secondary).font(.callout)
+                    ContentUnavailableView.search(text: search.query)
                 } else {
                     SectionHeader(icon: "magnifyingglass",
                                   title: loc.t("Resultados", "Results"), subtitle: nil)
-                    ForEach(search.results) { RepoCard(repo: $0) }
+                    LazyVStack(spacing: 12) {
+                        ForEach(search.results) { RepoCard(repo: $0) }
+                    }
                 }
             } else {
-                HStack {
-                    SectionHeader(icon: "flame.fill",
-                                  title: loc.t("Tendencia en Hugging Face", "Trending on Hugging Face"),
-                                  subtitle: loc.t("Lo más popular ahora mismo. Despliega para ver cuantizaciones y si caben.",
-                                                  "Most popular right now. Expand to see quants and whether they fit."))
-                    Spacer()
-                    if search.loadingTrending { ProgressView().controlSize(.small) }
+                SectionHeader(icon: sortIcon(search.sort),
+                              title: loc.t("Modelos GGUF en Hugging Face", "GGUF models on Hugging Face"),
+                              subtitle: loc.t("Despliega un repositorio para ver sus cuantizaciones y si caben.",
+                                              "Expand a repo to see its quants and whether they fit."))
+                LazyVStack(spacing: 12) {
+                    ForEach(search.trending) { RepoCard(repo: $0) }
                 }
-                ForEach(search.trending) { RepoCard(repo: $0) }
             }
         }
         .padding(16)
@@ -219,18 +256,18 @@ private struct RepoCard: View {
                     // Once expanded, the file list is loaded; a sibling mmproj means
                     // it's a vision model (the projector is fetched with the model).
                     if isVisionRepo {
-                        TagBadge(text: loc.t("Visión", "Vision"), color: .purple)
+                        TagBadge(text: loc.t("Visión", "Vision"), icon: "eye", color: .purple)
                         if verifiedVision {
                             Label(loc.t("Verificado", "Verified"), systemImage: "checkmark.seal.fill")
                                 .labelStyle(.titleAndIcon)
-                                .font(.caption2.weight(.semibold))
+                                .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 7).padding(.vertical, 2)
                                 .background(Color.green.opacity(0.16), in: Capsule())
                                 .foregroundStyle(.green)
                         } else {
                             Label(loc.t("Sin verificar", "Unverified"), systemImage: "exclamationmark.triangle.fill")
                                 .labelStyle(.titleAndIcon)
-                                .font(.caption2.weight(.semibold))
+                                .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 7).padding(.vertical, 2)
                                 .background(Color.orange.opacity(0.18), in: Capsule())
                                 .foregroundStyle(.orange)
@@ -238,11 +275,16 @@ private struct RepoCard: View {
                     }
                     Spacer()
                     if let l = repo.likes {
-                        Label("\(l)", systemImage: "heart").font(.caption2).foregroundStyle(.secondary)
+                        Label("\(l)", systemImage: "heart").font(.caption).foregroundStyle(.secondary)
                     }
                     if let d = repo.downloads {
                         Label(compact(d), systemImage: "arrow.down.circle")
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let updated = repo.lastModified, updated > .distantPast {
+                        Text(updated, format: .relative(presentation: .named))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .help(loc.t("Última actualización del repositorio", "Repository last updated"))
                     }
                 }
                 .contentShape(Rectangle())
@@ -271,7 +313,7 @@ private struct RepoCard: View {
                             Text(loc.t("Sin archivos .gguf directos", "No direct .gguf files"))
                                 .font(.caption).foregroundStyle(.secondary).padding(12)
                         } else {
-                            VStack(spacing: 8) {
+                            LazyVStack(spacing: 8) {
                                 ForEach(files) { FileRow(repo: repo.id, file: $0) }
                             }
                             .padding(12)
@@ -282,7 +324,7 @@ private struct RepoCard: View {
                 }
             }
         }
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .cardSurface()
     }
 
     private func compact(_ n: Int) -> String {
@@ -314,7 +356,7 @@ private struct FileRow: View {
                 EstimateLine(est: est)
             }
             Spacer()
-            Text(file.sizeGB).font(.caption2).foregroundStyle(.secondary)
+            Text(file.sizeGB).font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 modelPill(est: est)
                 if repoHasVision { visionPill }
@@ -326,7 +368,7 @@ private struct FileRow: View {
     private func modelPill(est: MemoryEstimate) -> some View {
         let names = file.paths.map { URL(fileURLWithPath: $0).lastPathComponent }
         return AssetDownloadButton(
-            icon: "arrow.down.circle", label: loc.t("Modelo", "Model"), tint: Color.appAccent,
+            icon: "arrow.down.circle", label: loc.t("Modelo", "Model"), prominent: true,
             help: loc.t("Descargar el modelo base", "Download the base model"),
             downloaded: names.allSatisfy { models.isDownloaded(fileName: $0) },
             item: names.compactMap { models.downloadItem(fileName: $0) }.first,
@@ -341,7 +383,7 @@ private struct FileRow: View {
     // transfer is queued (the projector lives as a sibling in the same repo).
     private var visionPill: some View {
         AssetDownloadButton(
-            icon: "eye.circle", label: loc.t("Visión", "Vision"), tint: .purple,
+            icon: "eye.circle", label: loc.t("Visión", "Vision"),
             help: loc.t("Descargar el proyector de visión (mmproj)", "Download the vision projector (mmproj)"),
             downloaded: models.isDownloaded(fileName: projName),
             item: models.downloadItem(fileName: projName), busy: visionBusy, disabledReason: nil) {
@@ -355,7 +397,7 @@ private struct FileRow: View {
 
     private func dflashPill(_ draft: SearchStore.DraftInfo) -> some View {
         AssetDownloadButton(
-            icon: "bolt.circle", label: "DFlash", tint: .orange,
+            icon: "bolt.circle", label: "DFlash",
             help: loc.t("Descargar el draft DFlash para decodificación especulativa (experimental). Por ahora acelera la generación en modelos MoE con expertos en CPU (offload); en denso a GPU completa puede ser más lento.",
                         "Download the DFlash draft for speculative decoding (experimental). For now it speeds up generation on MoE models with CPU-offloaded experts; on full-GPU dense models it can be slower."),
             downloaded: models.isDownloaded(fileName: draftName),
@@ -371,7 +413,7 @@ private struct FileRow: View {
 private struct AssetDownloadButton: View {
     let icon: String
     let label: String
-    let tint: Color
+    var prominent = false
     let help: String
     let downloaded: Bool
     let item: DownloadItem?
@@ -385,19 +427,19 @@ private struct AssetDownloadButton: View {
                 InlineDownloadProgress(item: item)
             } else if downloaded {
                 Label(label, systemImage: "checkmark.circle.fill")
-                    .labelStyle(.titleAndIcon).font(.caption.weight(.medium)).foregroundStyle(.green)
+                    .labelStyle(.titleAndIcon).font(.caption).foregroundStyle(.green)
             } else if busy {
                 HStack(spacing: 5) {
                     ProgressView().controlSize(.small)
                     Text(label).font(.caption).foregroundStyle(.secondary)
                 }
             } else if let reason = disabledReason {
-                Text(reason).font(.caption2).foregroundStyle(.red)
+                Text(reason).font(.caption).foregroundStyle(.red)
             } else {
-                Button(action: action) {
-                    Label(label, systemImage: icon).font(.caption.weight(.medium))
-                }
-                .buttonStyle(.bordered).controlSize(.small).tint(tint)
+                Button(label, systemImage: icon, action: action)
+                    .font(.caption)
+                    .glassButton(prominent: prominent)
+                    .controlSize(.small)
             }
         }
         .fixedSize()
@@ -409,11 +451,50 @@ private struct AssetDownloadButton: View {
 
 private struct MyModelsTab: View {
     @EnvironmentObject var models: ModelStore
+    @EnvironmentObject var modelUpdates: ModelUpdateChecker
     @EnvironmentObject var loc: Localizer
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
     @AppStorage(SettingsKeys.ncmoe) private var ncmoe = 0
     @State private var customURL = ""
     @State private var pendingDelete: LocalModel?
+    @State private var pendingUpdate: LocalModel?
+    @State private var filter: LocalFilter = .all
+
+    enum LocalFilter: CaseIterable, Hashable { case all, vision, mtp, dflash, moe }
+
+    private func label(_ f: LocalFilter) -> String {
+        switch f {
+        case .all: return loc.t("Todos", "All")
+        case .vision: return loc.t("Visión", "Vision")
+        case .mtp: return "MTP"
+        case .dflash: return "DFlash"
+        case .moe: return "MoE"
+        }
+    }
+
+    private func icon(_ f: LocalFilter) -> String {
+        switch f {
+        case .all: return "square.grid.2x2"
+        case .vision: return "eye"
+        case .mtp: return "hare"
+        case .dflash: return "bolt"
+        case .moe: return "square.stack.3d.up"
+        }
+    }
+
+    private var shown: [LocalModel] {
+        guard filter != .all else { return models.models }
+        return models.models.filter { model in
+            let traits = ModelTraitsCache.traits(for: model.url.path)
+            switch filter {
+            case .all: return true
+            case .vision: return traits.hasVision
+            case .mtp: return traits.hasMTP
+            case .dflash: return traits.hasDflash
+            case .moe: return traits.isMoE
+            }
+        }
+    }
 
     private var modelsFolderShort: String {
         (models.directory.path as NSString).abbreviatingWithTildeInPath
@@ -426,23 +507,36 @@ private struct MyModelsTab: View {
                 VStack(spacing: 8) {
                     ForEach(models.downloads) { DownloadRow(item: $0) }
                 }
-                Button(loc.t("Limpiar terminadas", "Clear finished")) {
+                Button(loc.t("Limpiar terminadas", "Clear finished"), systemImage: "checkmark.circle") {
                     models.clearFinishedDownloads()
-                }.font(.caption).buttonStyle(.borderless)
+                }
+                .glassButton()
+                .controlSize(.small)
             }
 
             SectionHeader(icon: "internaldrive",
                           title: loc.t("Archivos locales en \(modelsFolderShort)",
                                        "Local files in \(modelsFolderShort)"),
                           subtitle: nil)
+            if !models.models.isEmpty {
+                GlassSegmentedControl(selection: $filter, segments: LocalFilter.allCases.map {
+                    .init(value: $0, title: label($0), systemImage: icon($0))
+                })
+            }
             if models.models.isEmpty {
-                Text(loc.t("No hay modelos .gguf todavía. Descarga uno desde Recomendados o Buscar.",
-                           "No .gguf models yet. Download one from Recommended or Browse."))
-                    .foregroundStyle(.secondary).font(.callout)
+                ContentUnavailableView(loc.t("Todavía no hay modelos", "No models yet"),
+                                       systemImage: "internaldrive",
+                                       description: Text(loc.t("Descarga uno desde Recomendados o Buscar y aparecerá aquí.",
+                                                               "Download one from Recommended or Browse and it will show up here.")))
+            } else if shown.isEmpty {
+                ContentUnavailableView(loc.t("Ningún modelo con esa característica", "No model with that trait"),
+                                       systemImage: icon(filter),
+                                       description: Text(loc.t("Ninguno de tus modelos descargados la tiene.",
+                                                               "None of your downloaded models has it.")))
             } else {
                 ModelGrid {
-                    ForEach(models.models) { m in
-                        LocalModelCard(model: m, pendingDelete: $pendingDelete)
+                    ForEach(shown) { m in
+                        LocalModelCard(model: m, pendingDelete: $pendingDelete, pendingUpdate: $pendingUpdate)
                     }
                 }
             }
@@ -453,14 +547,29 @@ private struct MyModelsTab: View {
             HStack {
                 TextField("https://huggingface.co/…/resolve/main/model.gguf", text: $customURL)
                     .textFieldStyle(.roundedBorder)
-                Button(loc.t("Descargar", "Download")) {
+                Button(loc.t("Descargar", "Download"), systemImage: "arrow.down.circle") {
                     models.download(urlString: customURL)
                     customURL = ""
                 }
+                .glassButton(prominent: true)
                 .disabled(!customURL.hasPrefix("http"))
             }
         }
         .padding(16)
+        .task { await modelUpdates.checkIfStale(models.models) }
+        .confirmationDialog(
+            loc.t("¿Actualizar \(pendingUpdate?.name ?? "")?", "Update \(pendingUpdate?.name ?? "")?"),
+            isPresented: Binding(get: { pendingUpdate != nil }, set: { if !$0 { pendingUpdate = nil } })
+        ) {
+            Button(loc.t("Descargar y reemplazar", "Download and replace")) {
+                if let m = pendingUpdate { models.update(m) }
+                pendingUpdate = nil
+            }
+            Button(loc.t("Cancelar", "Cancel"), role: .cancel) { pendingUpdate = nil }
+        } message: {
+            Text(loc.t("Se descarga de nuevo desde su repositorio y el archivo actual se reemplaza al verificarse el checksum. Si el modelo está cargado, reinicia el servidor al terminar.",
+                       "It is downloaded again from its repo and the current file is replaced once the checksum verifies. If the model is loaded, restart the server afterwards."))
+        }
         .confirmationDialog(
             loc.t("¿Eliminar \(pendingDelete?.name ?? "")?", "Delete \(pendingDelete?.name ?? "")?"),
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
@@ -497,11 +606,11 @@ private struct CatalogCard: View {
             HStack(spacing: 6) {
                 if let role { RoleChip(role: role) }
                 if model.isMoE { MoEBadge() }
-                if model.isVision { TagBadge(text: loc.t("Visión", "Vision"), color: .purple) }
-                if model.isCoder { TagBadge(text: "Coder", color: .blue) }
+                if model.isVision { TagBadge(text: loc.t("Visión", "Vision"), icon: "eye", color: .purple) }
+                if model.isCoder { TagBadge(text: "Coder", icon: "chevron.left.forwardslash.chevron.right", color: .blue) }
                 Spacer(minLength: 0)
                 Text(String(format: "%.1f GB", model.spec.fileGB))
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Text(ModelName(model.name).title).font(.headline)
             Text(model.detail(loc.isSpanish))
@@ -511,100 +620,9 @@ private struct CatalogCard: View {
             Spacer(minLength: 2)
             HStack { Spacer(); CatalogActionButton(model: model, est: est) }
         }
-        .padding(13)
-        .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(role != nil ? RoleChip.color(role!).opacity(0.35) : .clear, lineWidth: 1))
-    }
-}
-
-private struct LocalModelCard: View {
-    let model: LocalModel
-    @Binding var pendingDelete: LocalModel?
-    @EnvironmentObject var loc: Localizer
-    @EnvironmentObject var models: ModelStore
-    @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
-
-    var body: some View {
-        let savedNcmoe = ServerSettings.recalledNcmoe(forModel: model.url.path)
-        let est = Estimator.estimateCurrent(spec: Catalog.spec(forLocal: model), hw: hardware,
-                                            ncmoeOverride: savedNcmoe)
-        let active = modelPath == model.url.path
-        // A local model is vision-capable if a projector is paired in the folder.
-        // If not paired but it's a known catalog vision model, offer to fetch it.
-        let hasProjector = ServerSettings.mmprojPath(forModel: model.url.path) != nil
-        let visionCat: CatalogModel? = hasProjector
-            ? nil : Catalog.models.first { $0.fileName == model.name && $0.isVision }
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                if model.isMoE {
-                    MoEBadge()
-                    if est.suggestedNcmoe > 0 {
-                        Text("ncmoe \(est.suggestedNcmoe)")
-                            .font(.system(size: 9, design: .monospaced))
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quaternary.opacity(0.6), in: Capsule())
-                            .foregroundStyle(.secondary)
-                            .help(loc.t("Capas de expertos que se descargan a CPU/RAM para este modelo (tu valor guardado, o el recomendado).",
-                                        "Expert layers offloaded to CPU/RAM for this model (your saved value, or the recommendation)."))
-                    }
-                }
-                if hasProjector { TagBadge(text: loc.t("Visión", "Vision"), color: .purple) }
-                Spacer(minLength: 0)
-                let parsed = ModelName.forPath(model.url.path)
-                if !parsed.quant.isEmpty {
-                    Text(parsed.quant).font(.system(size: 9, design: .monospaced))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.quaternary.opacity(0.6), in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
-                Text(model.sizeGB).font(.caption2).foregroundStyle(.secondary)
-            }
-            Text(ModelName.forPath(model.url.path).title).font(.subheadline.weight(active ? .semibold : .medium)).lineLimit(2)
-            EstimateLine(est: est)
-            if let visionCat,
-               !models.downloads.contains(where: { $0.fileName.lowercased().contains("mmproj") && $0.error == nil }) {
-                Button { models.downloadProjector(for: visionCat) } label: {
-                    Label(loc.t("Descargar archivo de visión", "Download vision file"),
-                          systemImage: "photo.badge.arrow.down")
-                        .font(.caption2)
-                }
-                .buttonStyle(.borderless).foregroundStyle(.purple)
-                .help(loc.t("Este modelo admite imágenes pero falta su proyector (mmproj). Descárgalo para habilitar la visión.",
-                            "This model supports images but its projector (mmproj) is missing. Download it to enable vision."))
-            }
-            if ServerSettings.mightSupportVision(modelPath: model.url.path) {
-                VisionProjectorControl(modelPath: model.url.path, switchLeading: true)
-            }
-            if ServerSettings.dflashDraftPath(forModel: model.url.path) != nil {
-                DflashControl(modelPath: model.url.path, switchLeading: true)
-            }
-            Spacer(minLength: 2)
-            HStack(spacing: 8) {
-                if active {
-                    Label(loc.t("Activo", "Active"), systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green).font(.callout)
-                } else {
-                    UseModelButton(path: model.url.path, modelName: model.name)
-                        .controlSize(.small)
-                }
-                Spacer()
-                Button { NSWorkspace.shared.activateFileViewerSelecting([model.url]) } label: {
-                    Image(systemName: "magnifyingglass")
-                }.buttonStyle(.borderless).help(loc.t("Mostrar en Finder", "Reveal in Finder"))
-                Button { pendingDelete = model } label: {
-                    Image(systemName: "trash")
-                }.buttonStyle(.borderless).foregroundStyle(.red)
-                    .help(loc.t("Eliminar (a la Papelera)", "Delete (to Trash)"))
-            }
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-        .background((active ? Color.green.opacity(0.10) : Color.secondary.opacity(0.08)),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(active ? Color.green.opacity(0.4) : .clear, lineWidth: 1))
+        .padding(CardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .cardSurface()
     }
 }
 
@@ -649,7 +667,7 @@ private struct RoleChip: View {
         }()
         let color = Self.color(role)
         return Label(text, systemImage: icon)
-            .font(.caption2.weight(.semibold))
+            .font(.caption.weight(.semibold))
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(color.opacity(0.18), in: Capsule())
             .foregroundStyle(color)
@@ -657,16 +675,30 @@ private struct RoleChip: View {
 }
 
 struct MoEBadge: View {
-    var body: some View { TagBadge(text: "MoE", color: Color.appAccent) }
+    var body: some View { TagBadge(text: "MoE", icon: "square.stack.3d.up", color: Color.appAccent) }
 }
 
-/// Small capsule tag (MoE / Vision / Coder) shown on model cards.
+/// Small capsule tag (MoE / Vision / MTP / DFlash / Coder) shown on model cards.
+/// The icon carries the meaning where color alone would.
 struct TagBadge: View {
     let text: String
+    var icon: String?
     let color: Color
+
     var body: some View {
-        Text(text).font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-            .background(color.opacity(0.2), in: Capsule())
+        Group {
+            if let icon {
+                Label(text, systemImage: icon)
+            } else {
+                Text(text)
+            }
+        }
+        .font(.caption)
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(color)
+        .padding(.horizontal, 7).padding(.vertical, 2)
+        .background(color.opacity(0.16), in: Capsule())
     }
 }
 
@@ -695,10 +727,11 @@ struct DownloadRow: View {
                 case .failed(let message):
                     Text(message).font(.caption).foregroundStyle(.red)
                         .lineLimit(2).frame(maxWidth: 300, alignment: .trailing)
-                    Button { models.retry(item) } label: {
-                        Label(loc.t("Reintentar", "Retry"), systemImage: "arrow.clockwise")
+                    Button(loc.t("Reintentar", "Retry"), systemImage: "arrow.clockwise") {
+                        models.retry(item)
                     }
-                    .buttonStyle(.borderless)
+                    .glassButton()
+                    .controlSize(.small)
                     .help(loc.t("Reintentar la descarga desde cero.", "Retry the download from scratch."))
                 case .downloading, .paused:
                     Text(String(format: "%.0f / %.0f MB", item.receivedMB, item.totalMB))

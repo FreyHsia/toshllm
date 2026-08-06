@@ -1,9 +1,13 @@
 import SwiftUI
 
 /// Per-model DFlash policy, shown only when a compatible downloaded draft exists.
+/// `inline` is one compact row; `settings` is a form section.
 struct DflashControl: View {
+    enum Layout { case inline, settings }
+
     let modelPath: String
     var switchLeading: Bool = false
+    var layout: Layout = .inline
     @EnvironmentObject var loc: Localizer
     @EnvironmentObject var server: ServerController
     @State private var mode: DflashMode = .auto
@@ -11,7 +15,34 @@ struct DflashControl: View {
 
     private var active: Bool { server.activeDflashModelPath == modelPath }
 
+    @ViewBuilder
     var body: some View {
+        if layout == .settings { settingsRows } else { inlineRow }
+    }
+
+    private var settingsRows: some View {
+        Group {
+            LabeledContent(loc.t("Borrador", "Draft")) {
+                Picker(loc.t("Borrador", "Draft"), selection: $mode) {
+                    Text(loc.t("Apagado", "Off")).tag(DflashMode.off)
+                    Text("Auto").tag(DflashMode.auto)
+                    Text(loc.t("Forzado", "Forced")).tag(DflashMode.forced)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+            }
+            if active, let acc = server.dflashAcceptance {
+                LabeledContent(loc.t("Aceptación", "Acceptance")) {
+                    Text(acc.formatted(.percent.precision(.fractionLength(0)))).monospacedDigit()
+                }
+            }
+        }
+        .onAppear { mode = ServerSettings.dflashMode(forModel: modelPath) }
+        .onChange(of: mode) { _, value in ServerSettings.setDflashMode(value, forModel: modelPath) }
+        .help(loc.t("Auto usa DFlash cuando hay un draft compatible y el planificador deja memoria suficiente. Forzado ignora la reserva de seguridad y avisa si la VRAM supera 95 %.",
+                    "Auto uses DFlash when a compatible draft is installed and the memory planner leaves enough headroom. Forced ignores the safety reserve and warns if VRAM exceeds 95%."))
+    }
+
+    private var inlineRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "bolt.fill")
                 .foregroundStyle(active ? .orange : (mode == .off ? Color.secondary : Color.orange.opacity(0.6)))

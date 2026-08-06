@@ -33,7 +33,7 @@ struct EstimateLine: View {
             }
         }()
         return Text(text)
-            .font(.caption2.weight(.medium))
+            .font(.caption)
             .lineLimit(1).fixedSize()
             .padding(.horizontal, 6).padding(.vertical, 1.5)
             .background(color.opacity(0.18), in: Capsule())
@@ -61,7 +61,7 @@ struct UseModelButton: View {
                 apply()
             }
         }
-        .buttonStyle(.borderedProminent)
+        .glassButton(prominent: true)
         .help(loc.t("Usa este modelo en el servidor principal; si está corriendo, pedirá confirmación para reiniciarlo.",
                     "Use this model on the main server; if it's running, you'll be asked to confirm a restart."))
         .alert(loc.t("¿Reiniciar el servidor principal?", "Restart the main server?"),
@@ -146,11 +146,11 @@ struct CatalogActionButton: View {
         } else if est.level == .no {
             Text(loc.t("No compatible", "Not compatible")).font(.caption).foregroundStyle(.secondary)
         } else {
-            Button {
+            Button(loc.t("Descargar", "Download"), systemImage: "arrow.down.circle") {
                 models.download(urlString: model.urlString)
-            } label: {
-                Label(loc.t("Descargar", "Download"), systemImage: "arrow.down.circle")
             }
+            .glassButton(prominent: true)
+            .controlSize(.small)
         }
     }
 }
@@ -168,12 +168,12 @@ struct InlineDownloadProgress: View {
         case .preparing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text(loc.t("Preparando…", "Preparing…")).font(.caption2).foregroundStyle(.secondary)
+                Text(loc.t("Preparando…", "Preparing…")).font(.caption).foregroundStyle(.secondary)
             }
         case .verifying:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text(loc.t("Verificando…", "Verifying…")).font(.caption2).foregroundStyle(.secondary)
+                Text(loc.t("Verificando…", "Verifying…")).font(.caption).foregroundStyle(.secondary)
             }
         case .downloading, .paused:
             HStack(spacing: 7) {

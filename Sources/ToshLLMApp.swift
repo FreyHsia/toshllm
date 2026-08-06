@@ -44,6 +44,7 @@ struct ToshLLMApp: App {
     @StateObject private var search = SearchStore()
     @StateObject private var profiles = ProfileStore()
     @StateObject private var updates = UpdateChecker()
+    @StateObject private var modelUpdates = ModelUpdateChecker()
     @StateObject private var control = ControlPanelState()
     @AppStorage(SettingsKeys.menuBarIcon) private var menuBarIcon = true
     @AppStorage(SettingsKeys.menuBarGPU) private var menuBarGPU = "panel"
@@ -85,6 +86,7 @@ struct ToshLLMApp: App {
                 .environmentObject(search)
                 .environmentObject(profiles)
                 .environmentObject(updates)
+                .environmentObject(modelUpdates)
                 .environmentObject(control)
                 .tint(AppTheme.accent(appAccentRaw))
                 .frame(minWidth: 760, minHeight: 540)
@@ -107,6 +109,7 @@ struct ToshLLMApp: App {
                 .environmentObject(search)
                 .environmentObject(profiles)
                 .environmentObject(updates)
+                .environmentObject(modelUpdates)
                 .environmentObject(control)
                 .frame(minWidth: 980, minHeight: 640)
         }
