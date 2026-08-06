@@ -22,10 +22,6 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 
 ---
 
-> **🟠 Project notice:** Due to recent events in my city following the earthquake on June 24, 2026, project development will be delayed. I hope to return to my normal pace soon once the local situation stabilizes. Thank you for your understanding.
-
----
-
 ## What is ToshLLM?
 
 ToshLLM lets you run modern open LLMs **entirely on your own Mac** — your chats never leave the machine, there are no accounts, and there's nothing to pay per token.
@@ -37,22 +33,25 @@ Most local-LLM tools on macOS only target Apple Silicon. Intel Macs with discret
 | | Stock llama.cpp on AMD dGPU | ToshLLM |
 |---|---|---|
 | Output | corrupted | correct |
-| Qwen3-8B generation | 0.6–2.6 t/s | **~57 t/s** |
+| Qwen3-8B generation | 0.6–2.6 t/s | **~61 t/s** |
 | Qwen3.6-35B (MoE) generation | unusable | **~24 t/s**, flat on long runs |
 
 It opens, detects your hardware, and recommends models that will actually run well — no guesswork.
 
 ## Features
 
-- **Native chat** — multiple persistent conversations, full Markdown with code-copy, regenerate, system prompt, live tokens/sec, file attachments
+- **Native chat** — multiple persistent conversations, full Markdown with code-copy, regenerate, system prompt, live tokens/sec, file attachments, conversation forking and per-message metrics
+- **Agent tools and MCP** — the model can read, edit and run files and commands with per-step permission, run JavaScript in a sandbox, and use tools from external Model Context Protocol servers you connect
+- **Voice dictation** — the microphone button transcribes straight into the message box on-device (Apple's Speech framework); nothing leaves the Mac
 - **Vision** — attach images (or paste a screenshot with Cmd+V) and vision-capable models describe them; the matching projector (`mmproj`) is paired automatically
 - **Image generation (beta)** — a local text-to-image studio (stable-diffusion.cpp on the same AMD Metal stack): text-to-image and image-to-image, with a model catalog sized to your VRAM
-- **Model manager** — a curated catalog with **per-model VRAM/RAM estimates for *your* hardware**, plus Hugging Face search, downloads with live progress, and one-click delete
+- **Model manager** — a curated catalog with **per-model VRAM/RAM estimates for *your* hardware**, plus Hugging Face browsing sorted by trending, downloads, likes or last update, downloads with live progress, and a flag when a repo re-publishes a model you already have
 - **MoE-aware** — automatic `--n-cpu-moe` calculation so 35B-class Mixture-of-Experts models run well on 12 GB GPUs
-- **MTP speculative decoding** — automatic and lossless: it engages by itself on MoE models that ship an MTP head and have experts offloaded to the CPU, which is where it pays off (on full-GPU models it measured as a regression, so it stays out of the way)
+- **Speculative decoding, automatic and lossless** — MTP engages by itself on models that ship the head, and DFlash uses a small per-model draft when one is downloaded; both size themselves to your VRAM, back off on content where drafting doesn't pay, and never change the output
 - **Bundled engine** — official llama.cpp with the **AMD Flash Attention kernel** on by default, so attention runs on the GPU instead of falling back to the CPU (see the [research note](#research-amd-gpus-on-metal))
 - **Benchmarks** — measure prompt/generation speed per configuration, with history and side-by-side comparison charts
 - **OpenAI-compatible API** — use it at `http://127.0.0.1:8080`, with optional local-network access and Bonjour discovery; can also serve embeddings for local RAG clients
+- **Router mode** — one server that auto-loads whichever model each OpenAI-compatible request names, no restart between models; external clients and the built-in chat switch on the fly
 - **Multiple servers** — run several independent engine instances at once from the Dashboard, each with its own model, GPU, port and profile; serve different models side by side or pin one model per GPU
 - **Multi-GPU and eGPU** — split a model across all your GPUs or an exact set of cards (validated on dual-GPU setups); external GPUs run at full speed with VRAM-resident weights
 - **Every parameter explained** — bilingual tooltips and built-in docs (English/Spanish)
@@ -65,6 +64,7 @@ These are new and still being validated — enable them in Settings, but expect 
 - **Remember conversations (disk cache)** — persists each chat's KV cache so reopening it, or restarting the app, skips re-processing the prompt; the reload is byte-exact, and an 8.6k-token chat comes back in 0.9 s instead of 24.8 s of re-prefilling. Also pre-warms the cache for external clients (VS Code/Cline), so their first request skips the multi-minute cold prefill.
 - **Prompt cache reuse** — reuses the cache across mid-prompt edits (coding assistants) and trimmed reasoning instead of reprocessing. Fast but approximate; toggle it off in Settings for exact, reproducible output.
 - **Split model across GPUs** — validated on a dual-GPU setup (RX 6900 XT + RX 6800 XT eGPU): a 35B MoE with all experts in VRAM generated at ~3× the single-GPU-offload speed, and testers run 122B-class models across four cards. You can pick the exact set of cards per server; it stays flagged experimental in the UI while more configurations report back.
+- **Tensor split (`--split-mode tensor`)** — splits every tensor instead of assigning whole layers per card. Recent releases made it usable: models load 4× faster, generation gained 16% by not submitting empty command buffers, eligible reductions use Metal's native two-GPU all-reduce, and each kind of hand-off now picks the faster transfer (events for tensor split, the Infinity Fabric peer copy per layer).
 
 ### A native chat that stays out of your way
 
@@ -97,7 +97,7 @@ Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine, 
 | Llama-3.2-1B Q4_K_M | dense | 2994 | 250 |
 | gemma-3-4B Q4_K_M | dense | 1168 | 90 |
 | Qwen3-4B Q4_K_M | dense | 1005 | 94 |
-| Qwen3-8B Q4_K_M | dense | 476 | 60 |
+| Qwen3-8B Q4_K_M | dense | 764 | 61 |
 | Qwen3.5-9B Q4_K_M | dense | 411 | 45 |
 | gemma-4-12B Q4_K_XL | dense | 342 | 34 |
 | Qwen3.6-14B-A3B Q5_K_M | MoE (full VRAM) | 736 | 56 |
@@ -105,7 +105,7 @@ Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine, 
 | gemma-4-26B-A4B MXFP4 | MoE (offload) | 552 | 22 |
 | Qwen3.6-35B-A3B Q4_K_S | MoE (offload) | 434 | 25 |
 
-Numbers vary with quant, context depth and cooling; the app records your own history so you can compare configurations directly.
+Numbers vary with quant, context depth and cooling; the app records your own history so you can compare configurations directly. The 8B row was re-measured on 0.83.12; the others date from earlier releases and, on prompt processing, are conservative — that path has gained speed since.
 
 For scale: on [llama.cpp's official gpt-oss benchmarks](https://github.com/ggml-org/llama.cpp/discussions/15396), that generation speed sits at M4 Max level (92.4 t/s) and ahead of an M1 Max (75.2).
 
@@ -150,7 +150,7 @@ git clone https://github.com/engeldlgado/toshllm
 cd toshllm
 ./scripts/build-engines.sh      # clones llama.cpp, applies AMD patches, builds static engines
 ./make-app.sh                   # builds the SwiftUI app and packages dist/ToshLLM.app
-./scripts/make-dmg.sh v0.81.1   # optional: create an installable DMG
+./scripts/make-dmg.sh           # optional: create an installable DMG (version from the VERSION file)
 ./scripts/test.sh               # optional: run the unit tests (needs Xcode for XCTest)
 ```
 
@@ -193,6 +193,8 @@ With the AMD attention kernel running on the GPU, quantizing the KV cache stops 
 
 Two things stand out. Prompt processing at depth is *faster* with a quantized cache than with `f16`, because attention reads a smaller KV (less bandwidth). And `q8_0` matches `f16` generation speed while halving the KV footprint — a free win for long context, and you can quantize both keys and values, not just keys.
 
+Below `q8_0` the bundled engine also offers the **TurboQuant** KV types (Turbo3 and Turbo4), which pack the cache further with cooperative GPU writes, cache reuse and context shifts intact; the AMD attention path covers head sizes from 128 through 640 on wave32 and wave64. Turbo4 is worth it from 4B models upward; Turbo3 trades more quality for memory and is meant for larger models at very long context.
+
 ### ToshGEMM: tiled prefill matmul on AMD
 
 Prompt processing on AMD was stuck on the slow matrix-vector path, because Metal's matrix-unit `mul_mm` kernel uses `simdgroup_matrix`, which AMD GPUs can't run (it crashes). **ToshGEMM** is a from-scratch tiled matrix-matrix kernel that restores the fast prefill without those cooperative ops. It is auto-selected on AMD RDNA (wave32); Apple Silicon and AMD GCN are unaffected, and it reverts with `GGML_METAL_MM_MANUAL_DISABLE=1`. Output is byte-identical and generation speed is unchanged.
@@ -205,9 +207,9 @@ Prompt processing on an RX 6700 XT (Qwen3-8B Q4, pp512, t/s, before → ToshGEMM
 
 For a 1000-token prompt that cuts time-to-first-token from ~10 s to ~4 s.
 
-Two later upgrades pushed it further. The kernel now does its math in **packed half precision**, which AMD cards execute at twice the rate, and the AMD attention kernel prefills in blocks of 16 tokens that share the stored context instead of each token re-reading all of it. Measured today on the same card, **pp512 on the 8B reaches ~470 t/s** (from the ~310 above — 5× the pre-ToshGEMM baseline), and prompt processing deep into a conversation (4k of context) goes from 103 to ~290 t/s, so long chats stop feeling slower to respond over time. That 1000-token prompt now takes ~2 s to first token.
+Later upgrades pushed it further. The kernel does its math in **packed half precision**, which AMD cards execute at twice the rate; its K tiles are double-buffered; and the AMD attention kernel prefills in blocks of 16 tokens that share the stored context instead of each token re-reading all of it. Measured on 0.83.12 on the same card, **pp512 on the 8B reaches 764 t/s** — 8× the pre-ToshGEMM baseline — so that 1000-token prompt is down to ~1.3 s to first token, and prompt processing stays fast deep into a conversation instead of degrading with context.
 
-Dense ToshGEMM also **double-buffers its K tiles**: two 8 KiB threadgroup tiles alternate, so the synchronization that publishes the next tile also lets slower simdgroups finish consuming the current one. An interleaved A/B on the RX 6700 XT with Qwen3-8B Q4_K_M (`pp512`, 7 repetitions per leg) averaged **428.55 → 439.22 t/s (+2.49%)**. The same path is shared by the image engine; an SDXL Turbo 512×512/4-step validation reduced warm sampling from **3.10 s to 3.01 s**, and the ON/OFF PNG files were byte-identical. Set `GGML_METAL_MM_DOUBLE_BUFFER_DISABLE=1` to keep ToshGEMM but disable only this optimization. The expert (`mul_mm_id`) path intentionally remains single-buffered: it passed 790/790 correctness cases but measured 1.2% slower with the extra threadgroup memory at `--n-cpu-moe 20`.
+That double buffering alternates two 8 KiB threadgroup tiles, so the synchronization that publishes the next tile also lets slower simdgroups finish consuming the current one: an interleaved A/B on Qwen3-8B Q4_K_M averaged **+2.49%**, and the image engine, which shares the path, cut warm SDXL Turbo sampling from 3.10 s to 3.01 s with byte-identical PNGs. Set `GGML_METAL_MM_DOUBLE_BUFFER_DISABLE=1` to keep ToshGEMM but disable only this. The expert (`mul_mm_id`) path stays single-buffered: it passed 790/790 correctness cases but measured 1.2% slower with the extra threadgroup memory at `--n-cpu-moe 20`.
 
 ToshGEMM now also covers **Mixture-of-Experts** prefill: the per-expert matmul (`mul_mm_id`) uses the same tiled kernel, so MoE models get the speedup on whatever experts are GPU-resident, not just their dense/attention layers. On a Qwen3-Coder-30B-A3B (Q4_K_M, pp512, RX 6700 XT, `--n-cpu-moe 20`):
 
@@ -235,7 +237,9 @@ Dense models gain ~4% and were never at risk (too few copies per token). The pro
 
 ### AMD GCN / Vega cards (RX 500-series, Vega, Radeon VII)
 
-These older AMD GPUs use a 64-wide wavefront ("wave64"), while llama.cpp's Metal kernels assume 32 — that mismatch produced garbage output, and GCN has no simdgroup-matrix or simdgroup-reduction units, so it can't run the stock fast paths at all. ToshLLM ships a **custom wave64 GPU path**, turned on automatically when a wave64 card is detected, and it has grown to cover the whole model: weight decode (K-quants, the Q4_0/Q4_1/Q5_0/Q5_1 legacy quants, bf16, and Mixture-of-Experts expert math), the softmax/normalization reductions, the Gated Delta Net layers the Qwen3.5/3.6 family is built on, **attention** (the AMD kernel has wave64 variants since 0.81.55, quantized KV included), and the prompt matmul for both dense and expert layers — the last piece, `mul_mm_id`, landed in 0.81.67 and took a 35B MoE's prompt speed from 167 to **285 t/s (+70%)** on a Vega II.
+These older AMD GPUs use a 64-wide wavefront ("wave64"), while llama.cpp's Metal kernels assume 32 — that mismatch produced garbage output, and GCN has no simdgroup-matrix or simdgroup-reduction units, so it can't run the stock fast paths at all. ToshLLM ships a **custom wave64 GPU path**, turned on automatically when a wave64 card is detected, and it now covers the whole model: weight decode (K-quants including Q2_K/Q3_K, the IQ and MXFP4 types, the Q4_0/Q4_1/Q5_0/Q5_1 legacy quants, the ternary Q1_0/Q2_0, bf16, and Mixture-of-Experts expert math), the reductions (softmax and normalization, plus sums, argmax and the SSM scan that Mamba-style models and speculative decoding need), the Gated Delta Net layers the Qwen3.5/3.6 family is built on, **attention** (the AMD kernel has wave64 variants since 0.81.55, quantized KV included, and since 0.83.10 prompt processing uses the blocked kernel instead of decomposing attention), and the prompt matmul for both dense and expert layers.
+
+The gains landed in three steps. `mul_mm_id` in 0.81.67 took a 35B MoE's prompt speed from 167 to **285 t/s (+70%)** on a Vega II. Then 0.83.9 moved the remaining quant types off the CPU: on a Radeon RX Vega 64, Qwen3 4B Q3_K_M went from **3.96 to 44 t/s** of generation, and gpt-oss 20B reached 18.2 t/s generation / 191 t/s prompt with the experts of 16 layers on the CPU. And 0.83.10 brought long prompts up on the same card, Qwen3 4B from **295 to 457 t/s at 8k of context** and Llama 3.2 1B from 917 to 1553, with identical perplexity.
 
 Two contributed data points frame what to expect. On an **RX 580** a tester measured a K-quant model go from **1.3 t/s (CPU decode) to ~51 t/s (GPU decode)**, coherent. On a **Radeon Pro Vega II** (Mac Pro 2019), Qwen3.6-35B-A3B Q4_K_S with every expert in VRAM runs at **285 t/s prompt / 42 t/s generation**. Recommended on these cards: a K-quant model, Flash Attention left **ON** (not off), and the KV cache at f16 (q8_0 keys cost ~2% here, so it's a fair trade for long context). The GPU path is on by default; `GGML_METAL_WAVE64_DECODE_DISABLE=1` in **Extra arguments** falls back to the CPU, and `TOSH_W64_PREFILL_DISABLE=1` / `TOSH_W64_MMID_PREFILL_DISABLE=1` revert the two prompt-matmul routes if you want to compare.
 
@@ -268,7 +272,7 @@ From 0.82.3 you can publish your numbers straight from **Benchmarks → Share wi
 ToshLLM.app
 ├── SwiftUI app (this repo) — UI, server lifecycle, downloads, estimator, benchmarks
 └── Resources/
-    ├── bin/        llama-server + llama-bench + llama-perplexity (AMD-patched, static)
+    ├── bin/        llama-server + llama-bench + llama-perplexity + the image engine (AMD-patched, static)
     └── test-ui/    minimal web chat served by llama-server
 ```
 
@@ -311,27 +315,28 @@ Prefer crypto?
 
 ### [⬇️ Descarga la última versión](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Cambios](CHANGELOG.md) · [💜 Apoya el proyecto](#apoya-el-proyecto)
 
-> **🟠 Aviso del proyecto:** Debido a los sucesos recientes en mi ciudad tras el sismo del 24 de junio de 2026, el desarrollo del proyecto se retrasará. Espero retomar mi ritmo normal pronto, una vez que la situación local se estabilice. Gracias por su comprensión.
-
 ### ¿Qué es ToshLLM?
 
 ToshLLM te permite ejecutar modelos LLM modernos **completamente en tu propio Mac** — tus chats nunca salen del equipo, no hay cuentas y no pagas por token.
 
 Casi todas las herramientas de LLM locales en macOS apuntan a Apple Silicon; los Macs Intel con GPU AMD dedicada (incluidos los Hackintosh) quedan fuera: los motores estándar producen **texto corrupto** en estas GPUs y leen los pesos por PCIe a una fracción de la velocidad posible.
 
-**ToshLLM lo resuelve.** Empaqueta `llama.cpp` con parches específicos para AMD dentro de una app nativa SwiftUI, de modo que una tarjeta como la RX 6700 XT pasa de inservible a realmente rápida (Qwen3-8B: de 0.6–2.6 t/s a ~57 t/s). Al abrirla detecta tu hardware y te recomienda modelos que correrán bien, sin adivinar.
+**ToshLLM lo resuelve.** Empaqueta `llama.cpp` con parches específicos para AMD dentro de una app nativa SwiftUI, de modo que una tarjeta como la RX 6700 XT pasa de inservible a realmente rápida (Qwen3-8B: de 0.6–2.6 t/s a ~61 t/s). Al abrirla detecta tu hardware y te recomienda modelos que correrán bien, sin adivinar.
 
 ### Funciones
 
-- **Chat nativo** — conversaciones persistentes, Markdown completo con copiar código, regenerar, prompt de sistema, tokens/seg en vivo y adjuntar archivos
+- **Chat nativo** — conversaciones persistentes, Markdown completo con copiar código, regenerar, prompt de sistema, tokens/seg en vivo, adjuntar archivos, bifurcar conversaciones y métricas por mensaje
+- **Herramientas de agente y MCP** — el modelo puede leer, editar y ejecutar archivos y comandos con permiso paso a paso, correr JavaScript en un sandbox y usar herramientas de servidores MCP externos que conectes
+- **Dictado por voz** — el botón de micrófono transcribe directo al cuadro de mensaje en el propio Mac (framework Speech de Apple); nada sale del equipo
 - **Visión** — adjunta imágenes (o pega una captura con Cmd+V) y los modelos con visión las describen; el proyector (`mmproj`) se empareja solo
 - **Generación de imágenes (beta)** — estudio local de texto-a-imagen (stable-diffusion.cpp sobre el mismo stack Metal AMD): texto-a-imagen e imagen-a-imagen, con catálogo ajustado a tu VRAM
-- **Gestor de modelos** — catálogo curado con **estimaciones de VRAM/RAM para *tu* equipo**, búsqueda en Hugging Face, descargas con progreso y borrado en un clic
+- **Gestor de modelos** — catálogo curado con **estimaciones de VRAM/RAM para *tu* equipo**, explorador de Hugging Face ordenable por tendencia, descargas, favoritos o última actualización, descargas con progreso y aviso cuando un repositorio vuelve a publicar un modelo que ya tienes
 - **Soporte MoE** — cálculo automático de `--n-cpu-moe` para que modelos de 35B corran bien en GPUs de 12 GB
-- **Decodificación especulativa MTP** — automática y sin pérdida de calidad: se activa sola en modelos MoE que traen cabezal MTP y tienen expertos en CPU, que es donde compensa (en modelos full-GPU medía regresión, así que ahí no se mete)
+- **Decodificación especulativa automática y sin pérdida** — MTP se activa solo en los modelos que traen el cabezal, y DFlash usa un borrador pequeño por modelo cuando lo descargas; ambos se ajustan a tu VRAM, se desenganchan en el contenido donde no compensa y no cambian la salida
 - **Motor integrado** — llama.cpp oficial con el kernel de **Flash Attention para AMD** activo por defecto, para que la atención corra en la GPU en vez de caer a CPU
 - **Benchmarks** — mide velocidad de prompt y generación por configuración, con historial y gráficas comparativas
 - **API compatible con OpenAI** en `http://127.0.0.1:8080`, con acceso opcional por red local y descubrimiento Bonjour; también puede servir embeddings para clientes RAG locales
+- **Modo router** — un solo servidor que carga el modelo que pida cada petición compatible con OpenAI, sin reiniciar entre modelos; los clientes externos y el chat integrado cambian al vuelo
 - **Varios servidores y multi-GPU** — varios motores independientes a la vez, cada uno con su modelo, GPU (o conjunto exacto de GPUs), puerto y perfil; las eGPU corren a velocidad completa con pesos residentes en VRAM
 - **Cada parámetro explicado** — tooltips bilingües y documentación integrada
 - **Perfiles, modo barra de menú y auto-inicio**
@@ -342,7 +347,7 @@ Funciones nuevas, aún en validación — actívalas en Ajustes, pero pueden ten
 
 - **Recordar conversaciones (caché en disco)** — guarda la caché KV de cada chat, así al reabrirlo o reiniciar la app no se reprocesa el prompt; la restauración es byte-exacta y un chat de 8.6k tokens vuelve en 0.9 s en vez de 24.8 s. También pre-calienta la caché para clientes externos (VS Code/Cline), evitando el prefill frío de varios minutos en la primera petición.
 - **Repartir el modelo entre varias GPUs** — validado en un equipo con dos GPUs (RX 6900 XT + RX 6800 XT por eGPU): un MoE de 35B con todos los expertos en VRAM generó a ~3× la velocidad de una sola GPU con offload, y hay testers corriendo modelos de 122B repartidos en cuatro tarjetas. Puedes elegir el conjunto exacto de tarjetas por servidor; sigue marcado experimental mientras llegan más configuraciones.
-- **Tarjetas AMD GCN / Vega (RX 500, Vega, Radeon VII)** — usan wavefront de 64 (los kernels de Metal asumen 32), lo que producía salida corrupta. ToshLLM incluye un **path wave64 en GPU** que se activa solo al detectar una de estas tarjetas, y ya cubre el modelo completo: decode de pesos (K-quants, quants legacy Q4_0/Q5_0, bf16 y expertos MoE), las reducciones, las capas Gated Delta Net de la familia Qwen3.5/3.6, la **atención** (el kernel AMD tiene variantes wave64 desde 0.81.55, con KV cuantizado) y el matmul de prompt de capas densas y de expertos (esto último desde 0.81.67: un MoE de 35B pasó de 167 a **285 t/s** de prompt en una Vega II). Un tester midió en una RX 580 un modelo K-quant pasar de **1.3 a ~51 t/s**, coherente. Recomendado: modelo K-quant, Flash Attention en **ON** y KV en f16. Es no-op verificado en RDNA (wave32); en GCN/Vega real sigue validándose con testers.
+- **Tarjetas AMD GCN / Vega (RX 500, Vega, Radeon VII)** — usan wavefront de 64 (los kernels de Metal asumen 32), lo que producía salida corrupta. ToshLLM incluye un **path wave64 en GPU** que se activa solo al detectar una de estas tarjetas y ya cubre el modelo completo: decode de pesos (K-quants incluidos Q2_K/Q3_K, tipos IQ y MXFP4, quants legacy, ternarios Q1_0/Q2_0, bf16 y expertos MoE), las reducciones (softmax, normalización, sumas, argmax y el scan SSM), las capas Gated Delta Net de la familia Qwen3.5/3.6, la **atención** (variantes wave64 desde 0.81.55, con KV cuantizado, y desde 0.83.10 el prompt usa el kernel por bloques) y el matmul de prompt de capas densas y de expertos. En una Vega 64: Qwen3 4B Q3_K_M pasó de **3.96 a 44 t/s** de generación en 0.83.9, y sus prompts largos de **295 a 457 t/s** a 8k de contexto en 0.83.10. Un tester midió en una RX 580 un modelo K-quant pasar de **1.3 a ~51 t/s**, coherente. Recomendado: modelo K-quant, Flash Attention en **ON** y KV en f16. Es no-op verificado en RDNA (wave32); en GCN/Vega real sigue validándose con testers.
 
 ### Instalación
 
