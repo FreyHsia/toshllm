@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.15] - 2026-08-06
 
 ### Added
 - **Downloaded models say when their repo has re-published the file**... the app already remembered where each model came from, and now compares it against the checksum Hugging Face publishes for that file: My models flags the difference and offers to download it again, replacing the local file only once the new one verifies.
