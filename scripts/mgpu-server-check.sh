@@ -86,7 +86,8 @@ fi
 report "$OUT/tensor.log" "tensor"
 echo "\nattach $OUT/sample.txt"
 
-for cfg in "peer:TOSH_MGPU_PEER=1" "events:TOSH_MGPU_EVENTS=1" \
+# "none" runs here too: section 3 generates 400 tokens, so its t/s is not comparable with these
+for cfg in "none:" "peer:TOSH_MGPU_PEER=1" "events:TOSH_MGPU_EVENTS=1" \
            "peer+events:TOSH_MGPU_PEER=1 TOSH_MGPU_EVENTS=1"; do
     label="${cfg%%:*}"
     echo "\n=== 4. tensor split, coherence with $label"
