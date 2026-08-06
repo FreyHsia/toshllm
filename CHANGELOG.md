@@ -3,11 +3,10 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.13] - 2026-08-05
 
 ### Improved
 - **Speculative decoding costs much less on the content where it does not help**... while acceptance stays low the engine disengages, but it kept the draft cache in step one decode per token and only disengaged below 50% acceptance, under the 54% break-even measured on this hardware: those catch-ups are now replayed in a single batch before the next attempt, and a 4B model on technical prose went from 58.5 to 60.5 t/s against 64.6 without speculation. Predictable content, where it does help, is unchanged at 91.4 t/s against the same 64.6.
-
 - **Speculative decoding no longer writes rollback state a model cannot use**... models with recurrent layers save one state checkpoint per token the draft may need to undo, and saved the full set on every pass, including the single-token ones where nothing can be undone: those passes now write 48 state copies instead of 96 and generation gained 1.3%, with identical output and identical acceptance.
 
 ### Fixed
