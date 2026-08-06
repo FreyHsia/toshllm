@@ -8604,6 +8604,29 @@ index 28f8bb793..cf6683d5a 100644
          if (progress_callback) {
              // Even though the model is done loading, we still honor
              // cancellation since we need to free allocations.
+diff --git a/src/models/delta-net-base.cpp b/src/models/delta-net-base.cpp
+index ad6612647..9a1f11812 100644
+--- a/src/models/delta-net-base.cpp
++++ b/src/models/delta-net-base.cpp
+@@ -499,11 +499,17 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
+         // this logic assumes that the last (n_rs_seq + 1) tokens of a sequence in a batch are inside
+         //   the same ubatch, which `split_equal()` guarantees via its n_keep_tail argument
+ 
+         const int64_t K = (int64_t) cparams.n_rs_seq + 1;
+ 
+-        for (int64_t t = 1; t <= K; ++t) {
++        // a rollback cannot reach past this ubatch, so slots deeper than its token count would
++        // only ever be restored as the wrong state: skip their copies. The ubatch token count is
++        // part of the graph reuse key, so the two topologies never share a cached graph.
++        const int64_t n_ut  = conv_input->ne[0] - conv_states->ne[0];
++        const int64_t K_eff = getenv("TOSH_RS_SLOTS_FULL") ? K : std::min<int64_t>(K, n_ut + 1);
++
++        for (int64_t t = K - K_eff + 1; t <= K; ++t) {
+             const int64_t s_idx  = std::max<int64_t>(0, conv_input->ne[0] - conv_states->ne[0] - K + t);
+             const int64_t s_slot = K - t;
+ 
+             ggml_tensor * conv_state_last =
+                 ggml_view_3d(ctx0, conv_input,
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
 index 075689388..75ba8a514 100644
 --- a/tools/llama-bench/llama-bench.cpp
