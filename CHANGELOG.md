@@ -3,6 +3,15 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Scrolling up during a long answer now holds the text still**... the chat followed the stream to the last word written, so reading a long reply while it was being written meant chasing moving text. Scrolling far enough that the answer's last lines leave the view now freezes it where you left it and generation carries on off screen; nearer than that it keeps following, so a small scroll never looks like a stall. The floating button, tinted while there is more waiting, takes you back to the end and resumes following, and so does scrolling there yourself; coming back lands on the text as it stands, instead of typing out everything that piled up at several times the real speed. Only a scroll of your own changes any of this, so a turn finishing never moves the view.
+- **Scrolling back through a long conversation no longer stutters**... every message that left the view was formatted again from scratch on the way back, and formatting a single paragraph costs about 0.13 ms: four messages arriving in the same frame spent 7 ms of the 16 a frame has, which is where the catching came from. Formatted paragraphs are now kept around, and those same four cost 0.012 ms.
+
+### Fixed
+- **The button that jumps to the end of a conversation no longer misses clicks**... only the arrow itself took the press, so anything landing on the rest of the circle did nothing.
+
 ## [0.83.15] - 2026-08-06
 
 ### Added

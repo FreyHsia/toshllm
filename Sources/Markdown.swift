@@ -14,6 +14,34 @@ private enum MDBlock: Equatable {
     case rule
 }
 
+/// Formatted paragraphs outlive the rows that show them: a LazyVStack drops a
+/// row on the way out and rebuilds it on the way back, and re-running
+/// AttributedString(markdown:) for each block costs ~0.13 ms apiece — enough to
+/// drop frames while scrolling a long conversation.
+private final class InlineCache {
+    static let shared = InlineCache()
+    private let lock = NSLock()
+    private var entries: [String: AttributedString] = [:]
+    private var order: [String] = []
+    private let limit = 800
+
+    func formatted(_ s: String, build: (String) -> AttributedString) -> AttributedString {
+        lock.lock()
+        let hit = entries[s]
+        lock.unlock()
+        if let hit { return hit }
+
+        let value = build(s)
+        lock.lock()
+        if entries.updateValue(value, forKey: s) == nil {
+            order.append(s)
+            if order.count > limit { entries.removeValue(forKey: order.removeFirst()) }
+        }
+        lock.unlock()
+        return value
+    }
+}
+
 struct RichText: View {
     let text: String
     /// While true, only the settled portion of `text` is parsed as Markdown and
@@ -241,6 +269,10 @@ struct RichText: View {
     }
 
     static func inline(_ s: String) -> AttributedString {
+        InlineCache.shared.formatted(s, build: format)
+    }
+
+    private static func format(_ s: String) -> AttributedString {
         var attr = (try? AttributedString(markdown: s, options: .init(
             allowsExtendedAttributes: false,
             interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)

@@ -320,6 +320,9 @@ struct MessageBubble: View, Equatable {
 struct StreamingBubble: View {
     @ObservedObject var live: LiveStream
     let message: ChatMessage
+    /// Non-nil while the reader has scrolled away: the bubble renders this
+    /// instead of the live text, so nothing on screen moves.
+    var frozen: StreamSnapshot? = nil
     let onGrow: () -> Void
 
     private var liveMessage: ChatMessage {
@@ -334,7 +337,7 @@ struct StreamingBubble: View {
     }
 
     var body: some View {
-        StreamingMessageBubble(live: live, message: liveMessage)
+        StreamingMessageBubble(live: live, message: liveMessage, frozen: frozen)
             .onChange(of: live.visibleText) { _, _ in onGrow() }
     }
 }
@@ -344,8 +347,13 @@ struct StreamingBubble: View {
 struct StreamingMessageBubble: View {
     @ObservedObject var live: LiveStream
     let message: ChatMessage
+    var frozen: StreamSnapshot? = nil
     @EnvironmentObject var loc: Localizer
     @AppStorage(SettingsKeys.smoothTyping) private var smoothTyping = true
+
+    private var visibleText: String { frozen?.visible ?? live.visibleText }
+    private var reasoningText: String { frozen?.reasoning ?? live.displayedReasoning }
+    private var reasoningTail: String { frozen?.reasoningTail ?? live.reasoningTail }
 
     // Open instantly (animating the large transcript's layout felt like a hang);
     // closing keeps its animation.
@@ -381,10 +389,10 @@ struct StreamingMessageBubble: View {
                                 toggleReasoning()
                             } label: {
                                 HStack(spacing: 6) {
-                                    reasoningHeader(live.visibleText.isEmpty ? loc.t("Razonando…", "Thinking…")
-                                                                             : loc.t("Razonamiento", "Reasoning"),
+                                    reasoningHeader(visibleText.isEmpty ? loc.t("Razonando…", "Thinking…")
+                                                                        : loc.t("Razonamiento", "Reasoning"),
                                                     expanded: live.reasoningExpanded)
-                                    if live.reasoningExpanded && live.visibleText.isEmpty {
+                                    if live.reasoningExpanded && visibleText.isEmpty {
                                         Text(loc.t("actualización ligera", "light updates"))
                                             .font(.caption).foregroundStyle(.tertiary)
                                     }
@@ -393,15 +401,15 @@ struct StreamingMessageBubble: View {
                             .buttonStyle(.plain)
                             // Collapsed live peek: a quiet two-line tail so the wait
                             // shows the model is actively thinking; fixed height.
-                            if !live.reasoningExpanded, live.visibleText.isEmpty,
-                               !live.reasoningTail.isEmpty {
-                                Text(verbatim: live.reasoningTail)
+                            if !live.reasoningExpanded, visibleText.isEmpty,
+                               !reasoningTail.isEmpty {
+                                Text(verbatim: reasoningTail)
                                     .font(.caption2.italic())
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2, reservesSpace: true)
                                     .truncationMode(.head)
                                     .contentTransition(.opacity)
-                                    .animation(.easeOut(duration: 0.28), value: live.reasoningTail)
+                                    .animation(.easeOut(duration: 0.28), value: reasoningTail)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.leading, 7)
                                     .overlay(alignment: .leading) {
@@ -412,7 +420,7 @@ struct StreamingMessageBubble: View {
                                     .padding(.top, 1)
                             }
                             if live.reasoningExpanded {
-                                Text(live.displayedReasoning)
+                                Text(reasoningText)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
@@ -420,15 +428,17 @@ struct StreamingMessageBubble: View {
                         }
                     }
 
-                    if !live.visibleText.isEmpty {
-                        StreamingRichText(text: live.visibleText, smooth: smoothTyping)
+                    if !visibleText.isEmpty {
+                        // Frozen text reveals at once: a typewriter catching up
+                        // would still be moving the very text being read.
+                        StreamingRichText(text: visibleText, smooth: smoothTyping && frozen == nil)
                     }
 
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         // Label the prefill phase so the pre-first-token wait reads
                         // as work, not a hang. Reasoning/answer have their own labels.
-                        if !live.hasReasoning && live.visibleText.isEmpty {
+                        if !live.hasReasoning && visibleText.isEmpty {
                             PrefillStatusLabel(progress: live.prefillProgress)
                         }
                         if let speed = live.speed {
@@ -455,6 +465,11 @@ struct StreamingRichText: View {
     let smooth: Bool
     @State private var revealed = 0
 
+    /// Well above the steady-state lag of the ease-out below (~60 characters at
+    /// 60 t/s), so only text that piled up while this view was not typing it
+    /// crosses it.
+    private static let jumpThreshold = 600
+
     private let tick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -464,6 +479,7 @@ struct StreamingRichText: View {
                     .onReceive(tick) { _ in
                         let target = text.count
                         guard revealed < target else { return }
+                        guard target - revealed < Self.jumpThreshold else { revealed = target; return }
                         // Ease-out catch-up so it never lags far behind fast generation.
                         revealed = min(target, revealed + max(1, (target - revealed) / 8))
                     }
@@ -474,6 +490,8 @@ struct StreamingRichText: View {
                 RichText(text: text, streaming: true)
             }
         }
+        // On resume, land on the live text instead of typing out the backlog.
+        .onChange(of: smooth) { _, on in if on { revealed = text.count } }
     }
 }
 

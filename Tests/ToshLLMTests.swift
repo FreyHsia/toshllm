@@ -696,6 +696,17 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertFalse(RichText.containsInlineMath("A display block uses $$x$$"))
     }
 
+    func testCachedInlineFormattingMatchesAFreshOneAndKeepsParagraphsApart() {
+        let bold = "A **bold** word and a [link](https://example.test)."
+        let other = "A *different* paragraph."
+        let first = RichText.inline(bold)
+
+        XCTAssertEqual(String(RichText.inline(bold).characters), "A bold word and a link.")
+        XCTAssertEqual(first, RichText.inline(bold))
+        XCTAssertEqual(String(RichText.inline(other).characters), "A different paragraph.")
+        XCTAssertEqual(String(RichText.inline(bold).characters), "A bold word and a link.")
+    }
+
     func testSVGIsEncodedAsAnIsolatedImageResource() {
         let input = #"<svg onload="bad()"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject><path style="fill:url(https://evil.test/x)"/><script>bad()</script></svg>"#
         let output = RichContentIsolation.svgDataURL(input)
@@ -1052,6 +1063,22 @@ final class LiveStreamTests: XCTestCase {
         live.update(reasoning: "abc", visible: "", speed: nil,
                     now: start.addingTimeInterval(0.6))
         XCTAssertEqual(live.displayedReasoning, "abc")
+    }
+
+    func testSnapshotKeepsTheAnswerAsItStoodWhileGenerationContinues() {
+        let live = LiveStream()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        live.setReasoningExpanded(true, now: start)
+        live.update(reasoning: "thinking", visible: "first half", speed: 30,
+                    now: start.addingTimeInterval(1))
+
+        let frozen = live.snapshot
+        live.update(reasoning: "thinking more", visible: "first half and the rest", speed: 30,
+                    now: start.addingTimeInterval(10))
+
+        XCTAssertEqual(frozen.visible, "first half")
+        XCTAssertEqual(frozen.reasoning, "thinking")
+        XCTAssertEqual(live.visibleText, "first half and the rest")
     }
 }
 

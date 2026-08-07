@@ -194,6 +194,14 @@ struct StreamError: LocalizedError {
 
 // MARK: - Store with persistence and streaming
 
+/// The live answer as it stood at one instant. Rendering this instead of the
+/// live properties keeps the bubble's layout still while generation continues.
+struct StreamSnapshot: Equatable {
+    let visible: String
+    let reasoning: String
+    let reasoningTail: String
+}
+
 /// High-frequency streaming state, isolated from ChatStore so per-flush
 /// updates re-render only the views that observe it (the streaming bubble
 /// and the speed badge), never the sidebar or the rest of the transcript.
@@ -225,6 +233,10 @@ final class LiveStream: ObservableObject {
         lastTailPublish = .distantPast
         speed = nil
         prefillProgress = nil
+    }
+
+    var snapshot: StreamSnapshot {
+        StreamSnapshot(visible: visibleText, reasoning: displayedReasoning, reasoningTail: reasoningTail)
     }
 
     func setPrefillProgress(_ p: Double?) {
@@ -1760,6 +1772,19 @@ final class ChatStore: ObservableObject {
 
 // MARK: - Main chat view
 
+/// How far the conversation's end sits past the bottom of the view, in points.
+private struct EndOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) { value = nextValue() ?? value }
+}
+
+/// When the reader last turned the wheel. A reference type so wheel events do
+/// not re-render the transcript, and not @Published for the same reason.
+final class ScrollGestureClock {
+    var last = Date.distantPast
+    var isRecent: Bool { Date().timeIntervalSince(last) < 0.4 }
+}
+
 /// The chat detail: transcript and composer. The conversation list lives in
 /// `ConversationListView` (the split-view sidebar); both share the ChatStore
 /// from the environment, injected by ChatMainView.
@@ -1815,10 +1840,15 @@ struct NativeChatView: View {
     @State private var promptProject: ChatProject?
     @State private var headerTitle = ""
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
-    // True while the newest message is on screen (inverted scroll rests here).
+    // True while the conversation's end is on screen (inverted scroll rests here).
     @State private var atBottom = true
+    // Set when the reader scrolls away mid-answer; the bubble renders it until
+    // they come back, so the transcript stops moving under them.
+    @State private var frozenStream: StreamSnapshot?
     @FocusState private var inputFocused: Bool
     @State private var pasteMonitor: Any?
+    @State private var scrollMonitor: Any?
+    @State private var scrollGesture = ScrollGestureClock()
     @State private var draftOwnerID: UUID?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var showMCPBrowser = false
@@ -1886,12 +1916,19 @@ struct NativeChatView: View {
                     pasteFromClipboard()
                     return nil
                 }
+                scrollMonitor = NSEvent.addLocalMonitorForEvents(
+                    matching: [.scrollWheel, .leftMouseDragged]) { event in
+                    scrollGesture.last = Date()
+                    return event
+                }
             }
             .onDisappear {
                 saveDraftNow()
                 draftSaveTask?.cancel()
                 if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
                 pasteMonitor = nil
+                if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+                scrollMonitor = nil
             }
             .onChange(of: chat.currentID) { oldID, newID in
                 saveDraftNow(for: oldID)
@@ -2077,64 +2114,121 @@ struct NativeChatView: View {
         let newestID = messages.last?.id
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 14) {
-                    Color.clear.frame(height: 1).id(Self.bottomID)
-                    if chat.pendingAgentContinuation?.conversationID == chat.currentID {
-                        AgentContinuationCard(
-                            continueAction: { chat.respondToAgentContinuation(true) },
-                            stopAction: { chat.respondToAgentContinuation(false) })
-                            .environmentObject(loc)
-                            .flippedUpsideDown()
-                    }
-                    if let request = chat.pendingToolPermission,
-                       request.conversationID == chat.currentID {
-                        ToolPermissionCard(request: request) { chat.respondToToolPermission($0) }
-                            .environmentObject(loc)
-                            .flippedUpsideDown()
-                    }
-                    if let err = chat.lastError {
-                        Label(err, systemImage: "exclamationmark.triangle")
-                            .font(.caption).foregroundStyle(.red)
-                            .flippedUpsideDown()
-                    }
-                    ForEach(messages.reversed()) { msg in
-                        messageRow(msg, isNewest: msg.id == newestID)
-                            .flippedUpsideDown()
-                            .id(msg.id)
-                            .onAppear { if msg.id == newestID { atBottom = true } }
-                            .onDisappear { if msg.id == newestID { atBottom = false } }
-                    }
-                    if showSystemMessage {
-                        let prompt = chat.effectiveSystemPrompt(global: systemPrompt)
-                        if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            SystemPromptCard(prompt: prompt) { promptConversation = chat.current }
-                                .flippedUpsideDown()
-                        }
-                    }
+                VStack(spacing: 0) {
+                    endProbe
+                    transcript(messages, newestID: newestID)
                 }
-                .padding()
             }
+            .coordinateSpace(name: Self.scrollSpace)
             .flippedUpsideDown()
             .overlay {
                 if messages.isEmpty { emptyChatState }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !atBottom { jumpToBottomButton { proxy.scrollTo(Self.bottomID) } }
+                if !atBottom {
+                    jumpToBottomButton(writingBehind: frozenStream != nil) { followEnd(proxy) }
+                }
+            }
+            // Only a real wheel gesture may change this: layout settling after a
+            // turn ends also moves the probe, and that must not scroll anyone.
+            .onPreferenceChange(EndOffsetKey.self) { offset in
+                guard let offset, scrollGesture.isRecent else { return }
+                if atBottom {
+                    if offset < -Self.leaveSlack { atBottom = false; freezeStream() }
+                } else if offset > -Self.returnSlack {
+                    atBottom = true
+                    followEnd(proxy, animated: false)
+                }
             }
             .onChange(of: chat.currentID) { _, _ in
-                atBottom = true
-                proxy.scrollTo(Self.bottomID)
+                followEnd(proxy, animated: false)
                 inputFocused = true
             }
-            // A new turn (send/regenerate) jumps to the bottom.
+            // A new turn (send/regenerate) jumps to the bottom, unless the reader
+            // stepped away: then it keeps writing off screen.
             .onChange(of: chat.current?.messages.last?.id) { _, _ in
-                atBottom = true
-                proxy.scrollTo(Self.bottomID)
+                if atBottom { followEnd(proxy, animated: false) } else { freezeStream() }
+            }
+            .onChange(of: chat.generating) { _, generating in
+                if generating { if !atBottom { freezeStream() } } else { frozenStream = nil }
             }
         }
     }
 
+    /// Sits at the conversation's end, outside the lazy stack on purpose:
+    /// scrolling away unloads lazy children, and a probe that disappears when
+    /// the reader steps back is a probe that never reports what matters.
+    private var endProbe: some View {
+        Color.clear.frame(height: 1).id(Self.bottomID)
+            .background {
+                GeometryReader { g in
+                    // Quantized: sub-pixel changes would fire on every frame.
+                    let y = g.frame(in: .named(Self.scrollSpace)).minY
+                    Color.clear.preference(key: EndOffsetKey.self, value: (y / 4).rounded() * 4)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func transcript(_ messages: [ChatMessage], newestID: UUID?) -> some View {
+        LazyVStack(spacing: 14) {
+            if chat.pendingAgentContinuation?.conversationID == chat.currentID {
+                AgentContinuationCard(
+                    continueAction: { chat.respondToAgentContinuation(true) },
+                    stopAction: { chat.respondToAgentContinuation(false) })
+                    .environmentObject(loc)
+                    .flippedUpsideDown()
+            }
+            if let request = chat.pendingToolPermission,
+               request.conversationID == chat.currentID {
+                ToolPermissionCard(request: request) { chat.respondToToolPermission($0) }
+                    .environmentObject(loc)
+                    .flippedUpsideDown()
+            }
+            if let err = chat.lastError {
+                Label(err, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.red)
+                    .flippedUpsideDown()
+            }
+            ForEach(messages.reversed()) { msg in
+                messageRow(msg, isNewest: msg.id == newestID)
+                    .flippedUpsideDown()
+                    .id(msg.id)
+            }
+            if showSystemMessage {
+                let prompt = chat.effectiveSystemPrompt(global: systemPrompt)
+                if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    SystemPromptCard(prompt: prompt) { promptConversation = chat.current }
+                        .flippedUpsideDown()
+                }
+            }
+        }
+        .padding()
+    }
+
+    /// Pins the transcript back to the end and resumes following the answer.
+    private func followEnd(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        atBottom = true
+        frozenStream = nil
+        if animated {
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(Self.bottomID) }
+        } else {
+            proxy.scrollTo(Self.bottomID)
+        }
+    }
+
+    private func freezeStream() {
+        guard frozenStream == nil, chat.generating, chat.current?.id == chat.generatingConvID else { return }
+        frozenStream = chat.live.snapshot
+    }
+
     private static let bottomID = "convBottom"
+    private static let scrollSpace = "chatScroll"
+    /// Freezing only once the answer's last lines are well out of view: doing it
+    /// while they are still on screen reads as the generation having stalled.
+    private static let leaveSlack: CGFloat = 120
+    /// Coming back, on the other hand, means actually reaching the end.
+    private static let returnSlack: CGFloat = 12
 
     @ViewBuilder
     private func messageRow(_ msg: ChatMessage, isNewest: Bool) -> some View {
@@ -2151,7 +2245,7 @@ struct NativeChatView: View {
             }
             if chat.generating && chat.current?.id == chat.generatingConvID
                 && isNewest && msg.role == "assistant" {
-                StreamingBubble(live: chat.live, message: msg) { }
+                StreamingBubble(live: chat.live, message: msg, frozen: frozenStream) { }
             } else {
                 MessageBubble(
                     message: msg,
@@ -2193,20 +2287,32 @@ struct NativeChatView: View {
         }
     }
 
-    private func jumpToBottomButton(_ action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.25)) { action() }
-        } label: {
+    private func jumpToBottomButton(writingBehind: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Image(systemName: "chevron.down")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(writingBehind ? Color.appAccent : .secondary)
                 .frame(width: 34, height: 34)
+                // Without this only the glyph takes the click, so presses landing
+                // on the empty part of the circle do nothing.
+                .contentShape(Circle())
                 .glassSurface(in: Circle(), interactive: true)
+                .overlay(alignment: .topTrailing) {
+                    if writingBehind {
+                        Circle().fill(Color.appAccent)
+                            .frame(width: 8, height: 8)
+                            .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                            .offset(x: 1, y: -1)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .padding(14)
-        .help(loc.t("Ir al final de la conversación y seguir la respuesta.",
-                    "Jump to the end of the conversation and follow the response."))
+        .help(writingBehind
+              ? loc.t("La respuesta sigue escribiéndose fuera de pantalla; ir al final y volver a seguirla.",
+                      "The answer is still being written off screen; jump to the end and follow it again.")
+              : loc.t("Ir al final de la conversación y seguir la respuesta.",
+                      "Jump to the end of the conversation and follow the response."))
     }
 
     private var emptyChatState: some View {
@@ -3360,6 +3466,7 @@ struct NativeChatView: View {
         images = []
         attachError = nil
         atBottom = true
+        frozenStream = nil
         if chat.agentFlowActive {
             chat.queueMessage(text: text, attachments: files, images: imgs)
             return
