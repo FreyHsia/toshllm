@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.16] - 2026-08-06
 
 ### Improved
 - **Scrolling up during a long answer now holds the text still**... the chat followed the stream to the last word written, so reading a long reply while it was being written meant chasing moving text. Scrolling far enough that the answer's last lines leave the view now freezes it where you left it and generation carries on off screen; nearer than that it keeps following, so a small scroll never looks like a stall. The floating button, tinted while there is more waiting, takes you back to the end and resumes following, and so does scrolling there yourself; coming back lands on the text as it stands, instead of typing out everything that piled up at several times the real speed. Only a scroll of your own changes any of this, so a turn finishing never moves the view.
