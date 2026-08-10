@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.17] - 2026-08-10
 
 ### Added
 - **Multi-GPU can now split each layer between the cards instead of handing them out whole**... splitting by tensors puts both GPUs on the same token, so prompts are read far faster and, on a model of tens of GB, generation is faster too: a 27B on a dual card went from 281 to 377 prompt tokens per second and from 8.1 to 11.6 generated. Pick it in Settings, next to the fast hand-off it needs, which is on by default whenever a model is split. Splitting by layers stays the default and is still the faster of the two on models that fit comfortably.
