@@ -3,6 +3,15 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Multi-GPU can now split each layer between the cards instead of handing them out whole**... splitting by tensors puts both GPUs on the same token, so prompts are read far faster and, on a model of tens of GB, generation is faster too: a 27B on a dual card went from 281 to 377 prompt tokens per second and from 8.1 to 11.6 generated. Pick it in Settings, next to the fast hand-off it needs, which is on by default whenever a model is split. Splitting by layers stays the default and is still the faster of the two on models that fit comfortably.
+
+### Improved
+- **Splitting by tensors generates 26% faster, and now covers more than two GPUs**... each hand-off between cards opened one command buffer to carry the data and a second one to add it in, and creating them cost as much as the copy itself, so the addition now goes into the buffer the copy already opened. Three or more cards were also falling back to a generic reduction that submits a whole graph per addition, and now use the same fast path as two: 24% more generation on three devices and 12% on four. Output is identical token for token.
+- **Each transfer between cards is picked for what it is doing**... the Infinity Fabric copy is ahead when reading a prompt and the event hand-off when generating, and they were tried in a fixed order that gave up a fifth of the generation speed. The engine now chooses per batch.
+
 ## [0.83.16] - 2026-08-06
 
 ### Improved

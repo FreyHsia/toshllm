@@ -580,6 +580,30 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "--split-mode")! + 1], "layer")
     }
 
+    func testTensorSplitModeReachesServerAndBenchmark() {
+        var s = makeSettings()
+        s.multiGPU = true
+        s.splitMode = "tensor"
+
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--split-mode")! + 1], "tensor")
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "--split-mode")! + 1], "tensor")
+
+        s.splitMode = "capas"
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--split-mode")! + 1], "layer",
+                       "un valor guardado que el motor no acepta debe caer en layer")
+    }
+
+    func testFastHandOffOnlyTravelsWithASplit() {
+        var s = makeSettings()
+        XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"], "sin reparto no hay traspaso entre GPUs")
+
+        s.multiGPU = true
+        XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
+
+        s.mgpuEvents = false
+        XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"])
+    }
+
     func testLocalNetworkDiscoveryBindsServerToAllInterfaces() {
         var s = makeSettings()
         s.localNetworkDiscovery = true

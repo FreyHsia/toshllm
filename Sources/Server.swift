@@ -71,16 +71,24 @@ struct ServerSettings {
     /// AMD FA kernel: without it the V cache is transposed and save/restore copies
     /// it row-by-row, unusably slow.
     var persistCache: Bool = false
-    /// EXPERIMENTAL: split one model's layers across all detected GPUs
-    /// (`--split-mode layer`). Unvalidated on AMD/Metal: cross-GPU copies take a
-    /// different path than the staging the patch covers and could corrupt or hang.
+    /// EXPERIMENTAL: split one model across all detected GPUs. Unvalidated on
+    /// AMD/Metal: cross-GPU copies take a different path than the staging the
+    /// patch covers and could corrupt or hang.
     var multiGPU: Bool = false
     /// How many GPUs to split across when `multiGPU` is on. 0 = all detected.
     /// Fewer GPUs trade prompt speed for generation speed (less cross-card sync).
     var multiGPUCount: Int = 0
+    /// How the split divides the model (`--split-mode`): `layer` gives each GPU
+    /// whole layers, `tensor` splits every matmul so both work on the same token,
+    /// which costs one allreduce per layer and only pays off on a big model.
+    var splitMode: String = "layer"
+    /// Hand off activations between GPUs with shared Metal events instead of
+    /// draining both queues on every copy (TOSH_MGPU_EVENTS). Inert on a layer
+    /// split; on a tensor split it is most of the generation speed.
+    var mgpuEvents: Bool = true
     /// EXPERIMENTAL opt-in: when two split GPUs share a Metal peer group (Infinity
     /// Fabric Link, e.g. a W6800X/Vega II Duo), copy activations die-to-die instead
-    /// of via host (TOSH_MGPU_PEER). Speeds up prefill; unset falls back to staging.
+    /// of via host (TOSH_MGPU_PEER). Wins the prefill; unset falls back to staging.
     var mgpuPeer: Bool = false
     /// Force VRAM-resident (private) Metal buffers. The backend forces shared ones
     /// for external GPUs, which streams weights over Thunderbolt every op; this
@@ -98,6 +106,12 @@ struct ServerSettings {
     var benchPP: Int = 512
     var benchTG: Int = 128
     var benchDepth: Int = 0
+
+    /// One model served across several GPUs, either by the all/N toggle or by an
+    /// explicit selection of at least two cards.
+    var isSplitting: Bool { multiGPU || gpuList.count >= 2 }
+    /// Guards against a stale or hand-edited value: llama.cpp only takes these two.
+    var effectiveSplitMode: String { splitMode == "tensor" ? "tensor" : "layer" }
 
     var isMultimodal: Bool { Self.mmprojPath(forModel: modelPath) != nil }
     /// Vision actually loaded (projector available AND the eye is on); slot
@@ -180,7 +194,7 @@ struct ServerSettings {
         // keeps its full window and API requests don't multiply KV memory.
         if parallelSlots > 1 { args.append("--kv-unified") }
         // Which devices to split across is decided by the env vars below.
-        if multiGPU || gpuList.count >= 2 { args += ["--split-mode", "layer"] }
+        if isSplitting { args += ["--split-mode", effectiveSplitMode] }
         if embeddings { args.append("--embeddings") }
         if agentToolsEnabled {
             if !args.contains("--jinja") { args.append("--jinja") }
@@ -275,7 +289,7 @@ struct ServerSettings {
             if cacheReuse && mmproj == nil { lines.append("cache-reuse = 256") }
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }
             if parallelSlots > 1 { lines.append("kv-unified = true") }
-            if multiGPU || gpuList.count >= 2 { lines.append("split-mode = layer") }
+            if isSplitting { lines.append("split-mode = \(effectiveSplitMode)") }
             if persistCache && effectiveFaAmd && mmproj == nil {
                 lines.append("slot-save-path = \(Self.slotCacheDir(port: port).appendingPathComponent(alias).path)")
             }
@@ -328,7 +342,7 @@ struct ServerSettings {
         } else if effectiveFaAmd {
             args += ["-fa", "auto"]
         }
-        if multiGPU || gpuList.count >= 2 { args += ["--split-mode", "layer"] }
+        if isSplitting { args += ["--split-mode", effectiveSplitMode] }
         return args
     }
 
@@ -341,12 +355,14 @@ struct ServerSettings {
     /// record. Resolves the macOS-picked default to its real device name.
     var gpuLabel: String {
         let gpus = ServerController.availableGPUs()
-        if gpuList.count >= 2 { return "Split · \(gpuList.count) GPUs" }
+        // Only the non-default mode is named, so old records stay comparable.
+        let mode = effectiveSplitMode == "tensor" ? " · tensor" : ""
+        if gpuList.count >= 2 { return "Split · \(gpuList.count) GPUs\(mode)" }
         if multiGPU {
             let discrete = gpus.filter { !$0.isIntegrated }.count
             let limit = discrete > 0 ? discrete : gpus.count
             let n = multiGPUCount > 0 ? min(multiGPUCount, limit) : limit
-            return "Split · \(max(2, n)) GPUs"
+            return "Split · \(max(2, n)) GPUs\(mode)"
         }
         if gpuIndex >= 0 { return gpus.first { $0.index == gpuIndex }?.name ?? "GPU \(gpuIndex)" }
         return MTLCreateSystemDefaultDevice()?.name ?? "default"
@@ -398,7 +414,8 @@ struct ServerSettings {
             env["GGML_METAL_SHARED_BUFFERS_DISABLE"] = "1"
         }
         if effectiveFaAmd { env["TOSH_FA_AMD"] = "1" }
-        if mgpuPeer && (multiGPU || gpuList.count >= 2) { env["TOSH_MGPU_PEER"] = "1" }
+        if mgpuPeer && isSplitting { env["TOSH_MGPU_PEER"] = "1" }
+        if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
         if prefetchExperts && (ncmoe > 0 || routerMode) {
@@ -503,6 +520,8 @@ struct ServerSettings {
             persistCache: bool(SettingsKeys.persistCache, false),
             multiGPU: bool(SettingsKeys.multiGPU, false),
             multiGPUCount: int(SettingsKeys.multiGPUCount, 0),
+            splitMode: d.string(forKey: SettingsKeys.splitMode) ?? "layer",
+            mgpuEvents: bool(SettingsKeys.mgpuEvents, true),
             mgpuPeer: bool(SettingsKeys.mgpuPeer, false),
             forcePrivateBuffers: bool(SettingsKeys.forcePrivateBuffers, false),
             cacheReuse: bool(SettingsKeys.cacheReuse, true),
@@ -1169,7 +1188,8 @@ final class ServerController: ObservableObject {
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
         let env = settings.environment
         let envLine = envKeys.compactMap { k in env[k].map { "\(k)=\($0)" } }.joined(separator: " ")
-        let gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
+        var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
+        if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
         return """
         ========================================================
          ToshLLM \(AppInfo.version) — server start (\(ServerSettings.isAppleSilicon ? "arm64" : "x86_64")\(AppInfo.isNoAVX2 ? " · no-AVX2 build" : ""))

@@ -70,6 +70,8 @@ enum SettingsKeys {
     static let persistCache = "persistCache"
     static let multiGPU = "multiGPU"
     static let multiGPUCount = "multiGPUCount"
+    static let splitMode = "splitMode"
+    static let mgpuEvents = "mgpuEvents"
     static let mgpuPeer = "mgpuPeer"
     static let forcePrivateBuffers = "forcePrivateBuffers"
     static let cacheReuse = "cacheReuse"
@@ -165,7 +167,7 @@ enum SettingsKeys {
         vramReserve, gpuIndex, gpuList, extraArgs, embeddings, agentToolsEnabled, jsSandboxEnabled, mcpServers,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts, routerMode, routerModelsMax,
-        persistCache, multiGPU, multiGPUCount,
+        persistCache, multiGPU, multiGPUCount, splitMode, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,
         menuBarIcon, menuBarGPU, autoStart, updateAutoCheck, appAccent,
         chatTemp, chatMaxTokens, chatSystem, chatThinking, chatReasoningEffort,

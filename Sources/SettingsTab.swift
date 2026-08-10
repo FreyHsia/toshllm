@@ -28,6 +28,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
+    @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
+    @AppStorage(SettingsKeys.mgpuEvents) private var mgpuEvents = true
     @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = false
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
     @AppStorage(SettingsKeys.embeddings) private var embeddings = false
@@ -350,8 +352,8 @@ struct SettingsView: View {
                         .onChange(of: multiGPU) { _, on in
                             if !on { gpuListCSV = "" }
                         }
-                        .infoTip(loc.t("Divide las capas del modelo entre todas las GPUs detectadas (--split-mode layer) en vez de usar una sola, p. ej. para cargar un modelo que no cabe en una. Anula el selector de arriba.",
-                                    "Splits the model's layers across all detected GPUs (--split-mode layer) instead of using one, e.g. to load a model that doesn't fit on a single card. Overrides the picker above."))
+                        .infoTip(loc.t("Reparte el modelo entre todas las GPUs detectadas (--split-mode) en vez de usar una sola, p. ej. para cargar un modelo que no cabe en una. Anula el selector de arriba.",
+                                    "Splits the model across all detected GPUs (--split-mode) instead of using one, e.g. to load a model that doesn't fit on a single card. Overrides the picker above."))
                     if multiGPU && hardware.gpus.count > 2 && splitSelection.count < 2 {
                         Picker(loc.t("GPUs a usar", "GPUs to use"), selection: $multiGPUCount) {
                             Text(loc.t("Todas (\(hardware.gpus.count))", "All (\(hardware.gpus.count))")).tag(0)
@@ -391,10 +393,20 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .labelStyle(.titleAndIcon)
+                        Picker(loc.t("Cómo repartirlo", "How to split it"), selection: $splitMode) {
+                            Text(loc.t("Por capas", "By layers")).tag("layer")
+                            Text(loc.t("Por tensores", "By tensors")).tag("tensor")
+                        }
+                        .infoTip(loc.t("Por capas: cada GPU se queda unas capas enteras y trabajan por turnos. Es lo más rápido generando y lo más probado. Por tensores: las dos GPUs trabajan a la vez dentro de cada capa, así que leen el prompt mucho más rápido, pero se ponen de acuerdo en cada capa y esa espera cuesta lo mismo por token generado: en un modelo pequeño se come la ganancia, y en uno grande (decenas de GB) sale ganando en las dos cosas.",
+                                    "By layers: each GPU keeps whole layers and they take turns. Fastest at generating, and the best tested. By tensors: both GPUs work at once inside every layer, so they read the prompt much faster, but they sync up on every layer and that wait costs the same on each generated token: on a small model it eats the gain, on a big one (tens of GB) it wins at both."))
+                        Toggle(loc.t("Traspaso rápido entre GPUs",
+                                     "Fast hand-off between GPUs"), isOn: $mgpuEvents)
+                            .infoTip(loc.t("Pasa los datos de una GPU a otra sin vaciar las colas de las dos en cada copia. Repartiendo por capas no cambia nada; repartiendo por tensores es la mayor parte de la velocidad de generación (medido +59% en dos GPUs). Apágalo solo para diagnosticar.",
+                                        "Hands data from one GPU to the other without draining both queues on every copy. It changes nothing when splitting by layers; when splitting by tensors it is most of the generation speed (measured +59% on two GPUs). Turn it off only to diagnose."))
                         Toggle(loc.t("Infinity Fabric Link entre GPUs (experimental)",
                                      "Infinity Fabric Link between GPUs (experimental)"), isOn: $mgpuPeer)
-                            .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Acelera el procesamiento del prompt; no cambia la velocidad de generación. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
-                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo), copies activations directly between them instead of through system RAM. Speeds up prompt processing; does not change generation speed. If the machine doesn't support it, the copy falls back to the safe path on its own."))
+                            .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Acelera el procesamiento del prompt. Repartiendo por tensores se usa solo donde gana, leyendo el prompt, y el traspaso rápido se queda con la generación. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
+                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo), copies activations directly between them instead of through system RAM. Speeds up prompt processing. When splitting by tensors it is used only where it wins, reading the prompt, and the fast hand-off keeps generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
                     }
                 }
                 // eGPU fix: shown only when an external GPU is present. When the user

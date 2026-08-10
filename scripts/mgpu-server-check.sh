@@ -2,7 +2,10 @@
 # Server-side half of issue #51: the layer-split GPU timeout, and a profile of where
 # tensor-split decode spends its time. Send back the whole output plus sample.txt.
 #
-#   ./scripts/mgpu-server-check.sh <model.gguf>
+#   ./scripts/mgpu-server-check.sh <model.gguf> [3+ GPU list, e.g. 1,2,3]
+#
+# The second argument is optional and only for machines with three or more cards: it runs
+# section 6, the reduction across all of them.
 #
 # Uses the installed app by default; override with TOSH_BIN=/path/to/bin.
 # Pick the GPUs with GGML_METAL_DEVICE_LIST (0,0 splits over a single card, which is how we
@@ -100,3 +103,39 @@ for cfg in "none:" "peer:TOSH_MGPU_PEER=1" "events:TOSH_MGPU_EVENTS=1" \
     fi
     report "$OUT/$label.log" "$label"
 done
+
+# Where the all-reduce should stop preferring the peer copy: with both transfers enabled,
+# batches under the threshold go by events. 0 = always peer, 999999 = always events.
+# Same 120 tokens as section 4, so those rows are comparable with these.
+for th in 0 8 32 128 999999; do
+    echo "\n=== 5. tensor split, peer+events, TOSH_MGPU_PEER_MIN_BATCH=$th"
+    MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS \
+              TOSH_MGPU_PEER=1 TOSH_MGPU_EVENTS=1 TOSH_MGPU_PEER_MIN_BATCH=$th)
+    if serve "$OUT/th$th.log" --split-mode tensor; then
+        ask 120 > "$OUT/th$th.json"
+        show "$OUT/th$th.json"
+        stop
+    fi
+    report "$OUT/th$th.log" "min-batch $th"
+done
+
+# Only with three or more cards: the butterfly reduction of the Metal backend against the
+# generic one. It measured 1.5% negative on one card split into logical devices, which is not
+# the case anyone runs, so it stays behind TOSH_MGPU_COMM_MULTI until real cards decide.
+DEVS="${2:-}"
+if [ -n "$DEVS" ]; then
+    export GGML_METAL_DEVICE_LIST="$DEVS"
+    for cfg in "generic:" "butterfly:TOSH_MGPU_COMM_MULTI=1"; do
+        label="${cfg%%:*}"
+        echo "\n=== 6. tensor split on $DEVS, $label reduction"
+        MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_COMM_MULTI TOSH_MGPU_EVENTS=1 ${=cfg#*:})
+        if serve "$OUT/$label.log" --split-mode tensor; then
+            ask 120 > "$OUT/$label.json"
+            echo "output (must be coherent):"
+            show "$OUT/$label.json"
+            stop
+        fi
+        grep "COMM_MULTI" "$OUT/$label.log" | head -1
+        report "$OUT/$label.log" "$label"
+    done
+fi
