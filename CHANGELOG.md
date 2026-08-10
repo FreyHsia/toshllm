@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.18] - 2026-08-10
 
 ### Improved
 - **Reading a short prompt is up to 9% faster**... the wide matmul tile splits a work group into half as many pieces, so it only pays off once there are enough tokens to keep the GPU busy, and it was being used at every size: prompts of 64 tokens lost 9% to it on 8-bit and 5-bit models. It now waits for 192 tokens, and 4-bit K-quant models, the most common kind, join it above that size for 2% more on long prompts. Perplexity is unchanged.
