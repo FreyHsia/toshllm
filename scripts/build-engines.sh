@@ -256,7 +256,8 @@ build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" \
     0006-mrope-kv-shift.patch \
     0007-wave64-reductions-and-quants.patch \
     0009-metal-multigpu-dispatch.patch \
-    0010-mtp-kv-only-catchup.patch
+    0010-mtp-kv-only-catchup.patch \
+    0011-server-responses-assistant-item-type.patch
 fi
 
 

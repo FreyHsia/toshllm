@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Stopping an answer no longer breaks the rest of the conversation in external clients**... interrupting a reply mid-stream left the client holding a turn the server then refused, so every later message in that conversation came back as an error until the history was deleted by hand. A finished turn carries a marker that an interrupted one never gets, and the server was treating that marker as required even though it is optional.
+
 ## [0.83.18] - 2026-08-10
 
 ### Improved
