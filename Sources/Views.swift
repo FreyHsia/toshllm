@@ -1,3 +1,7 @@
+// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// Copyright (C) 2026 Engelbert Delgado <e.alex.vd@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import SwiftUI
 
 /// Reveal a file in Finder, falling back to opening its folder when the file
