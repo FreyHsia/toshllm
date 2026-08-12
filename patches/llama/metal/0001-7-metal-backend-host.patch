@@ -1343,20 +1343,16 @@ index 80e47f2c2..1cc651fb6 100644
  #define TARGET_OS_VISION 0
  #endif
  
-@@ -126,10 +127,32 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
+@@ -126,10 +127,28 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
  
          extern const char ggml_metallib_start[];
          extern const char ggml_metallib_end[];
  
          src = [[NSString alloc] initWithBytes:ggml_metallib_start length:(ggml_metallib_end-ggml_metallib_start) encoding:NSUTF8StringEncoding];
 +
-+        // Fast path: load a precompiled default.metallib sitting next to the
-+        // binary instead of compiling the embedded source at runtime (which is
-+        // tens of seconds for the full kernel set). The shipped library is built
-+        // with bf16 but without the tensor API, so it matches every GPU except
-+        // M5-class (has_tensor); those compile from source so their tensor
-+        // kernels are included. A missing or unloadable library (e.g. an older
-+        // macOS) just falls through to the source compile below.
++        // load the precompiled default.metallib next to the binary rather than spending tens of
++        // seconds compiling the embedded source. It is built without the tensor API, so M5-class
++        // GPUs fall through to the source compile below and keep their tensor kernels.
 +        if (!ggml_metal_device_get_props(dev)->has_tensor) {
 +            NSString * bin_dir  = [[[NSProcessInfo processInfo] arguments][0] stringByDeletingLastPathComponent];
 +            NSString * path_lib = [NSString pathWithComponents:@[bin_dir, @"default.metallib"]];
@@ -1376,7 +1372,7 @@ index 80e47f2c2..1cc651fb6 100644
  #ifdef SWIFT_PACKAGE
          NSBundle * bundle = SWIFTPM_MODULE_BUNDLE;
  #else
-@@ -515,10 +538,12 @@ void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder) {
+@@ -515,10 +534,12 @@ void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder) {
  
  void ggml_metal_encoder_end_encoding(ggml_metal_encoder_t encoder) {
      [encoder->obj endEncoding];
@@ -1389,7 +1385,7 @@ index 80e47f2c2..1cc651fb6 100644
  
      // a single global queue shared by all Metal backends
      // technically not needed for devices with unified memory, but enables discrete GPUs support
-@@ -531,10 +556,37 @@ struct ggml_metal_device {
+@@ -531,10 +552,37 @@ struct ggml_metal_device {
  
      struct ggml_metal_device_props props;
  
@@ -1427,7 +1423,7 @@ index 80e47f2c2..1cc651fb6 100644
  //
  // MTLResidenceSet wrapper
  //
-@@ -674,31 +726,184 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
+@@ -674,31 +722,181 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
          }
      }
      return GGML_METAL_DEVICE_GENERIC;
@@ -1467,14 +1463,11 @@ index 80e47f2c2..1cc651fb6 100644
  
      if (dev->mtl_device == nil) {
 -        dev->mtl_device = MTLCreateSystemDefaultDevice();
-+        // `device` is the logical slot (0-based), used everywhere downstream to index
-+        // buffer types — it must stay unchanged. By default we keep the macOS system-
-+        // default GPU (preserving original behavior, incl. its removable/eGPU policy).
-+        // Physical GPU selection is opt-in via env, mapping the slot to a real
-+        // MTLCopyAllDevices() device (same order as the app's GPU picker):
-+        //   GGML_METAL_DEVICE_INDEX=N    -> pin the single device to physical GPU N
-+        //   GGML_METAL_DEVICES=K (K>1)   -> register K devices, slot i -> physical i
-+        //   GGML_METAL_DEVICE_LIST=a,b   -> register the listed GPUs, slot i -> physical list[i]
++        // `device` is the logical slot and indexes buffer types downstream, so it must stay as
++        // given; the env vars below only choose which MTLCopyAllDevices() GPU each slot maps to.
++        //   GGML_METAL_DEVICE_INDEX=N    pin the single device to physical GPU N
++        //   GGML_METAL_DEVICES=K         register K devices, slot i -> physical i
++        //   GGML_METAL_DEVICE_LIST=a,b   register the listed GPUs, slot i -> physical list[i]
 +        const char * env_idx  = getenv("GGML_METAL_DEVICE_INDEX");
 +        const char * env_num  = getenv("GGML_METAL_DEVICES");
 +        const char * env_list = getenv("GGML_METAL_DEVICE_LIST");
@@ -1613,7 +1606,7 @@ index 80e47f2c2..1cc651fb6 100644
              dev->props.has_bfloat  = [dev->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
              dev->props.has_bfloat |= [dev->mtl_device supportsFamily:MTLGPUFamilyApple6];
              if (getenv("GGML_METAL_BF16_DISABLE") != NULL) {
-@@ -923,10 +1128,37 @@ void ggml_metal_device_free(ggml_metal_device_t dev) {
+@@ -923,10 +1121,37 @@ void ggml_metal_device_free(ggml_metal_device_t dev) {
      ggml_metal_rsets_free(dev->rsets);
  
      ggml_metal_library_free(dev->library);
@@ -1651,7 +1644,7 @@ index 80e47f2c2..1cc651fb6 100644
          dev->mtl_queue = nil;
      }
  
-@@ -944,10 +1176,101 @@ void * ggml_metal_device_get_obj(ggml_metal_device_t dev) {
+@@ -944,10 +1169,101 @@ void * ggml_metal_device_get_obj(ggml_metal_device_t dev) {
  
  void * ggml_metal_device_get_queue(ggml_metal_device_t dev) {
      return dev->mtl_queue;
@@ -1753,7 +1746,7 @@ index 80e47f2c2..1cc651fb6 100644
  }
  
  void ggml_metal_device_rsets_add(ggml_metal_device_t dev, ggml_metal_rset_t rset) {
-@@ -1049,10 +1372,12 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
+@@ -1049,10 +1365,12 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
  }
  
  bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op) {
@@ -1766,7 +1759,7 @@ index 80e47f2c2..1cc651fb6 100644
      if (!has_bfloat) {
          if (op->type == GGML_TYPE_BF16) {
              return false;
-@@ -1169,27 +1494,32 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1169,27 +1487,32 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                     op->src[1]->type == GGML_TYPE_F32;
          case GGML_OP_SUM:
              return has_simdgroup_reduction && ggml_is_contiguous(op->src[0]);
@@ -1802,21 +1795,15 @@ index 80e47f2c2..1cc651fb6 100644
              return true;
          case GGML_OP_IM2COL:
              return ggml_is_contiguous(op->src[1]) && op->src[1]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
-@@ -1241,10 +1571,50 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1241,10 +1564,44 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  op->src[0]->ne[0] != 320 &&
                  op->src[0]->ne[0] != 512 &&
                  op->src[0]->ne[0] != 576) {
                  return false;
              }
-+            // AMD dGPUs report no simdgroup_mm, so the templated vec kernel would be
-+            // rejected (and it miscompiles anyway). We ship a dedicated vec kernel
-+            // for the standard KV pairs it instantiates; allow FA for exactly those
-+            // cases via simdgroup reduction. Everything else still requires simdgroup
-+            // matrix multiply and will stay off Metal instead of taking the broken
-+            // upstream vec path.
-+            // wave32 rides on simdgroup_reduction; wave64 uses the _w64 kernel
-+            // instantiations and is gated by wave64_decode.
-+            // Before the K==V gate: the AMD kernel takes K and V independently.
++            // AMD dGPUs report no simdgroup_mm and miscompile the upstream vec kernel, so FA is
++            // allowed only for the KV pairs our own vec kernel instantiates. This sits before
++            // the K==V gate because that kernel takes K and V independently.
 +            const bool fa_amd_width_ok = dev->props.simd_width == 32
 +                ? has_simdgroup_reduction
 +                : wave64_decode;
@@ -1853,7 +1840,7 @@ index 80e47f2c2..1cc651fb6 100644
              }
              switch (op->src[1]->type) {
                  case GGML_TYPE_F32:
-@@ -1263,21 +1633,97 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1263,21 +1620,97 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  default:
                      return false;
              }
@@ -1955,7 +1942,7 @@ index 80e47f2c2..1cc651fb6 100644
          case GGML_OP_DUP:
          case GGML_OP_CONT:
              {
-@@ -1730,30 +2176,438 @@ void ggml_metal_buffer_memset_tensor(ggml_metal_buffer_t buf, struct ggml_tensor
+@@ -1730,30 +2163,438 @@ void ggml_metal_buffer_memset_tensor(ggml_metal_buffer_t buf, struct ggml_tensor
          [cmd_buf commit];
          [cmd_buf waitUntilCompleted];
      }
@@ -2396,7 +2383,7 @@ index 80e47f2c2..1cc651fb6 100644
          dispatch_semaphore_t completion_semaphore = dispatch_semaphore_create(0);
  
          id<MTLCommandBuffer> cmd_buf = [buf->dev->mtl_queue commandBufferWithUnretainedReferences];
-@@ -1781,48 +2635,115 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
+@@ -1781,48 +2622,115 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
  
          dispatch_semaphore_wait(completion_semaphore, DISPATCH_TIME_FOREVER);
          dispatch_release(completion_semaphore);
@@ -2524,7 +2511,7 @@ index 80e47f2c2..1cc651fb6 100644
  
  bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
      ggml_metal_buffer_t buf_src = (ggml_metal_buffer_t)src->buffer->context;
-@@ -1833,10 +2754,15 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
+@@ -1833,10 +2741,15 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
      if (buf_dst->is_shared && buf_src->is_shared) {
          memcpy(dst->data, src->data, size);
          return true;

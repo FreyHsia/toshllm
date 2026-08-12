@@ -1,6 +1,6 @@
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -795,20 +795,43 @@
+@@ -795,20 +795,40 @@
      GGML_ASSERT(op->src[1]->ne[2] <= INT16_MAX && op->src[1]->ne[3] <= INT16_MAX);
      const int16_t ne12 = (int16_t) op->src[1]->ne[2];
      const int16_t ne13 = (int16_t) op->src[1]->ne[3];
@@ -18,12 +18,9 @@
 +        return s ? atoi(s) : 192;
 +    }();
 +
-+    // half the token tile when the batch cannot fill it, so the group does not compute padding.
-+    // it needs the 4x4 register tile, whose mapping divides into 4 simdgroups at 32 tokens.
-+    // the 64-token tile rounds the batch up to a multiple of 64, so a tail of 32 or fewer pays
-+    // for a half-empty group that this one covers exactly
-+    // past 128 tokens the padding is a smaller share of the work while the narrow tile
-+    // re-dequantizes the weights once more, which the grid-lookup quants do not pay off
++    // the 64-token tile rounds the batch up, so a tail of 32 or fewer pays for a half-empty
++    // group that this one covers exactly. Past 128 the padding is a smaller share and the
++    // grid-lookup quants lose more re-dequantizing than they save.
 +    bool tail_32 = op->ne[1] < wide_floor && (op->ne[1] % 64) >= 1 && (op->ne[1] % 64) <= 32 &&
 +                   getenv("TOSH_MM_NARROW_TAIL_DISABLE") == nullptr;
 +    if (tail_32 && op->ne[1] > 128) {

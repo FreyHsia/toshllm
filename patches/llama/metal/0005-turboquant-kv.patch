@@ -578,7 +578,7 @@ index 8ed23e0a6..1966089bf 100644
 +                op->src[0]->ne[0] != 640) {
                  return false;
              }
-             // AMD dGPUs report no simdgroup_mm, so the templated vec kernel would be
+             // AMD dGPUs report no simdgroup_mm and miscompile the upstream vec kernel, so FA is
 @@ -1594,24 +1596,40 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  memcpy(&softcap,  ((const int32_t *) op->op_params) + 2, sizeof(float));
                  const enum ggml_type kt = op->src[1]->type;
@@ -1411,7 +1411,7 @@ index 74ef0b438..dc5a5adfc 100644
          const short ch = lch + c*SUBW;
          if (ch < DV4) {
              sh_acc[gidx*SAS + ch] = acc[c];
-@@ -8134,6 +8295,197 @@ kernel void kernel_flash_attn_ext_vec_amd(
+@@ -8134,6 +8295,192 @@ kernel void kernel_flash_attn_ext_vec_amd(
      }
  }
  
@@ -1449,13 +1449,8 @@ index 74ef0b438..dc5a5adfc 100644
 +     0.068756h,  0.089527h,  0.117195h,  0.173926h
 +};
 +
-+// 8-entry magnitude LUT for 4-bit (positive half, ascending)
-+// idx 8-15 are positive: mag = centroids_4bit[idx]
-+// idx 0-7 are negative: mag = centroids_4bit[15 - idx] with sign flip
-+// sign = (idx >> 3) ? +1 : -1
-+// mag_idx = (idx & 7) for positive, (7 - (idx & 7)) for negative — but
-+// since centroids are symmetric ascending, just use: mag[idx & 7] for idx>=8,
-+// mag[7 - (idx & 7)] for idx<8. Simpler: mag[idx >= 8 ? idx & 7 : 7 - (idx & 7)]
++// magnitudes of the 4-bit centroids, positive half only: they are symmetric, so index 8-15 map
++// to mag[idx & 7] and 0-7 to mag[7 - (idx & 7)] with the sign flipped
 +constant half turbo_mag_4bit_h[8] = {
 +    0.006938h, 0.020989h, 0.035597h, 0.051262h,
 +    0.068756h, 0.089527h, 0.117195h, 0.173926h
@@ -1609,7 +1604,7 @@ index 74ef0b438..dc5a5adfc 100644
  typedef decltype(kernel_flash_attn_ext_vec_amd<128, 32, half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4>) flash_attn_ext_vec_amd_t;
  
  // narrowing subw doubles the chunks per lane; the register pressure caps the pipeline,
-@@ -8173,17 +8525,43 @@ FA_AMD_PAIR_S(32, 8,  "kf16_vq8_0",        half4,          1,  dequantize_f16_t4
+@@ -8173,17 +8520,43 @@ FA_AMD_PAIR_S(32, 8,  "kf16_vq8_0",        half4,          1,  dequantize_f16_t4
  FA_AMD_PAIR_S(24, 8,  "kf16_vq4_0",        half4,          1,  dequantize_f16_t4,      block_q4_0,     8,  dequantize_q4_0_t4)
  FA_AMD_PAIR_S(24, 8,  "kq8_0_vq4_0",       block_q8_0,     8,  dequantize_q8_0_t4,     block_q4_0,     8,  dequantize_q4_0_t4)
  FA_AMD_PAIR_Q4("kq4_0_vq8_0",       block_q4_0,     8,  dequantize_q4_0_t4,     block_q8_0,     8,  dequantize_q8_0_t4)
@@ -1657,7 +1652,7 @@ index 74ef0b438..dc5a5adfc 100644
  FA_AMD_PAIR_W64("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1, dequantize_f16_t4)
  FA_AMD_PAIR_W64("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
  
-@@ -8191,8 +8569,8 @@ FA_AMD_PAIR_W64("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8,
+@@ -8191,8 +8564,8 @@ FA_AMD_PAIR_W64("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8,
  // not a multiple of the 32-element quant block, so quantized K/V cannot occur.
  // DV4=18 is not a power of two, so the auto subw would break the shuffle reduction;
  // pin subw=16 and let the ch < DV4 guards cover the top two chunks.
@@ -1668,7 +1663,7 @@ index 74ef0b438..dc5a5adfc 100644
  FA_AMD_PAIR_W64("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PAIR_W64("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4, half4,      1, dequantize_f16_t4)
  FA_AMD_PAIR_W64("kq4_0_vf16",  block_q4_0, 8, dequantize_q4_0_t4, half4,      1, dequantize_f16_t4)
-@@ -8201,7 +8579,75 @@ FA_AMD_PAIR_W64("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8,
+@@ -8201,7 +8574,75 @@ FA_AMD_PAIR_W64("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8,
  FA_AMD_PAIR_W64("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PAIR_W64("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
  #undef FA_AMD_PAIR_W64
@@ -1744,7 +1739,7 @@ index 74ef0b438..dc5a5adfc 100644
  #undef FA_AMD_PAIR_S
  #undef FA_AMD_PAIR_Q4
  #undef FA_AMD_INST_S
-@@ -8213,7 +8659,7 @@ template<
+@@ -8213,7 +8654,7 @@ template<
      short DK, short NQ,
      typename k_t, short NKK, void (*deq_k)(device const k_t *, short, thread float4 &),
      typename v_t, short NKV, void (*deq_v)(device const v_t *, short, thread float4 &),
@@ -1753,7 +1748,7 @@ index 74ef0b438..dc5a5adfc 100644
  kernel void kernel_flash_attn_ext_tile_amd(
          constant ggml_metal_kargs_flash_attn_ext_vec & args [[buffer(0)]],
          device const char * q     [[buffer(1)]],
-@@ -8226,12 +8672,15 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8226,12 +8667,15 @@ kernel void kernel_flash_attn_ext_tile_amd(
          uint3  tgpig [[threadgroup_position_in_grid]],
          ushort tiisg [[thread_index_in_simdgroup]],
          ushort sgitg [[simdgroup_index_in_threadgroup]]) {
@@ -1773,7 +1768,7 @@ index 74ef0b438..dc5a5adfc 100644
      threadgroup short sh_any;
  
      const int iq1 = tgpig.x*NQ + sgitg; // this simdgroup's query token
-@@ -8257,14 +8706,14 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8257,14 +8701,14 @@ kernel void kernel_flash_attn_ext_tile_amd(
          pm = (device const half *) (mask + iq1c*args.nb31 + (iq2%args.ne32)*args.nb32 + (iq3%args.ne33)*args.nb33);
      }
  
@@ -1792,7 +1787,7 @@ index 74ef0b438..dc5a5adfc 100644
          acc[c] = float4(0.0f);
      }
      float m = -FLT_MAX/2;
-@@ -8295,7 +8744,8 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8295,7 +8739,8 @@ kernel void kernel_flash_attn_ext_tile_amd(
              continue;
          }
  
@@ -1802,7 +1797,7 @@ index 74ef0b438..dc5a5adfc 100644
          for (short c = tl; c < tn*DK4; c += NW*NQ) {
              const short jj = c / DK4;
              const short ch = c % DK4;
-@@ -8303,6 +8753,11 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8303,6 +8748,11 @@ kernel void kernel_flash_attn_ext_tile_amd(
              device const k_t * kb = (device const k_t *) (kp + (uint64_t)(j0 + jj)*args.nb11);
              deq_k(kb + ch/NKK, ch%NKK, t);
              sk[c] = (half4) t;
@@ -1814,7 +1809,7 @@ index 74ef0b438..dc5a5adfc 100644
              device const v_t * vb = (device const v_t *) (vp + (uint64_t)(j0 + jj)*args.nb21);
              deq_v(vb + ch/NKV, ch%NKV, t);
              sv[c] = (half4) t;
-@@ -8316,7 +8771,7 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8316,7 +8766,7 @@ kernel void kernel_flash_attn_ext_tile_amd(
              }
  
              float pl = 0.0f;
@@ -1823,7 +1818,7 @@ index 74ef0b438..dc5a5adfc 100644
                  const short ch = tiisg + c*NW;
                  if (ch < DK4) {
                      pl += dot(myq[c], (float4) sk[jj*DK4 + ch]);
-@@ -8329,10 +8784,10 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8329,10 +8779,10 @@ kernel void kernel_flash_attn_ext_tile_amd(
              const float corr = exp(m  - nm);
              const float w    = exp(pp - nm);
  
@@ -1837,7 +1832,7 @@ index 74ef0b438..dc5a5adfc 100644
                  }
              }
              s = s*corr + w;
-@@ -8346,7 +8801,7 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8346,7 +8796,7 @@ kernel void kernel_flash_attn_ext_tile_amd(
          const float sk_ = ((device const float *) sinks)[iq2];
          const float nm = max(m, sk_);
          const float corr = exp(m - nm);
@@ -1846,7 +1841,7 @@ index 74ef0b438..dc5a5adfc 100644
              acc[c] *= corr;
          }
          s = s*corr + exp(sk_ - nm);
-@@ -8359,10 +8814,10 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -8359,10 +8809,10 @@ kernel void kernel_flash_attn_ext_tile_amd(
      const float inv = s > 0.0f ? 1.0f/s : 0.0f;
      const int64_t rid = (int64_t) iq3*args.ne2*args.ne1 + iq2 + (int64_t) iq1*args.ne1;
      device float4 * dst4 = (device float4 *) dst;
@@ -1860,7 +1855,7 @@ index 74ef0b438..dc5a5adfc 100644
          }
      }
  }
-@@ -8388,6 +8843,42 @@ FA_AMD_TILE_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8
+@@ -8388,6 +8838,42 @@ FA_AMD_TILE_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8
  FA_AMD_TILE_PAIR("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_TILE_PAIR("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_TILE_PAIR("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
@@ -1903,7 +1898,7 @@ index 74ef0b438..dc5a5adfc 100644
  // wave64 variants: 64-lane simdgroups, 8 queries per threadgroup (512 threads).
  #define FA_AMD_TILE_INST_W64(dk, nm, kt, nkk, dkf, vt, nkv, dvf) \
  template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm "_w64")]] kernel flash_attn_ext_tile_amd_t \
-@@ -8411,6 +8902,42 @@ FA_AMD_TILE_INST    (72, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, deq
+@@ -8411,6 +8897,42 @@ FA_AMD_TILE_INST    (72, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, deq
  FA_AMD_TILE_INST_W64(72, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_TILE_PAIR_W64("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_TILE_PAIR_W64("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
@@ -1946,7 +1941,7 @@ index 74ef0b438..dc5a5adfc 100644
  #undef FA_AMD_TILE_PAIR_W64
  #undef FA_AMD_TILE_INST_W64
  #undef FA_AMD_TILE_PAIR
-@@ -8707,6 +9234,33 @@ FA_AMD_PF_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8,
+@@ -8707,6 +9229,33 @@ FA_AMD_PF_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8,
  FA_AMD_PF_PAIR("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PF_PAIR("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PF_PAIR("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
@@ -1980,7 +1975,7 @@ index 74ef0b438..dc5a5adfc 100644
  
  // vision towers, f16 only like the vec and tile kernels
  FA_AMD_PF_INST(72, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
-@@ -8856,18 +9410,24 @@ kernel void kernel_flash_attn_ext_vec_reduce(
+@@ -8856,18 +9405,24 @@ kernel void kernel_flash_attn_ext_vec_reduce(
          device        char * dst,
          uint   tgpig[[threadgroup_position_in_grid]],
          ushort tiisg[[thread_index_in_simdgroup]],
@@ -2008,7 +2003,7 @@ index 74ef0b438..dc5a5adfc 100644
  
      const float m  = simd_max(M);
      const float ms = exp(M - m);
-@@ -8880,8 +9440,9 @@ kernel void kernel_flash_attn_ext_vec_reduce(
+@@ -8880,8 +9435,9 @@ kernel void kernel_flash_attn_ext_vec_reduce(
      device const float4 * htmp4 = (device const float4 *) htmp + rid*DV4*NWG;
      device       float4 * dst4  = (device       float4 *) dst  + rid*DV4;
  
@@ -2020,7 +2015,7 @@ index 74ef0b438..dc5a5adfc 100644
  
          if (iwg == 0) {
              dst4[i] = v*S;
-@@ -8990,6 +9551,310 @@ template [[host_name("kernel_cpy_f32_q5_0")]]   kernel cpy_f_q_t kernel_cpy_f32_
+@@ -8990,6 +9546,310 @@ template [[host_name("kernel_cpy_f32_q5_0")]]   kernel cpy_f_q_t kernel_cpy_f32_
  template [[host_name("kernel_cpy_f32_q5_1")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK5_1,  block_q5_1,   quantize_q5_1>;
  template [[host_name("kernel_cpy_f32_iq4_nl")]] kernel cpy_f_q_t kernel_cpy_f32_q<QK4_NL, block_iq4_nl, quantize_iq4_nl>;
  
@@ -2331,7 +2326,7 @@ index 74ef0b438..dc5a5adfc 100644
  template<typename T4x4, typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread T4x4 &)>
  kernel void kernel_cpy_q_f32(
          constant ggml_metal_kargs_cpy & args,
-@@ -9756,6 +10621,106 @@ kernel void kernel_mul_mv_q6_K_f32(
+@@ -9756,6 +10616,106 @@ kernel void kernel_mul_mv_q6_K_f32(
      kernel_mul_mv_q6_K_f32_impl<N_R0_Q6_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
  }
  
@@ -2438,7 +2433,7 @@ index 74ef0b438..dc5a5adfc 100644
  // ======================= "True" 2-bit
  
  template<int nr0, typename args_t>
-@@ -11033,6 +11998,564 @@ template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t k
+@@ -11033,6 +11993,564 @@ template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t k
  template [[host_name("kernel_set_rows_f32_i64_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int64_t, block_iq4_nl, quantize_iq4_nl>;
  template [[host_name("kernel_set_rows_f32_i32_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int32_t, block_iq4_nl, quantize_iq4_nl>;
  
@@ -3003,7 +2998,7 @@ index 74ef0b438..dc5a5adfc 100644
  kernel void kernel_diag_f32(
          constant ggml_metal_kargs_diag & args,
          device   const char * src0,
-@@ -12527,12 +14050,13 @@ void kernel_mul_mv_ext_q4_K_raw_f32_impl(
+@@ -12527,12 +14045,13 @@ void kernel_mul_mv_ext_q4_K_raw_f32_impl(
          device       char * dst,
          uint3   tgpig[[threadgroup_position_in_grid]],
          ushort  tiisg[[thread_index_in_simdgroup]],
@@ -3019,7 +3014,7 @@ index 74ef0b438..dc5a5adfc 100644
  
      const short tx = tiisg%nxpsg;
      const short ty = tiisg/nxpsg;
-@@ -12714,8 +14238,9 @@ kernel void kernel_mul_mv_ext_q4_K_raw_f32_disp(
+@@ -12714,8 +14233,9 @@ kernel void kernel_mul_mv_ext_q4_K_raw_f32_disp(
          device       char * dst,
          uint3   tgpig[[threadgroup_position_in_grid]],
          ushort  tiisg[[thread_index_in_simdgroup]],
@@ -3031,7 +3026,7 @@ index 74ef0b438..dc5a5adfc 100644
  }
  
  template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_2")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<2, 1>;
-@@ -12843,12 +14368,13 @@ void kernel_mul_mv_ext_qK_hdr_f32_impl(
+@@ -12843,12 +14363,13 @@ void kernel_mul_mv_ext_qK_hdr_f32_impl(
          device       char * dst,
          uint3   tgpig[[threadgroup_position_in_grid]],
          ushort  tiisg[[thread_index_in_simdgroup]],
@@ -3047,7 +3042,7 @@ index 74ef0b438..dc5a5adfc 100644
  
      const short tx = tiisg%nxpsg;
      const short ty = tiisg/nxpsg;
-@@ -12968,8 +14494,9 @@ kernel void kernel_mul_mv_ext_qK_hdr_f32_disp(
+@@ -12968,8 +14489,9 @@ kernel void kernel_mul_mv_ext_qK_hdr_f32_disp(
          device       char * dst,
          uint3   tgpig[[threadgroup_position_in_grid]],
          ushort  tiisg[[thread_index_in_simdgroup]],
