@@ -128,22 +128,22 @@ for th in 0 8 32 128 999999; do
 done
 
 # Only with three or more cards: the butterfly reduction of the Metal backend against the
-# generic one. It measured 1.5% negative on one card split into logical devices, which is not
-# the case anyone runs, so it stays behind TOSH_MGPU_COMM_MULTI until real cards decide.
+# generic one. The butterfly is the default since 0.83.17, so the generic row is the one that
+# needs a variable; "reducing across N devices" in the log tells the two rows apart.
 DEVS="${2:-}"
 if [ -n "$DEVS" ]; then
     export GGML_METAL_DEVICE_LIST="$DEVS"
-    for cfg in "generic:" "butterfly:TOSH_MGPU_COMM_MULTI=1"; do
+    for cfg in "generic:TOSH_MGPU_COMM_DISABLE=1" "butterfly:"; do
         label="${cfg%%:*}"
         echo "\n=== 6. tensor split on $DEVS, $label reduction"
-        MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_COMM_MULTI TOSH_MGPU_EVENTS=1 ${=cfg#*:})
+        MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_COMM_DISABLE TOSH_MGPU_EVENTS=1 ${=cfg#*:})
         if serve "$OUT/$label.log" --split-mode tensor; then
-            ask 120 > "$OUT/$label.json"
+            ask 120 "$LONG_PROMPT" > "$OUT/$label.json"
             echo "output (must be coherent):"
             show "$OUT/$label.json"
             stop
         fi
-        grep "COMM_MULTI" "$OUT/$label.log" | head -1
+        grep "reducing across" "$OUT/$label.log" | head -1
         report "$OUT/$label.log" "$label"
     done
 fi
