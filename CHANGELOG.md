@@ -5,7 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Faster
+### Fixed
+- **Logs now say which card each GPU slot is, and which architecture the engine was built for.** macOS renumbers the GPUs on every reboot, so a slot number on its own did not identify the card a log came from, and on a machine with several cards there was no way to tell afterwards which ones a run had used. Each startup line now carries the device name and its peer group. The version line also reported the architecture of the machine that built the engine rather than the one it runs on, so a release built on Apple Silicon described its Intel binary as arm64.
+
+### Improved
 - **Short prompts whose length does not divide evenly are read up to 18% faster.** The matmul reads tokens 64 at a time, so a prompt ending 32 or fewer past a multiple of 64 paid for a half-empty group: 96 tokens took as long as 128. Those sizes now use the 32-token tile, which covers them exactly. Qwen3-8B Q4_K_M gains 10% at 96 tokens and 3% at 160, llama-2-7B Q4_0 gains 18% and 4%, and a 67-token chat request reads its prompt 13% faster. Sizes that already divided evenly, and prompts of 512 tokens or more, are untouched and measure identical.
 
 ## [0.83.19] - 2026-08-12

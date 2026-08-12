@@ -1,0 +1,38 @@
+--- a/cmake/build-info.cmake
++++ b/cmake/build-info.cmake
+@@ -41,8 +41,12 @@
+ 
+ set(BUILD_COMPILER "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
+ 
+ if(CMAKE_VS_PLATFORM_NAME)
+     set(BUILD_TARGET ${CMAKE_VS_PLATFORM_NAME})
++elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
++    # cross-building on Apple leaves CMAKE_SYSTEM_PROCESSOR on the host arch, which then
++    # reports an arm64 build for an x86_64 binary
++    set(BUILD_TARGET "${CMAKE_SYSTEM_NAME} ${CMAKE_OSX_ARCHITECTURES}")
+ else()
+     set(BUILD_TARGET "${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}")
+ endif()
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -858,13 +858,17 @@
+                         [probe_fn release];
+                     }
+                     [probe_lib release];
+                 }
+                 GGML_LOG_INFO("%s: probed SIMD-group width = %d\n", __func__, dev->props.simd_width);
+-                // Also print unconditionally so the value is visible in captured logs
+-                // even when the ggml log callback filters init-time INFO messages.
+-                fprintf(stderr, "ggml_metal: probed SIMD-group width = %d (32 = Apple/AMD RDNA, 64 = AMD GCN/Vega)\n",
++                // Also print unconditionally so the value is visible in captured logs even when
++                // the ggml log callback filters init-time INFO messages. macOS renumbers the
++                // devices on every reboot, so the slot index alone does not identify the card.
++                fprintf(stderr, "ggml_metal: device %d: %s (peer group %llu, %s) probed SIMD-group width = %d (32 = Apple/AMD RDNA, 64 = AMD GCN/Vega)\n",
++                        device, dev->mtl_device.name.UTF8String,
++                        (unsigned long long) dev->mtl_device.peerGroupID,
++                        dev->mtl_device.peerGroupID == 0 ? "not bridged" : "bridged",
+                         dev->props.simd_width);
+                 // Expose the measured width to ToshLLM's graph-level AMD FA policy.
+                 // A wave64 process records 64 and therefore never takes the RDNA-only
+                 // head-64 prefill path below.
+                 char simd_width_env[16];
