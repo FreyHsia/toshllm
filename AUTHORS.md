@@ -1,6 +1,6 @@
 # Authors
 
-ToshLLM is written by Engelbert Delgado (<e.alex.vd@gmail.com>), except where noted.
+ToshLLM is written by Engelbert Delgado (<engeldlgado@gmail.com>), except where noted.
 
 The app under `Sources/` and the engine patches under `patches/` are original work,
 licensed GPL-3.0-or-later. They include, among others:
