@@ -258,7 +258,8 @@ build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" \
     0009-metal-multigpu-dispatch.patch \
     0010-mtp-kv-only-catchup.patch \
     0011-server-responses-assistant-item-type.patch \
-    0012-metal-wide-tile-more-types.patch
+    0012-metal-wide-tile-more-types.patch \
+    0013-metal-narrow-tile-tail.patch
 fi
 
 

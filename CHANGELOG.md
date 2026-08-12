@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Faster
+- **Short prompts whose length does not divide evenly are read up to 18% faster.** The matmul reads tokens 64 at a time, so a prompt ending 32 or fewer past a multiple of 64 paid for a half-empty group: 96 tokens took as long as 128. Those sizes now use the 32-token tile, which covers them exactly. Qwen3-8B Q4_K_M gains 10% at 96 tokens and 3% at 160, llama-2-7B Q4_0 gains 18% and 4%, and a 67-token chat request reads its prompt 13% faster. Sizes that already divided evenly, and prompts of 512 tokens or more, are untouched and measure identical.
+
 ## [0.83.19] - 2026-08-12
 
 ### Faster

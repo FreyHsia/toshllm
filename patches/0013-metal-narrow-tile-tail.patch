@@ -1,0 +1,37 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -796,19 +796,29 @@
+     const int16_t ne12 = (int16_t) op->src[1]->ne[2];
+     const int16_t ne13 = (int16_t) op->src[1]->ne[3];
+     const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
+     const int16_t r3   = (int16_t) (ne13 / op->src[0]->ne[3]);
+ 
+-    // half the token tile when the batch cannot fill it, so the group does not compute padding.
+-    // it needs the 4x4 register tile, whose mapping divides into 4 simdgroups at 32 tokens
+-    const bool narrow = use_mm_manual && !has_tensor && tsrc1 == GGML_TYPE_F32 && op->ne[1] <= 32;
+-
+     // The 8x4 tile halves the simdgroups per threadgroup, so it needs enough tokens to keep
+     // the GPU in threadgroups; below ~192 it loses (measured 8.7% at 64 tokens on q8_0).
++    static const int wide_floor = []() {
++        const char * s = getenv("TOSH_MM_WIDE_FLOOR");
++        return s ? atoi(s) : 192;
++    }();
++
++    // half the token tile when the batch cannot fill it, so the group does not compute padding.
++    // it needs the 4x4 register tile, whose mapping divides into 4 simdgroups at 32 tokens.
++    // the 64-token tile rounds the batch up to a multiple of 64, so a tail of 32 or fewer pays
++    // for a half-empty group that this one covers exactly
++    const bool tail_32 = op->ne[1] < wide_floor && (op->ne[1] % 64) >= 1 && (op->ne[1] % 64) <= 32 &&
++                         getenv("TOSH_MM_NARROW_TAIL_DISABLE") == nullptr;
++    const bool narrow = use_mm_manual && !has_tensor && tsrc1 == GGML_TYPE_F32 &&
++                        (op->ne[1] <= 32 || tail_32);
++
+     // the tile also needs enough output rows, not just enough tokens
+     bool wide = use_mm_manual && !has_tensor && !narrow && tsrc1 == GGML_TYPE_F32 &&
+-                op->ne[1] >= 192 && (op->ne[0] >= 2048 || getenv("TOSH_MM_NE0_FLOOR_DISABLE") != nullptr) &&
++                op->ne[1] >= wide_floor && (op->ne[0] >= 2048 || getenv("TOSH_MM_NE0_FLOOR_DISABLE") != nullptr) &&
+                 getenv("TOSH_MM_WIDE_DISABLE") == nullptr;
+     if (wide) {
+         // it needs 64 accumulators, so only where the dequant leaves the registers
+         switch (tsrc0) {
+             case GGML_TYPE_F16:
