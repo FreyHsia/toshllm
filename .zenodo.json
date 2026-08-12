@@ -1,0 +1,32 @@
+{
+  "upload_type": "software",
+  "title": "ToshLLM: local LLM inference on Intel Macs with AMD GPUs",
+  "creators": [
+    {
+      "name": "Delgado, Engelbert",
+      "orcid": "0009-0002-4277-6731"
+    }
+  ],
+  "license": "gpl-3.0-or-later",
+  "access_right": "open",
+  "description": "<p>A native SwiftUI application that runs large language models locally on Intel Macs with AMD GPUs, a configuration mainstream inference stacks leave unsupported or incorrect.</p><p>Beyond packaging, it contributes original work to the Metal backend of llama.cpp:</p><ul><li><strong>ToshGEMM</strong>, a manually tiled matrix multiply that replaces the simdgroup-matrix path AMD GPUs do not provide.</li><li><strong>FA-AMD</strong>, flash-attention decode, tile and prefill kernels written for AMD, where the upstream vectorised kernel miscompiles.</li><li>A <strong>wave64 port</strong> for GCN and Vega: reductions, quantized decode, batched mat-vec and prefill on 64-wide simdgroups.</li><li><strong>Multi-GPU tensor parallelism</strong> with a butterfly all-reduce and a per-batch choice between peer copies over Infinity Fabric and event hand-off.</li><li>A reimplementation of <strong>TurboQuant KV cache compression</strong> and a <strong>speculative decoding planner</strong>.</li></ul><p>Patches apply on top of llama.cpp and stable-diffusion.cpp, which remain under the copyright and MIT licence of their own authors.</p>",
+  "keywords": [
+    "large language models",
+    "inference",
+    "Metal",
+    "AMD GPU",
+    "macOS",
+    "GPU kernels",
+    "quantization",
+    "flash attention",
+    "multi-GPU",
+    "llama.cpp"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/engeldlgado/toshllm",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
