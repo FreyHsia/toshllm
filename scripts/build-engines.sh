@@ -10,8 +10,8 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-LLAMA_COMMIT="${LLAMA_COMMIT:-571d0d540}"   # llama.cpp commit validated against the patches
-SD_COMMIT="${SD_COMMIT:-3590aa8}"         # stable-diffusion.cpp commit validated for image gen
+LLAMA_COMMIT="${LLAMA_COMMIT:-84e908c62}"   # llama.cpp commit validated against the patches
+SD_COMMIT="${SD_COMMIT:-de298c2}"         # stable-diffusion.cpp commit validated for image gen
 ARCH="${ARCH:-$(uname -m)}"
 if [ "$ARCH" = "universal" ]; then
     # Build each slice separately (ggml has per-arch sources) and lipo them.
@@ -163,6 +163,10 @@ build_image_engine() {
     fi
     cd "$vendor"
     retry_git git fetch origin
+    # the previous build left the patches in both working trees; a bump that moves the
+    # submodule cannot check the new commit out over them, so revert before switching
+    git -C ggml checkout -- . 2>/dev/null || true
+    git checkout -- . 2>/dev/null || true
     git checkout -qf "$SD_COMMIT"
     git submodule sync --recursive
     retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \

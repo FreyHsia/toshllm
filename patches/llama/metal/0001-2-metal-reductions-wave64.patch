@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 969fddfa5..7e0d87a98 100644
+index 3063d586d..8a1f3ccaf 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -1775,10 +1834,11 @@ kernel void kernel_cumsum_blk(
+@@ -1850,10 +1850,11 @@ kernel void kernel_cumsum_blk(
          threadgroup  char * shmem [[threadgroup(0)]],
          uint3   tgpig[[threadgroup_position_in_grid]],
          ushort3 tpitg[[thread_position_in_threadgroup]],
@@ -14,7 +14,7 @@ index 969fddfa5..7e0d87a98 100644
  
      const int i00 = ib*ntg.x;
      const int i01 = tgpig[0]%args.ne01;
-@@ -1790,19 +1850,28 @@ kernel void kernel_cumsum_blk(
+@@ -1865,19 +1866,28 @@ kernel void kernel_cumsum_blk(
              args.nb02*i02 +
              args.nb03*i03);
  
@@ -44,7 +44,7 @@ index 969fddfa5..7e0d87a98 100644
  
      threadgroup_barrier(mem_flags::mem_threadgroup);
  
-@@ -1956,10 +2025,11 @@ kernel void kernel_soft_max(
+@@ -2031,10 +2041,11 @@ kernel void kernel_soft_max(
          threadgroup  float * buf [[threadgroup(0)]],
          uint3 tgpig[[threadgroup_position_in_grid]],
          uint3 tpitg[[thread_position_in_threadgroup]],
@@ -56,7 +56,7 @@ index 969fddfa5..7e0d87a98 100644
      const int32_t i02 = tgpig.y;
      const int32_t i01 = tgpig.x;
  
-@@ -1991,11 +2061,11 @@ kernel void kernel_soft_max(
+@@ -2066,11 +2077,11 @@ kernel void kernel_soft_max(
          lmax = MAX(lmax, psrc0[i00]*args.scale + (pmask ? slope*pmask[i00] : 0.0f));
      }
  
@@ -69,7 +69,7 @@ index 969fddfa5..7e0d87a98 100644
          }
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
-@@ -2022,11 +2092,11 @@ kernel void kernel_soft_max(
+@@ -2097,11 +2108,11 @@ kernel void kernel_soft_max(
      // ref: https://github.com/ggml-org/ggml/pull/621#discussion_r1425156335
      threadgroup_barrier(mem_flags::mem_none);
  
@@ -82,7 +82,7 @@ index 969fddfa5..7e0d87a98 100644
          }
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
-@@ -2062,10 +2132,11 @@ kernel void kernel_soft_max_4(
+@@ -2137,10 +2148,11 @@ kernel void kernel_soft_max_4(
          threadgroup  float * buf [[threadgroup(0)]],
          uint3 tgpig[[threadgroup_position_in_grid]],
          uint3 tpitg[[thread_position_in_threadgroup]],
@@ -94,7 +94,7 @@ index 969fddfa5..7e0d87a98 100644
      const int32_t i02 = tgpig.y;
      const int32_t i01 = tgpig.x;
  
-@@ -2097,11 +2168,11 @@ kernel void kernel_soft_max_4(
+@@ -2172,11 +2184,11 @@ kernel void kernel_soft_max_4(
      }
  
      const float lmax = MAX(MAX(lmax4[0], lmax4[1]), MAX(lmax4[2], lmax4[3]));
@@ -107,7 +107,7 @@ index 969fddfa5..7e0d87a98 100644
          }
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
-@@ -2130,11 +2201,11 @@ kernel void kernel_soft_max_4(
+@@ -2205,11 +2217,11 @@ kernel void kernel_soft_max_4(
      // ref: https://github.com/ggml-org/ggml/pull/621#discussion_r1425156335
      threadgroup_barrier(mem_flags::mem_none);
  
@@ -120,7 +120,7 @@ index 969fddfa5..7e0d87a98 100644
          }
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
-@@ -2229,10 +2300,134 @@ kernel void kernel_ssm_conv_f32_f32_4(
+@@ -2304,10 +2316,134 @@ kernel void kernel_ssm_conv_f32_f32_4(
      }
  
      x[0] = sumf;
@@ -255,7 +255,7 @@ index 969fddfa5..7e0d87a98 100644
  // Batched version: each threadgroup processes multiple tokens for better efficiency
  // Thread layout: each thread handles one token, threadgroup covers BATCH_SIZE tokens
  kernel void kernel_ssm_conv_f32_f32_batched(
-@@ -2626,10 +2821,22 @@ kernel void kernel_rwkv_wkv7_f32(
+@@ -2701,10 +2837,22 @@ kernel void kernel_rwkv_wkv7_f32(
  
  constant short FC_gated_delta_net_ne20 [[function_constant(FC_GATED_DELTA_NET + 0)]];
  constant short FC_gated_delta_net_ne30 [[function_constant(FC_GATED_DELTA_NET + 1)]];
@@ -278,7 +278,7 @@ index 969fddfa5..7e0d87a98 100644
  kernel void kernel_gated_delta_net_impl(
          constant ggml_metal_kargs_gated_delta_net & args,
          device const char * q,
-@@ -2709,11 +2916,11 @@ kernel void kernel_gated_delta_net_impl(
+@@ -2784,11 +2932,11 @@ kernel void kernel_gated_delta_net_impl(
  
                  s_k += ls[j]*k_ptr[is];
              }
@@ -291,7 +291,7 @@ index 969fddfa5..7e0d87a98 100644
  
          float y = 0.0f;
  
-@@ -2722,11 +2929,11 @@ kernel void kernel_gated_delta_net_impl(
+@@ -2797,11 +2945,11 @@ kernel void kernel_gated_delta_net_impl(
              ls[j] += k_ptr[is]*d;
  
              y += ls[j]*q_ptr[is];
@@ -304,7 +304,7 @@ index 969fddfa5..7e0d87a98 100644
              dst_attn[t*args.ne21*S_v] = y*scale;
          }
  
-@@ -2874,10 +3081,11 @@ template [[host_name("kernel_gated_delta_net_f32_4")]] kernel kernel_gated_delta
+@@ -2949,10 +3097,11 @@ template [[host_name("kernel_gated_delta_net_f32_4")]] kernel kernel_gated_delta
  #endif
  
  constant short FC_solve_tri_nsg [[function_constant(FC_SOLVE_TRI + 0)]];
@@ -316,7 +316,7 @@ index 969fddfa5..7e0d87a98 100644
          constant ggml_metal_kargs_solve_tri & args,
          device   const char * src0,
          device   const char * src1,
-@@ -2885,11 +3093,13 @@ kernel void kernel_solve_tri_f32(
+@@ -2960,11 +3109,13 @@ kernel void kernel_solve_tri_f32(
          threadgroup    char * shmem [[threadgroup(0)]],
          ushort3 tgpig[[threadgroup_position_in_grid]],
          ushort  sgitg[[simdgroup_index_in_threadgroup]],
@@ -331,13 +331,12 @@ index 969fddfa5..7e0d87a98 100644
      const short N   = FC_solve_tri_n;
      const short K   = FC_solve_tri_k;
      const short NP  = PAD2(N, NW);
-@@ -11214,5 +12568,505 @@ kernel void kernel_count_equal(
- }
+@@ -11352,10 +11503,510 @@ kernel void kernel_count_equal(
  
  typedef decltype(kernel_count_equal<int32_t>) kernel_count_equal_t;
  
  template [[host_name("kernel_count_equal_i32")]] kernel kernel_count_equal_t kernel_count_equal<int32_t>;
-+
+ 
 +// byte of the 12-byte scale array held in three registers, no dynamic indexing
 +static inline uint sbyte(uint s0, uint s1, uint s2, short idx) {
 +    const uint w = idx < 4 ? s0 : (idx < 8 ? s1 : s2);
@@ -837,3 +836,9 @@ index 969fddfa5..7e0d87a98 100644
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<4, 2, block_q3_K>;
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_5")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<5, 1, block_q3_K>;
 +template [[host_name("kernel_mul_mv_ext_q3_K_hdr_f32_r1_5_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<5, 2, block_q3_K>;
++
+ template<
+     typename kd4x4_t,
+     short nl_k,
+     void (*deq_k)(device const kd4x4_t *, short, thread half4x4 &)>
+ kernel void kernel_lightning_indexer(
