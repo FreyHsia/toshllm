@@ -11,6 +11,7 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B%20(Intel%20%2B%20AMD%20GPU)-lightgrey)](#requirements)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/engeldlgado/toshllm/issues)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4%EF%B8%8F%20support%20the%20project-ea4aaa)](#support-the-project)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21908524.svg)](https://doi.org/10.5281/zenodo.21908524)
 
 ### [⬇️ Download the latest release](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Changelog](CHANGELOG.md)
 

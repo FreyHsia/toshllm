@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+title: "ToshLLM: local LLM inference on Intel Macs with AMD GPUs"
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+authors:
+  - family-names: Delgado
+    given-names: Engelbert
+    orcid: "https://orcid.org/0009-0002-4277-6731"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21908524
+    description: Concept DOI, always resolves to the latest version
+repository-code: "https://github.com/engeldlgado/toshllm"
+url: "https://toshllm.com"
+license: GPL-3.0-or-later
+version: 0.83.21
+date-released: "2026-08-12"
+keywords:
+  - large language models
+  - inference
+  - Metal
+  - AMD GPU
+  - macOS
+  - GPU kernels
+  - quantization
+  - flash attention
+  - multi-GPU
+  - llama.cpp
