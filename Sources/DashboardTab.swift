@@ -307,6 +307,7 @@ struct DashboardView: View {
                     DflashControl(modelPath: modelPath)
                 }
             }
+            SpecMetricsView(port: port)
             DisclosureGroup {
                 HStack(spacing: 8) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")

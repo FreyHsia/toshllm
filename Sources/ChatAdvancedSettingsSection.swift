@@ -9,6 +9,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.chatAutoCompact) private var autoCompact = true
     @AppStorage(SettingsKeys.smoothTyping) private var smoothTyping = true
     @AppStorage(SettingsKeys.agentToolsEnabled) private var agentToolsEnabled = false
+    @AppStorage(SettingsKeys.toolsRuntime) private var toolsRuntime = ""
     @AppStorage(SettingsKeys.jsSandboxEnabled) private var jsSandboxEnabled = false
     @AppStorage(SettingsKeys.chatSystem) private var systemPrompt = ""
     @AppStorage(SettingsKeys.chatTopP) private var topP = 0.95
@@ -185,6 +186,11 @@ struct ChatAdvancedSettingsSection: View {
                             .foregroundStyle(.orange)
                         Button(loc.t("Revocar permisos permanentes", "Revoke persistent permissions"),
                                systemImage: "lock.rotation", action: ChatToolsService.revokeAllPermissions)
+                        TextField(loc.t("Aislar herramientas en", "Isolate tools in"),
+                                  text: $toolsRuntime, prompt: Text(verbatim: "docker:alpine"))
+                            .textFieldStyle(.roundedBorder)
+                            .infoTip(loc.t("Ejecuta las herramientas fuera de tu Mac, en un contenedor o por SSH, para que no toquen tus archivos. Formatos: docker:imagen, podman:imagen, docker-container:id, ssh:destino. Vacío las ejecuta aquí mismo.",
+                                           "Runs the tools off your Mac, in a container or over SSH, so they cannot touch your files. Formats: docker:image, podman:image, docker-container:id, ssh:target. Empty runs them right here."))
                     }
                     Toggle(loc.t("Sandbox JavaScript para agentes", "JavaScript sandbox for agents"),
                            isOn: $jsSandboxEnabled)
@@ -316,5 +322,6 @@ struct ChatAdvancedSettingsSection: View {
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
+        toolsRuntime = ""
     }
 }

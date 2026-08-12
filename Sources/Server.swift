@@ -40,6 +40,9 @@ struct ServerSettings {
     /// to embedding use, so it's meant for a dedicated embedding-model server.
     var embeddings: Bool = false
     var agentToolsEnabled: Bool = false
+    /// `--tools-runtime` target (`docker:image`, `podman:image`, `ssh:host`...). Empty
+    /// runs the tools in the app's own environment, which is the engine default.
+    var toolsRuntime: String = ""
     var cacheTypeK: String     // f16 | q8_0 | q5_x | q4_x | iq4_nl
     var cacheTypeV: String
     var mlock: Bool
@@ -191,6 +194,8 @@ struct ServerSettings {
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
         if mlock { args.append("--mlock") }
+        // localhost-only endpoint; feeds the speculative-decoding readout in Diagnostics
+        args.append("--metrics")
         args += ["--cache-ram", String(cacheRAM)]
         if cacheReuse && mmproj == nil {
             args += ["--cache-reuse", "256"]
@@ -206,6 +211,7 @@ struct ServerSettings {
         if agentToolsEnabled {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += ["--tools", "all"]
+            if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         if persistCache && effectiveFaAmd {
             args += ["--slot-save-path", Self.slotCacheDir(port: port).path]
@@ -237,7 +243,11 @@ struct ServerSettings {
             "--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1",
             "--port", String(port),
         ]
-        if agentToolsEnabled { args += ["--jinja", "--tools", "all"] }
+        args.append("--metrics")
+        if agentToolsEnabled {
+            args += ["--jinja", "--tools", "all"]
+            if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
+        }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         return args
@@ -509,6 +519,8 @@ struct ServerSettings {
             extraArgs: d.string(forKey: SettingsKeys.extraArgs) ?? "",
             embeddings: bool(SettingsKeys.embeddings, false),
             agentToolsEnabled: bool(SettingsKeys.agentToolsEnabled, false),
+            toolsRuntime: (d.string(forKey: SettingsKeys.toolsRuntime) ?? "")
+                .trimmingCharacters(in: .whitespaces),
             cacheTypeK: Self.sanitizedKV(d.string(forKey: SettingsKeys.cacheTypeK), default: "f16"),
             cacheTypeV: Self.sanitizedKV(d.string(forKey: SettingsKeys.cacheTypeV), default: "f16"),
             mlock: bool(SettingsKeys.mlock, false),
