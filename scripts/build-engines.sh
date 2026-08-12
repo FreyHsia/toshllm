@@ -135,8 +135,8 @@ build_engine() {
     git clean -qfd 2>/dev/null || true
 
     for patch in "${patches[@]}"; do
-        git apply "$ROOT/patches/$patch"
-        echo "applied $patch"
+        git apply "$patch"
+        echo "applied ${patch#$ROOT/patches/}"
     done
 
     cmake -B build-static "${CMAKE_FLAGS[@]}"
@@ -193,13 +193,14 @@ build_image_engine() {
     # ggml-metal-impl.h needs reduced context: its decode N_R0/N_SG block differs
     # from llama.cpp's, so a -U5 hunk touching those constants finds no match here.
     # Safe only because every define the patch edits in it is unique (asserted below).
+    local shared="$ROOT/patches/llama/metal/0001-metal-amd-staging-transfers.patch"
     git apply --exclude='ggml/src/ggml-metal/ggml-metal-impl.h' \
-              --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/0001-metal-amd-staging-transfers.patch"
-    git apply --include='ggml/src/ggml-metal/ggml-metal-impl.h' -C2 -p1 "$ROOT/patches/0001-metal-amd-staging-transfers.patch"
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/0003-image-metal-ncb.patch"
+              --include='ggml/src/ggml-metal/*' -p1 "$shared"
+    git apply --include='ggml/src/ggml-metal/ggml-metal-impl.h' -C2 -p1 "$shared"
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0003-image-metal-ncb.patch"
     # sd.cpp core (outside the ggml submodule): per-op CPU fallback for wave64.
-    git apply -p1 "$ROOT/patches/0004-image-cpu-fallback-sched.patch"
-    git apply -p1 "$ROOT/patches/0008-image-ext-wave64.patch"
+    git apply -p1 "$ROOT/patches/image/0004-image-cpu-fallback-sched.patch"
+    git apply -p1 "$ROOT/patches/image/0008-image-ext-wave64.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
@@ -248,19 +249,16 @@ build_image_engine() {
     cd "$ROOT"
 }
 
+# Patches live in patches/<engine>/<area>/, and the numeric prefix is the apply order across
+# every area, so ordering stays global while each area can be regenerated on its own.
+patch_series() {
+    find "$ROOT/patches/$1" -name '*.patch' -print |
+        awk -F/ '{print $NF"\t"$0}' | sort | cut -f2-
+}
+
 # 1. Official engine (skip with SKIP_LLAMA=1 when iterating on the image engine)
 if [ -z "$SKIP_LLAMA" ]; then
-build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" \
-    0001-metal-amd-staging-transfers.patch \
-    0005-turboquant-kv.patch \
-    0006-mrope-kv-shift.patch \
-    0007-wave64-reductions-and-quants.patch \
-    0009-metal-multigpu-dispatch.patch \
-    0010-mtp-kv-only-catchup.patch \
-    0011-server-responses-assistant-item-type.patch \
-    0012-metal-wide-tile-more-types.patch \
-    0013-metal-narrow-tile-tail.patch \
-    0014-diagnostics-device-identity-and-arch.patch
+build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" ${(f)"$(patch_series llama)"}
 fi
 
 
