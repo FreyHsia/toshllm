@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.21] - 2026-08-12
 
 ### Improved
 - **Prompts are read 2 to 3% faster on dense models.** The matmul cleared its 32 running totals before every pass over the weights; the first product of each pass now writes into the total instead, leaving nothing to clear. llama-2-7B Q4_0 goes from 919 to 949 tokens per second and Qwen3-8B Q4_K_M from 785 to 803, with identical output. Mixture-of-experts models gain about half a percent.
