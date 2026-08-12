@@ -22,7 +22,8 @@ BIN="${TOSH_BIN:-/Applications/ToshLLM.app/Contents/Resources/bin}"
 
 echo "=== engine"
 echo "  $BIN"
-"$BIN/llama-server" --version 2>&1 | head -2
+# the metal probe writes to stderr first, and wave64 adds a line, so match instead of slicing
+"$BIN/llama-server" --version 2>&1 | grep -iE "^version:|engine|^built with"
 
 export GGML_METAL_CONCURRENCY_DISABLE=1
 export TOSH_FA_AMD=1
