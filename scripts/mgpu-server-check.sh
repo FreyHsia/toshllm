@@ -20,6 +20,10 @@ BIN="${TOSH_BIN:-/Applications/ToshLLM.app/Contents/Resources/bin}"
 [ -x "$BIN/llama-server" ] || BIN="$(dirname "$0")/../vendor/llama.cpp/build-static/bin"
 [ -x "$BIN/llama-server" ] || { echo "llama-server not found; set TOSH_BIN to the app's Resources/bin" >&2; exit 1; }
 
+echo "=== engine"
+echo "  $BIN"
+"$BIN/llama-server" --version 2>&1 | head -2
+
 export GGML_METAL_CONCURRENCY_DISABLE=1
 export TOSH_FA_AMD=1
 
@@ -47,10 +51,14 @@ m=json.load(open(sys.argv[1]))['choices'][0]['message']
 print((m.get('content') or m.get('reasoning_content') or '')[:200])" "$1" 2>/dev/null || head -c 200 "$1"
 }
 
-ask() { # ask <n_predict>
+ask() { # ask <n_predict> [prompt]
+    local prompt="${2:-Write a detailed technical explanation of how virtual memory paging works.}"
     curl -sf -m 300 "http://127.0.0.1:$PORT/v1/chat/completions" -H "Content-Type: application/json" \
-        -d "{\"model\":\"x\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a detailed technical explanation of how virtual memory paging works.\"}],\"max_tokens\":$1}"
+        -d "{\"model\":\"x\",\"messages\":[{\"role\":\"user\",\"content\":\"$prompt\"}],\"max_tokens\":$1}"
 }
+
+# the batch threshold only bites above it, so section 5 needs a prompt that clears every value
+LONG_PROMPT="$(printf 'Explain in precise technical detail how virtual memory paging works, covering page tables, the TLB, page faults, replacement policies and how the kernel backs pages with swap. %.0s' $(seq 1 24))"
 
 stop() { kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; sleep 3; }
 
@@ -112,7 +120,7 @@ for th in 0 8 32 128 999999; do
     MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS \
               TOSH_MGPU_PEER=1 TOSH_MGPU_EVENTS=1 TOSH_MGPU_PEER_MIN_BATCH=$th)
     if serve "$OUT/th$th.log" --split-mode tensor; then
-        ask 120 > "$OUT/th$th.json"
+        ask 120 "$LONG_PROMPT" > "$OUT/th$th.json"
         show "$OUT/th$th.json"
         stop
     fi

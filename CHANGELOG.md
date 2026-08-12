@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Faster
+- **Prompt processing is faster on eight more weight formats.** The wide matmul tile only ran on nine of them, so common quants like Q4_0 and the IQ family fell back to the narrow one. llama-2-7B Q4_0 goes from 878 to 915 t/s (+4.2%) and Qwen3-8B Q6_K from 742 to 764 (+2.9%), with identical perplexity. Narrow matrices keep the old tile, which measured faster for them.
+
 ### Fixed
 - **Stopping an answer no longer breaks the rest of the conversation in external clients**... interrupting a reply mid-stream left the client holding a turn the server then refused, so every later message in that conversation came back as an error until the history was deleted by hand. A finished turn carries a marker that an interrupted one never gets, and the server was treating that marker as required even though it is optional.
 
