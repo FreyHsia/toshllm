@@ -136,8 +136,11 @@ struct ServerSettings {
     /// turn a quant change into a cold prefill instead of a failed restore.
     private static func slotKVSignature() -> String {
         let d = UserDefaults.standard
+        // a slot holding media only restores with a projector loaded, so vision state splits it too
+        let vision = d.object(forKey: SettingsKeys.loadVision) as? Bool ?? true
         return "\(sanitizedKV(d.string(forKey: SettingsKeys.cacheTypeK), default: "f16"))"
              + "-\(sanitizedKV(d.string(forKey: SettingsKeys.cacheTypeV), default: "f16"))"
+             + (vision ? "-v" : "")
     }
 
     /// Slot directory of the primary server (the one the native chat talks to).
@@ -204,9 +207,7 @@ struct ServerSettings {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += ["--tools", "all"]
         }
-        // Silently skipped with a loaded projector: llama.cpp cannot save/restore
-        // slots with mmproj. Turning the vision eye off re-enables it.
-        if persistCache && effectiveFaAmd && mmproj == nil {
+        if persistCache && effectiveFaAmd {
             args += ["--slot-save-path", Self.slotCacheDir(port: port).path]
         }
         if reasoningInline { args += ["--reasoning-format", "none"] }
@@ -294,7 +295,7 @@ struct ServerSettings {
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }
             if parallelSlots > 1 { lines.append("kv-unified = true") }
             if isSplitting { lines.append("split-mode = \(effectiveSplitMode)") }
-            if persistCache && effectiveFaAmd && mmproj == nil {
+            if persistCache && effectiveFaAmd {
                 lines.append("slot-save-path = \(Self.slotCacheDir(port: port).appendingPathComponent(alias).path)")
             }
             if reasoningInline { lines.append("reasoning-format = none") }

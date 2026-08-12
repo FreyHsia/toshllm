@@ -3,6 +3,21 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **More model families run**... the engine update brings MiniMax-M3, GLM-5.2 with vision, Granite-Switch, Nanbeige and Muse Glimmer, and multi-token prediction now works on Nemotron, Qwen3-Next, GLM-4.7-Flash and DeepSeek V3.2.
+
+### Fixed
+- **Mixture-of-experts models no longer crash when split between card and processor**... a step handing more than thirty inputs to the next one overflowed a fixed-size list, which is reachable on Gemma 4, Qwen and DeepSeek.
+- **Memory is given back when a model is unloaded**... serving several models from one process kept the previous model's memory reserved if that model had never run anything on the card.
+- **Some layer widths no longer normalise to the wrong value**... a row whose length left a partial group of lanes dropped part of its sum, so the average and variance for that row came out wrong.
+- **Answers no longer stall in clients that reuse a conversation**... reading a prompt very similar to the previous one could count the reused tokens wrong when a draft model was in play.
+
+### Improved
+- **Serving several models chooses better which one to unload**... it now drops the least recently used instead of an arbitrary one, and never a model that is answering.
+- **Both engines move to current upstream**... the language engine had drifted 329 commits behind and the image engine four releases of its shared core, which also carries the security updates of the bundled web stack. Prompt and generation speed measure identical on dense and mixture-of-experts models.
+
 ## [0.83.21] - 2026-08-12
 
 ### Improved
