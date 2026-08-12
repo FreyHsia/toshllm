@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.20] - 2026-08-12
 
 ### Fixed
 - **Logs now say which card each GPU slot is, and which architecture the engine was built for.** macOS renumbers the GPUs on every reboot, so a slot number on its own did not identify the card a log came from, and on a machine with several cards there was no way to tell afterwards which ones a run had used. Each startup line now carries the device name and its peer group. The version line also reported the architecture of the machine that built the engine rather than the one it runs on, so a release built on Apple Silicon described its Intel binary as arm64.
