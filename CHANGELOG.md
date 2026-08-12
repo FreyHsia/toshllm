@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.19] - 2026-08-12
 
 ### Faster
 - **Prompt processing is faster on eight more weight formats.** The wide matmul tile only ran on nine of them, so common quants like Q4_0 and the IQ family fell back to the narrow one. llama-2-7B Q4_0 goes from 878 to 915 t/s (+4.2%) and Qwen3-8B Q6_K from 742 to 764 (+2.9%), with identical perplexity. Narrow matrices keep the old tile, which measured faster for them.
