@@ -8,7 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - **More model families run**... the engine update brings MiniMax-M3, GLM-5.2 with vision, Granite-Switch, Nanbeige and Muse Glimmer, and multi-token prediction now works on Nemotron, Qwen3-Next, GLM-4.7-Flash and DeepSeek V3.2.
 - **Models built around a Hadamard transform run on GCN and Vega cards too**... the transform assumes lanes come in groups of 32, and those cards group them in 64.
-- **Every conversation can be deleted at once**, from the menu next to the chat search box. Projects and their prompts are kept.
+- **Every conversation can be deleted at once**, from the chat settings or the menu next to the chat search box. Projects and their prompts are kept.
+- **The interface answers to the accessibility settings of the system.** Buttons that show only an icon now tell a screen reader what they do, and the translucent surfaces turn solid when "Reduce transparency" or "Increase contrast" is on.
 
 ### Fixed
 - **Mixture-of-experts models no longer crash when split between card and processor**... a step handing more than thirty inputs to the next one overflowed a fixed-size list, which is reachable on Gemma 4, Qwen and DeepSeek.
