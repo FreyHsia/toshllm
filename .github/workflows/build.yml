@@ -61,7 +61,7 @@ jobs:
         with:
           path: vendor
           # Per variant: the two ISA baselines produce different engine binaries.
-          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/*.patch', 'scripts/build-engines.sh') }}
+          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh') }}
 
       - name: Run unit tests
         if: github.event_name == 'pull_request'

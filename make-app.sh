@@ -160,6 +160,19 @@ if [ -d AppIcon.icon ] && [ -n "$ACTOOL" ]; then
     rm -rf "$ICONTMP"
 fi
 
+# a binary built for a newer macOS than the app's floor fails to launch on the testers'
+# systems with a dyld symbol error, and only there, so refuse to package it
+for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"*; do
+    [ -f "$exe" ] || continue
+    case "$exe" in *.metallib) continue;; esac
+    minos=$(otool -l "$exe" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/^ *minos/{print $2; exit}')
+    [ -z "$minos" ] && continue
+    if [ "${minos%%.*}" -gt 14 ]; then
+        echo "ERROR: $(basename "$exe") targets macOS $minos but the app runs on 14.0+; rebuild with ./scripts/build-engines.sh" >&2
+        exit 1
+    fi
+done
+
 [ -x "$APP/Contents/Resources/bin/llama-server" ] && codesign --force -s - "$APP/Contents/Resources/bin/"*
 [ -x "$APP/Contents/Resources/bin-image/sd-cli" ] && codesign --force -s - "$APP/Contents/Resources/bin-image/"*
 codesign --force -s - "$APP"
