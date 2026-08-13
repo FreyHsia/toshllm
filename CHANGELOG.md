@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.83.23] - 2026-08-13
 
 ### Fixed
 - **The engine starts again on macOS 15 and earlier**... the released binaries are built on the newest macOS and were tied to it, so once the engine update in 0.83.22 began calling a routine that only exists there, the engine quit at launch on every older system. It is now built for the same macOS the app itself asks for, and packaging refuses a binary that is not.
