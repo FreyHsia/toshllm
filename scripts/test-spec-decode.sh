@@ -40,7 +40,7 @@ BAD=(
 )
 
 serve() {
-    "$BIN/llama-server" --host 127.0.0.1 --port "$PORT" -m "$MODEL" --no-mmap \
+    "$BIN/llama-server" --host 127.0.0.1 --port "$PORT" -m "$MODEL" --load-mode none \
         -ngl 99 -c 8192 -np 1 --metrics "$@" > "$TMP/server.log" 2>&1 &
     SRV=$!
     local i

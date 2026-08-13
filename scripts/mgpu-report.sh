@@ -16,7 +16,7 @@ BIN="${TOSH_BIN:-/Applications/ToshLLM.app/Contents/Resources/bin}"
 
 export GGML_METAL_CONCURRENCY_DISABLE=1
 export TOSH_FA_AMD=1
-BENCH=("$BIN/llama-bench" -m "$MODEL" -ngl 99 --mmap 0 -fa 1 -p 512 -n 128 -r 2)
+BENCH=("$BIN/llama-bench" -m "$MODEL" -ngl 99 --load-mode none -fa 1 -p 512 -n 128 -r 2)
 
 echo "=== version"
 "$BIN/llama-server" --version 2>&1 | head -2
@@ -52,6 +52,6 @@ echo "\n=== layer split: event hand-off off/on"
 
 if [ -n "$MODEL_ABORT" ]; then
     echo "\n=== model that aborts (expected to fail, we want the exact line)"
-    "$BIN/llama-bench" -m "$MODEL_ABORT" -ngl 99 --mmap 0 -fa 1 -p 512 -n 32 -r 1 \
+    "$BIN/llama-bench" -m "$MODEL_ABORT" -ngl 99 --load-mode none -fa 1 -p 512 -n 32 -r 1 \
         --split-mode tensor 2>&1 | grep -iE "error|abort|not supported|buffers" | head -5
 fi

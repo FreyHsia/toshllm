@@ -97,7 +97,7 @@ def main() -> int:
         "-c", "4096",
         "-t", "6",
         "-fa", "1",
-        "--no-mmap",
+        "--load-mode", "none",
         "--parallel", "1",
         "--cache-ram", "256",
         "--host", "127.0.0.1",

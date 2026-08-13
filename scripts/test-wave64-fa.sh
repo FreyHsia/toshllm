@@ -58,7 +58,7 @@ echo "\n=== perplexity, must match between the two (a real difference means a br
 CORPUS="$TMP/corpus.txt"
 cat README.md CHANGELOG.md > "$CORPUS"
 for fa in auto 0; do
-    p="$("$BIN/llama-perplexity" -m "$MODEL" --no-mmap -fa $fa -c 4096 -f "$CORPUS" --chunks 6 2>&1 | grep -oE "PPL = [0-9.]+" | tail -1)"
+    p="$("$BIN/llama-perplexity" -m "$MODEL" --load-mode none -fa $fa -c 4096 -f "$CORPUS" --chunks 6 2>&1 | grep -oE "PPL = [0-9.]+" | tail -1)"
     echo "  -fa $fa: $p"
 done
 

@@ -35,7 +35,7 @@ MGPU_ENV=(env -u TOSH_MGPU_PEER -u TOSH_MGPU_EVENTS)
 
 serve() { # serve <log> <extra args...>
     local log="$1"; shift
-    "${MGPU_ENV[@]}" "$BIN/llama-server" -m "$MODEL" -ngl 99 --no-mmap -fa on --jinja \
+    "${MGPU_ENV[@]}" "$BIN/llama-server" -m "$MODEL" -ngl 99 --load-mode none -fa on --jinja \
         --host 127.0.0.1 --port $PORT "$@" > "$log" 2>&1 &
     SRV=$!
     for i in $(seq 1 300); do

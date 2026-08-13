@@ -355,8 +355,12 @@ struct ServerSettings {
     /// Arguments for `llama-bench`: separate from the server's because server-only
     /// flags are invalid here, but every option affecting speed must carry over.
     var benchmarkArguments: [String] {
-        var args = ["-m", modelPath, "-ngl", String(ngl), "--mmap", "0", "-r", "2",
+        // Same load mode as the server, or the numbers are not the ones the app
+        // delivers: with experts on the CPU, locking the model is worth most of
+        // the prompt speed.
+        var args = ["-m", modelPath, "-ngl", String(ngl), "-r", "2",
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped)]
+        if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
         if ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }

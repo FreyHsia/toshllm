@@ -503,6 +503,17 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertTrue(s.arguments.contains("--verbose"))
     }
 
+    func testBenchmarkUsesTheServerLoadMode() {
+        var s = makeSettings()
+        s.mlock = true
+        let args = s.benchmarkArguments
+        XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "mlock",
+                       "medir sin bloquear el modelo no da los números que entrega la app")
+        XCTAssertFalse(args.contains("--mmap"), "flag obsoleto en el motor nuevo")
+        s.mlock = false
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "--load-mode")! + 1], "none")
+    }
+
     func testChatFontScaleStaysInRange() {
         XCTAssertEqual(ChatFont.clamp(1), 1)
         XCTAssertEqual(ChatFont.clamp(5), ChatFont.range.upperBound)
