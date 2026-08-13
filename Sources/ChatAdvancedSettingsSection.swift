@@ -36,6 +36,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.chatPasteLongTextLength) private var pasteLongTextLength = 2500
     @AppStorage(SettingsKeys.chatMaxImageMegapixels) private var maxImageMegapixels = 1.0
     @AppStorage(SettingsKeys.chatPDFAsImages) private var pdfAsImages = false
+    @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
     @State private var confirmDeleteAll = false
     @State private var promptExpanded = true
     @State private var samplingExpanded = true
@@ -55,6 +56,20 @@ struct ChatAdvancedSettingsSection: View {
                    isOn: $smoothTyping)
                 .infoTip(loc.t("Anima la aparición del texto token a token. Desactívalo si prefieres que el texto aparezca de golpe o notas parpadeo.",
                                "Animates the text appearing token by token. Turn it off if you prefer text to appear at once or notice flicker."))
+
+            LabeledContent(loc.t("Tamaño del texto del chat", "Chat text size")) {
+                HStack(spacing: 10) {
+                    Text("\(Int((chatFontScale * 100).rounded()))%")
+                        .monospacedDigit().frame(minWidth: 46, alignment: .trailing)
+                    Slider(value: $chatFontScale, in: ChatFont.range, step: ChatFont.step)
+                        .frame(minWidth: 160, idealWidth: 220, maxWidth: 280)
+                    Button(loc.t("100%", "100%")) { chatFontScale = 1 }
+                        .buttonStyle(.borderless)
+                        .disabled(chatFontScale == 1)
+                    InfoTip(text: loc.t("Tamaño de los mensajes y del campo de escritura, sin tocar el resto de la interfaz. También con ⌘+ y ⌘− desde el chat, y ⌘0 para volver al 100%.",
+                                        "Size of the messages and the input field, leaving the rest of the interface alone. Also ⌘+ and ⌘− from the chat, and ⌘0 to go back to 100%."))
+                }
+            }
 
             LabeledContent(loc.t("Historial", "History")) {
                 HStack(spacing: 10) {

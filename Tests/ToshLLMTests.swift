@@ -503,6 +503,16 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertTrue(s.arguments.contains("--verbose"))
     }
 
+    func testChatFontScaleStaysInRange() {
+        XCTAssertEqual(ChatFont.clamp(1), 1)
+        XCTAssertEqual(ChatFont.clamp(5), ChatFont.range.upperBound)
+        XCTAssertEqual(ChatFont.clamp(0), ChatFont.range.lowerBound)
+        // one step from either end must not escape it
+        XCTAssertEqual(ChatFont.clamp(ChatFont.range.upperBound + ChatFont.step), ChatFont.range.upperBound)
+        XCTAssertEqual(ChatFont.clamp(ChatFont.range.lowerBound - ChatFont.step), ChatFont.range.lowerBound)
+        XCTAssertEqual(ChatFont.Base.body.points, 13, "el 100% debe seguir siendo el tamaño del sistema")
+    }
+
     func testMlockKeepsMmapWhenAsked() {
         var s = makeSettings()
         s.noMmap = false

@@ -12,7 +12,7 @@ struct SyntaxHighlightedCode: View {
 
     var body: some View {
         Text(highlighted)
-            .font(.system(.body, design: .monospaced))
+            .chatFont(.code, design: .monospaced)
             .textSelection(.enabled)
             .task(id: source) {
                 highlighted = SyntaxHighlighter.highlight(source, language: language)

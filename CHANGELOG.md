@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **More model families run**... the engine update brings MiniMax-M3, GLM-5.2 with vision, Granite-Switch, Nanbeige and Muse Glimmer, and multi-token prediction now works on Nemotron, Qwen3-Next, GLM-4.7-Flash and DeepSeek V3.2.
 - **Models built around a Hadamard transform run on GCN and Vega cards too**... the transform assumes lanes come in groups of 32, and those cards group them in 64.
 - **Every conversation can be deleted at once**, from the chat settings or the menu next to the chat search box. Projects and their prompts are kept.
+- **The chat text has its own size**, with ⌘+ and ⌘− while chatting, ⌘0 to go back, and a slider in the chat settings. It grows the messages and the input field from 80% to 200%, and leaves the rest of the interface where it is.
 - **The interface answers to the accessibility settings of the system.** Buttons that show only an icon now tell a screen reader what they do, and the translucent surfaces turn solid when "Reduce transparency" or "Increase contrast" is on.
 
 ### Fixed

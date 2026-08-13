@@ -304,6 +304,7 @@ struct RichText: View {
 /// already-finished backend.
 private struct PlainGrowingText: View {
     let text: String
+    @Environment(\.chatFontScale) private var scale
     /// Lines per frozen chunk: small enough that the live remainder stays cheap
     /// to re-render, large enough that chunk boundaries are infrequent.
     private static let chunkLines = 50
@@ -313,10 +314,10 @@ private struct PlainGrowingText: View {
         // An open code fence streams in monospace (it snaps to a full CodeBlock
         // once the closing fence settles the block). Drop the opening ```/~~~
         // line while the fence is still open.
-        var font: Font = .body
+        var font: Font = .system(size: ChatFont.Base.body.points * scale)
         if let first = lines.first?.trimmingCharacters(in: .whitespaces),
            first.hasPrefix("```") || first.hasPrefix("~~~") {
-            font = .system(size: 12, design: .monospaced)
+            font = .system(size: ChatFont.Base.code.points * scale, design: .monospaced)
             lines.removeFirst()
         }
         let complete = lines.count / Self.chunkLines
@@ -363,7 +364,7 @@ private struct MDBlockView: View, Equatable {
             }
         case .header(let level, let s):
             Text(RichText.inline(s))
-                .font(level <= 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
+                .chatFont(level <= 1 ? .heading1 : level == 2 ? .heading2 : .heading3, weight: .bold)
                 .textSelection(.enabled)
                 .padding(.top, 2)
         case .bullet(let items):
@@ -388,7 +389,7 @@ private struct MDBlockView: View, Equatable {
                 ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("\(i + 1).").foregroundStyle(.secondary)
-                            .font(.system(.body, design: .monospaced))
+                            .chatFont(.code, design: .monospaced)
                         Text(RichText.inline(item)).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }

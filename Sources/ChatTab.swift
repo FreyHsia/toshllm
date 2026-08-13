@@ -46,6 +46,7 @@ struct ChatMainView: View {
     // halves of the split view drive the same runs.
     @StateObject private var imageGenPool = ImageGenPool()
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
+    @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
 
     var body: some View {
         // A single NavigationSplitView for both modes: only the sidebar and detail
@@ -71,6 +72,21 @@ struct ChatMainView: View {
         .animation(.easeInOut(duration: 0.2), value: mode)
         .tint(AppTheme.accent(accentRaw))
         .environmentObject(chat)
+        .environment(\.chatFontScale, ChatFont.clamp(chatFontScale))
+        .background {
+            // hidden holders for the shortcuts: menu commands cannot reach this scene's state
+            Group {
+                Button("") { chatFontScale = ChatFont.clamp(chatFontScale + ChatFont.step) }
+                    .keyboardShortcut("+", modifiers: .command)
+                Button("") { chatFontScale = ChatFont.clamp(chatFontScale + ChatFont.step) }
+                    .keyboardShortcut("=", modifiers: .command)
+                Button("") { chatFontScale = ChatFont.clamp(chatFontScale - ChatFont.step) }
+                    .keyboardShortcut("-", modifiers: .command)
+                Button("") { chatFontScale = 1 }
+                    .keyboardShortcut("0", modifiers: .command)
+            }
+            .opacity(0)
+        }
         .navigationTitle("ToshLLM")
         .navigationSubtitle(mode == .images
                             ? loc.t("Imágenes · Experimental", "Images · Experimental")

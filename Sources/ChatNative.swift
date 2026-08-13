@@ -2443,6 +2443,7 @@ struct NativeChatView: View {
                   text: $draft, axis: .vertical)
             .lineLimit(1...8)
             .textFieldStyle(.plain)
+            .chatFont(.body)
             .padding(.horizontal, 13).padding(.vertical, 8)
             .glassSurface(in: RoundedRectangle(cornerRadius: 20), interactive: true)
             .focused($inputFocused)

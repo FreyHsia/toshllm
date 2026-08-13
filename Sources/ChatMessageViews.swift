@@ -237,7 +237,7 @@ struct MessageBubble: View, Equatable {
                     let isThinkingLive = streaming && parts.body.isEmpty && parts.thinking != nil
                     if showRawOutput {
                         Text(rawOutput)
-                            .font(.system(.caption, design: .monospaced))
+                            .chatFont(.small, design: .monospaced)
                             .textSelection(.enabled)
                     } else if let think = parts.thinking, !think.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
@@ -251,7 +251,7 @@ struct MessageBubble: View, Equatable {
                             .buttonStyle(.plain)
                             if thinkExpanded {
                                 Text(think)
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .chatFont(.small).foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
                         }
@@ -262,6 +262,7 @@ struct MessageBubble: View, Equatable {
                         ToolResultCard(message: message)
                     } else if !parts.body.isEmpty || parts.thinking == nil {
                         RichText(text: isUser ? message.content : parts.body)
+                            .chatFont(.body)
                     }
                     if streaming {
                         HStack(spacing: 8) {
@@ -425,7 +426,7 @@ struct StreamingMessageBubble: View {
                             }
                             if live.reasoningExpanded {
                                 Text(reasoningText)
-                                    .font(.caption)
+                                    .chatFont(.small)
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
@@ -436,6 +437,7 @@ struct StreamingMessageBubble: View {
                         // Frozen text reveals at once: a typewriter catching up
                         // would still be moving the very text being read.
                         StreamingRichText(text: visibleText, smooth: smoothTyping && frozen == nil)
+                            .chatFont(.body)
                     }
 
                     HStack(spacing: 8) {
