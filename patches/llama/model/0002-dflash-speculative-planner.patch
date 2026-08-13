@@ -325,7 +325,7 @@
 +    static constexpr size_t cold_max = 128;
 +
 +    bool  cold_defer = true;
-+    float acc_min    = 0.65f;
++    float acc_min    = 0.60f;
 +    int   probe_base = 8;
 +    int   probe_cap  = 24;
 +
@@ -344,7 +344,7 @@
          auto * ctx_dft = this->params.ctx_dft;
          GGML_ASSERT(ctx_tgt && ctx_dft && "MTP requires ctx_tgt and ctx_dft to be set");
  
-@@ -1341,16 +1424,29 @@
+@@ -1341,16 +1424,26 @@
              chain_h.assign(n_seq, {});
              for (auto & c : chain_h) {
                  c.reserve((size_t) (this->params.n_max + 1) * n_embd);
@@ -357,11 +357,8 @@
 +        cold_h.assign(n_seq, {});
 +
 +        cold_defer = getenv("TOSH_MTP_COLD_DEFER_DISABLE") == nullptr;
-+        // 0.65 sits above the acceptance of predictable content on wave64 (0.64), so it backs
-+        // off where drafting still pays; 0.60 keeps that and still catches the bad case.
-+        if (const char * w = getenv("TOSH_METAL_SIMD_WIDTH")) {
-+            if (atoi(w) == 64) { acc_min = 0.60f; }
-+        }
++        // 0.65 sat above the acceptance real content reaches, so it backed off where drafting
++        // still paid; 0.60 keeps the win and still catches the unpredictable case.
 +        acc_min    = getenv("TOSH_MTP_ACC_MIN")   ? (float) atof(getenv("TOSH_MTP_ACC_MIN"))   : acc_min;
 +        probe_base = getenv("TOSH_MTP_PROBE")     ?         atoi(getenv("TOSH_MTP_PROBE"))     : probe_base;
 +        probe_cap  = getenv("TOSH_MTP_PROBE_CAP") ?         atoi(getenv("TOSH_MTP_PROBE_CAP")) : probe_cap;
