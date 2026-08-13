@@ -7,17 +7,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - **More model families run**... the engine update brings MiniMax-M3, GLM-5.2 with vision, Granite-Switch, Nanbeige and Muse Glimmer, and multi-token prediction now works on Nemotron, Qwen3-Next, GLM-4.7-Flash and DeepSeek V3.2.
+- **Models built around a Hadamard transform run on GCN and Vega cards too**... the transform assumes lanes come in groups of 32, and those cards group them in 64.
 
 ### Fixed
 - **Mixture-of-experts models no longer crash when split between card and processor**... a step handing more than thirty inputs to the next one overflowed a fixed-size list, which is reachable on Gemma 4, Qwen and DeepSeek.
 - **Memory is given back when a model is unloaded**... serving several models from one process kept the previous model's memory reserved if that model had never run anything on the card.
 - **Some layer widths no longer normalise to the wrong value**... a row whose length left a partial group of lanes dropped part of its sum, so the average and variance for that row came out wrong.
 - **Answers no longer stall in clients that reuse a conversation**... reading a prompt very similar to the previous one could count the reused tokens wrong when a draft model was in play.
-- **Models built around a Hadamard transform give correct answers on older Radeon cards**... the transform assumed lanes come in groups of 32, so on cards that group them in 64 it left half the rows untouched and wrote past the end of the others.
 
 ### Improved
-- **Predictable answers arrive about 5% faster on GCN and Vega cards.** The draft head stopped drafting whenever recent acceptance fell below a bar that sat just above what code and prose actually reach on these cards, so it gave up where drafting still paid. The bar now sits below it, and unpredictable content still falls back to reading one token at a time as before.
-- **Prompts are read 3 to 5% faster on GCN and Vega cards.** The wide matmul tile was measured on RDNA 2 and loses on the older cards from 256 tokens up, so they now keep the narrow one: Qwen3-4B Q4_K_M goes from 809 to 853 tokens per second at 512, and llama-2-7B Q4_0 from 502 to 515. The short-prompt tile is unchanged on every card.
+- **Predictable answers arrive about 5% faster on GCN and Vega cards**... the draft head gave up whenever acceptance fell below a bar that sat above what real content reaches on them.
+- **Prompts are read 3 to 5% faster on GCN and Vega cards**... the wide matmul tile was measured on RDNA 2 and loses on the older ones from 256 tokens up, so they keep the narrow one.
 - **Serving several models chooses better which one to unload**... it now drops the least recently used instead of an arbitrary one, and never a model that is answering.
 - **Both engines move to current upstream**... the language engine had drifted 329 commits behind and the image engine four releases of its shared core, which also carries the security updates of the bundled web stack. Prompt and generation speed measure identical on dense and mixture-of-experts models.
 
