@@ -17,7 +17,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Mixture-of-experts models no longer crash when split between card and processor**... a step handing more than thirty inputs to the next one overflowed a fixed-size list, which is reachable on Gemma 4, Qwen and DeepSeek.
 - **Memory is given back when a model is unloaded**... serving several models from one process kept the previous model's memory reserved if that model had never run anything on the card.
 - **Some layer widths no longer normalise to the wrong value**... a row whose length left a partial group of lanes dropped part of its sum, so the average and variance for that row came out wrong.
-- **The benchmark measures the machine the way the app runs it**... it always loaded the model unlocked, so a mixture-of-experts model with experts on the processor benchmarked far below what the app actually delivers.
+- **The benchmark loads the model the way the server does**... it ignored the memory options and always loaded unlocked, so it was not measuring the configuration it reported, and the shared result recorded a fixed value instead of the real one.
 - **Locking the model in RAM no longer switches off memory mapping behind your back**... the updated engine folds both options into a single setting where the last one given wins, so on the Macs that keep mapping on, turning the lock on silently disabled it.
 - **Answers no longer stall in clients that reuse a conversation**... reading a prompt very similar to the previous one could count the reused tokens wrong when a draft model was in play.
 
