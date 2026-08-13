@@ -16,6 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Models built around a Hadamard transform give correct answers on older Radeon cards**... the transform assumed lanes come in groups of 32, so on cards that group them in 64 it left half the rows untouched and wrote past the end of the others.
 
 ### Improved
+- **Predictable answers arrive about 5% faster on GCN and Vega cards.** The draft head stopped drafting whenever recent acceptance fell below a bar that sat just above what code and prose actually reach on these cards, so it gave up where drafting still paid. The bar now sits below it, and unpredictable content still falls back to reading one token at a time as before.
 - **Prompts are read 3 to 5% faster on GCN and Vega cards.** The wide matmul tile was measured on RDNA 2 and loses on the older cards from 256 tokens up, so they now keep the narrow one: Qwen3-4B Q4_K_M goes from 809 to 853 tokens per second at 512, and llama-2-7B Q4_0 from 502 to 515. The short-prompt tile is unchanged on every card.
 - **Serving several models chooses better which one to unload**... it now drops the least recently used instead of an arbitrary one, and never a model that is answering.
 - **Both engines move to current upstream**... the language engine had drifted 329 commits behind and the image engine four releases of its shared core, which also carries the security updates of the bundled web stack. Prompt and generation speed measure identical on dense and mixture-of-experts models.
