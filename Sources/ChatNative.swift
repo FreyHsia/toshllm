@@ -425,6 +425,7 @@ final class ChatStore: ObservableObject {
 
     init() {
         load()
+        Self.live = self
         // Open ready to type a new message: reuse the most recent empty
         // conversation or start a fresh one. Earlier chats stay one click away.
         if let empty = conversations.first(where: { $0.messages.isEmpty }) {
@@ -477,6 +478,26 @@ final class ChatStore: ObservableObject {
             at: ServerSettings.primarySlotCacheDir.appendingPathComponent(Self.slotFile(c.id)))
         if slotConvID == c.id { slotConvID = nil }
         save()
+    }
+
+    /// The live store, so the settings window (which has no access to the chat
+    /// window's instance) can reach it.
+    private(set) static weak var live: ChatStore?
+
+    /// Erases the stored conversations without a store: the settings window can
+    /// outlive the chat window, and then nothing holds them in memory.
+    static func eraseStoredConversations() {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ToshLLM")
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("conversations.json"))
+        let slots = ServerSettings.primarySlotCacheDir
+        guard let files = try? FileManager.default.contentsOfDirectory(at: slots,
+                                                                      includingPropertiesForKeys: nil)
+        else { return }
+        for f in files where f.pathExtension == "bin"
+            && UUID(uuidString: f.deletingPathExtension().lastPathComponent) != nil {
+            try? FileManager.default.removeItem(at: f)
+        }
     }
 
     /// Drops every conversation (projects and their prompts stay). Their
@@ -3646,7 +3667,8 @@ struct ConversationListView: View {
                 .frame(width: 28, height: 28)
                 .glassSurface(in: Circle(), interactive: true)
                 .overlay(Circle().strokeBorder(.primary.opacity(0.07)))
-                .help(loc.t("Ordenar conversaciones", "Sort conversations"))
+                .help(loc.t("Ordenar, importar, exportar y borrar conversaciones",
+                            "Sort, import, export and delete conversations"))
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 12)

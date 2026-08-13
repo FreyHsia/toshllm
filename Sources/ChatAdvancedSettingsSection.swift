@@ -36,6 +36,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.chatPasteLongTextLength) private var pasteLongTextLength = 2500
     @AppStorage(SettingsKeys.chatMaxImageMegapixels) private var maxImageMegapixels = 1.0
     @AppStorage(SettingsKeys.chatPDFAsImages) private var pdfAsImages = false
+    @State private var confirmDeleteAll = false
     @State private var promptExpanded = true
     @State private var samplingExpanded = true
     @State private var penaltiesExpanded = false
@@ -54,6 +55,21 @@ struct ChatAdvancedSettingsSection: View {
                    isOn: $smoothTyping)
                 .infoTip(loc.t("Anima la aparición del texto token a token. Desactívalo si prefieres que el texto aparezca de golpe o notas parpadeo.",
                                "Animates the text appearing token by token. Turn it off if you prefer text to appear at once or notice flicker."))
+
+            LabeledContent(loc.t("Historial", "History")) {
+                HStack(spacing: 10) {
+                    Button(role: .destructive) { confirmDeleteAll = true } label: {
+                        Label(loc.t("Borrar todas las conversaciones…", "Delete all conversations…"),
+                              systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .help(loc.t("Elimina todas las conversaciones y sus cachés de contexto guardadas en disco. Los proyectos y sus prompts se conservan.",
+                                "Deletes every conversation and its saved context caches on disk. Projects and their prompts are kept."))
+                    InfoTip(text: loc.t("No se puede deshacer. Exporta antes desde el menú junto al buscador de chats si quieres una copia.",
+                                        "This cannot be undone. Export first from the menu next to the chat search box if you want a copy."))
+                }
+            }
 
             ChatSettingsDisclosureGroup(
                 title: loc.t("Prompt de sistema global", "Global system prompt"),
@@ -261,6 +277,19 @@ struct ChatAdvancedSettingsSection: View {
         } footer: {
             Text(loc.t("Los controles habituales permanecen junto al chat; aquí están los ajustes de uso menos frecuente.",
                        "Common controls remain beside the chat; less frequently used options live here."))
+        }
+        .confirmationDialog(
+            loc.t("¿Borrar todas las conversaciones?", "Delete all conversations?"),
+            isPresented: $confirmDeleteAll, titleVisibility: .visible
+        ) {
+            Button(loc.t("Borrar todas", "Delete all"), role: .destructive) {
+                // the chat window owns the store and can be closed while this one stays open
+                if let store = ChatStore.live { store.deleteAll() } else { ChatStore.eraseStoredConversations() }
+            }
+            Button(loc.t("Cancelar", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(loc.t("No se puede deshacer. Tus proyectos y sus prompts se conservan.",
+                       "This cannot be undone. Your projects and their prompts are kept."))
         }
     }
 
