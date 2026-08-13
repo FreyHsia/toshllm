@@ -125,6 +125,17 @@ struct ServerSettings {
     /// persistence gates on this, not on mere availability.
     var visionLoaded: Bool { loadVision && isMultimodal }
 
+    /// `--no-mmap` and `--mlock` both write the engine's load mode and the last one wins, so
+    /// passing the pair let mlock decide whether mmap stayed on. Nil keeps the engine default.
+    static func loadMode(noMmap: Bool, mlock: Bool) -> String? {
+        switch (noMmap, mlock) {
+        case (true, true):   return "mlock"
+        case (true, false):  return "none"
+        case (false, true):  return "mmap+mlock"
+        case (false, false): return nil
+        }
+    }
+
     /// Directory where one server's per-conversation KV slot files live. Namespaced
     /// by port so independent servers don't overwrite each other's slot 0 / prefix
     /// files in a shared folder.
@@ -186,14 +197,13 @@ struct ServerSettings {
             "--port", String(port),
         ]
         if ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
-        if noMmap { args.append("--no-mmap") }
+        if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { args += ["--load-mode", mode] }
         // A sibling projector lets the model read images, and needs --jinja.
         let mmproj = loadVision ? Self.mmprojPath(forModel: modelPath) : nil
         if let mmproj { args += ["--mmproj", mmproj] }
         if jinja || mmproj != nil { args.append("--jinja") }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
-        if mlock { args.append("--mlock") }
         // localhost-only endpoint; feeds the speculative-decoding readout in Diagnostics
         args.append("--metrics")
         args += ["--cache-ram", String(cacheRAM)]
@@ -293,13 +303,12 @@ struct ServerSettings {
             var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
                          "ctx-size = \(ctx)", "threads = \(threads)", "flash-attn = \(faValue)"]
             if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
-            if noMmap { lines.append("no-mmap = true") }
+            if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
             if let mmproj { lines.append("mmproj = \(mmproj)") }
             if jinja || mmproj != nil { lines.append("jinja = true") }
             if cacheTypeK != "f16" { lines.append("cache-type-k = \(cacheTypeK)") }
             if cacheTypeV != "f16" { lines.append("cache-type-v = \(cacheTypeV)") }
-            if mlock { lines.append("mlock = true") }
             lines.append("cache-ram = \(cacheRAM)")
             if cacheReuse && mmproj == nil { lines.append("cache-reuse = 256") }
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }

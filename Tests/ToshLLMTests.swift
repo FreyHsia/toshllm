@@ -309,12 +309,12 @@ final class ServerSettingsTests: XCTestCase {
 
     func testBaseArguments() {
         let args = makeSettings().arguments
-        XCTAssertTrue(args.contains("--no-mmap"))
+        XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "none")
         XCTAssertTrue(args.contains("--jinja"))
         XCTAssertTrue(args.contains("--n-cpu-moe"))
         XCTAssertEqual(args[args.firstIndex(of: "--host")! + 1], "127.0.0.1")
         XCTAssertFalse(args.contains("-ctk"), "f16 no debe emitir -ctk")
-        XCTAssertFalse(args.contains("--mlock"))
+        XCTAssertFalse(args.contains("--mlock"), "the deprecated pair let mlock decide mmap")
         // The engine's 8 GiB host prompt cache must always be capped.
         XCTAssertEqual(args[args.firstIndex(of: "--cache-ram")! + 1], "2048")
         XCTAssertFalse(args.contains("--reasoning-format"), "inline reasoning is opt-in")
@@ -503,6 +503,16 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertTrue(s.arguments.contains("--verbose"))
     }
 
+    func testMlockKeepsMmapWhenAsked() {
+        var s = makeSettings()
+        s.noMmap = false
+        s.mlock = true
+        let args = s.arguments
+        XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "mmap+mlock")
+        s.mlock = false
+        XCTAssertFalse(s.arguments.contains("--load-mode"), "sin ninguna opción, el motor decide")
+    }
+
     func testKVQuantAndMlockArguments() {
         var s = makeSettings()
         s.cacheTypeK = "q8_0"
@@ -511,7 +521,7 @@ final class ServerSettingsTests: XCTestCase {
         let args = s.arguments
         XCTAssertEqual(args[args.firstIndex(of: "-ctk")! + 1], "q8_0")
         XCTAssertEqual(args[args.firstIndex(of: "-ctv")! + 1], "turbo3")
-        XCTAssertTrue(args.contains("--mlock"))
+        XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "mlock")
         XCTAssertTrue(args.contains("--cache-reuse"),
                       "TurboQuant has a dequantize/shift/requantize path")
         XCTAssertFalse(s.usesUnsupportedTurboQ4Mix)
