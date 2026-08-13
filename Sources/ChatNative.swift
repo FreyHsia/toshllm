@@ -819,7 +819,7 @@ final class ChatStore: ObservableObject {
                     "min_p": sampling.minP,
                     "top_k": sampling.topK,
                     "repeat_penalty": sampling.repeatPenalty,
-                    "repeat_last_n": sampling.repeatLastN,
+                    "repeat_last_n": max(0, sampling.repeatLastN),
                     "dynatemp_range": sampling.dynatempRange,
                     "dynatemp_exponent": sampling.dynatempExponent,
                     "xtc_probability": sampling.xtcProbability,
@@ -830,7 +830,8 @@ final class ChatStore: ObservableObject {
                     "dry_multiplier": sampling.dryMultiplier,
                     "dry_base": sampling.dryBase,
                     "dry_allowed_length": sampling.dryAllowedLength,
-                    "dry_penalty_last_n": sampling.dryPenaltyLastN,
+                    // settings saved before the engine rejected negatives still hold -1
+                    "dry_penalty_last_n": max(0, sampling.dryPenaltyLastN),
                     "backend_sampling": sampling.backendSampling,
                     "seed": sampling.seed,
                     "max_tokens": maxTokens,
@@ -1820,7 +1821,7 @@ struct NativeChatView: View {
     @AppStorage(SettingsKeys.chatDryMultiplier) private var dryMultiplier = 0.0
     @AppStorage(SettingsKeys.chatDryBase) private var dryBase = 1.75
     @AppStorage(SettingsKeys.chatDryAllowedLength) private var dryAllowedLength = 2
-    @AppStorage(SettingsKeys.chatDryPenaltyLastN) private var dryPenaltyLastN = -1
+    @AppStorage(SettingsKeys.chatDryPenaltyLastN) private var dryPenaltyLastN = 0
     @AppStorage(SettingsKeys.chatSamplers) private var samplers = ""
     @AppStorage(SettingsKeys.chatBackendSampling) private var backendSampling = false
     @AppStorage(SettingsKeys.chatCustomJSON) private var customJSON = ""
@@ -2619,7 +2620,7 @@ struct NativeChatView: View {
                                 parameterValue(loc.t("Longitud permitida", "Allowed length"),
                                                value: dryAllowedLength.formatted())
                             }
-                            Stepper(value: $dryPenaltyLastN, in: -1...32768, step: 64) {
+                            Stepper(value: $dryPenaltyLastN, in: 0...32768, step: 64) {
                                 parameterValue(loc.t("Ventana DRY", "DRY window"),
                                                value: dryPenaltyLastN.formatted())
                             }
@@ -2677,7 +2678,7 @@ struct NativeChatView: View {
                         dryMultiplier = 0
                         dryBase = 1.75
                         dryAllowedLength = 2
-                        dryPenaltyLastN = -1
+                        dryPenaltyLastN = 0
                         samplers = ""
                         backendSampling = false
                         customJSON = ""

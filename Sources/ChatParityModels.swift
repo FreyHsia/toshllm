@@ -22,7 +22,8 @@ struct ChatSamplingSettings: Equatable {
     var dryMultiplier = 0.0
     var dryBase = 1.75
     var dryAllowedLength = 2
-    var dryPenaltyLastN = -1
+    // 0 disables DRY, which is what -1 meant before the engine rejected negatives
+    var dryPenaltyLastN = 0
     var samplers = ""
     var backendSampling = false
     var customJSON = ""

@@ -28,7 +28,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.chatDryMultiplier) private var dryMultiplier = 0.0
     @AppStorage(SettingsKeys.chatDryBase) private var dryBase = 1.75
     @AppStorage(SettingsKeys.chatDryAllowedLength) private var dryAllowedLength = 2
-    @AppStorage(SettingsKeys.chatDryPenaltyLastN) private var dryPenaltyLastN = -1
+    @AppStorage(SettingsKeys.chatDryPenaltyLastN) private var dryPenaltyLastN = 0
     @AppStorage(SettingsKeys.chatSamplers) private var samplers = ""
     @AppStorage(SettingsKeys.chatBackendSampling) private var backendSampling = false
     @AppStorage(SettingsKeys.chatCustomJSON) private var customJSON = ""
@@ -121,9 +121,9 @@ struct ChatAdvancedSettingsSection: View {
                                     help: loc.t("Penaliza un token en proporción a cuántas veces ya apareció. Positivo reduce muletillas; negativo las favorece.",
                                                 "Penalizes a token in proportion to how many times it already appeared. Positive reduces filler; negative favors it."))
                     integerStepper(loc.t("Ventana de repetición", "Repeat window"),
-                                   value: $repeatLastN, range: -1...4096, step: 16,
-                                   help: loc.t("Cuántos tokens recientes miran las penalizaciones de repetición. 0 lo desactiva; -1 usa todo el contexto.",
-                                               "How many recent tokens the repetition penalties look at. 0 disables it; -1 uses the whole context."))
+                                   value: $repeatLastN, range: 0...4096, step: 16,
+                                   help: loc.t("Cuántos tokens recientes miran las penalizaciones de repetición. 0 lo desactiva.",
+                                               "How many recent tokens the repetition penalties look at. 0 disables it."))
                 }
                 .padding(.top, 10)
             }
@@ -162,9 +162,9 @@ struct ChatAdvancedSettingsSection: View {
                                    help: loc.t("Longitud de secuencia repetida que se tolera antes de que DRY empiece a penalizar.",
                                                "Length of repeated sequence tolerated before DRY starts penalizing."))
                     integerStepper(loc.t("Ventana", "Window"), value: $dryPenaltyLastN,
-                                   range: -1...32768, step: 64,
-                                   help: loc.t("Cuántos tokens recientes examina DRY. -1 usa todo el contexto.",
-                                               "How many recent tokens DRY scans. -1 uses the whole context."))
+                                   range: 0...32768, step: 64,
+                                   help: loc.t("Cuántos tokens recientes examina DRY. 0 lo desactiva.",
+                                               "How many recent tokens DRY scans. 0 disables it."))
                 }
                 .padding(.top, 10)
             }
@@ -318,7 +318,7 @@ struct ChatAdvancedSettingsSection: View {
         topP = 0.95; minP = 0.05; topK = 40; repeatPenalty = 1; repeatLastN = 64; seed = -1
         dynatempRange = 0; dynatempExponent = 1; xtcProbability = 0; xtcThreshold = 0.1
         typicalP = 1; presencePenalty = 0; frequencyPenalty = 0; dryMultiplier = 0
-        dryBase = 1.75; dryAllowedLength = 2; dryPenaltyLastN = -1; samplers = ""
+        dryBase = 1.75; dryAllowedLength = 2; dryPenaltyLastN = 0; samplers = ""
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
