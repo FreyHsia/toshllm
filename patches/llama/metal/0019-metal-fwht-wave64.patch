@@ -1,0 +1,139 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -6617,27 +6617,26 @@
+ 
+         dst[k] = out_idx;
+     }
+ }
+ 
+ template [[host_name("kernel_argsort_merge_f32_i32_asc")]]  kernel argsort_merge_t kernel_argsort_merge_f32_i32<GGML_SORT_ORDER_ASC>;
+ template [[host_name("kernel_argsort_merge_f32_i32_desc")]] kernel argsort_merge_t kernel_argsort_merge_f32_i32<GGML_SORT_ORDER_DESC>;
+ 
+-template<int N>
++template<int N, int NW = N_SIMDWIDTH>
+ kernel void kernel_fwht_f32(
+         constant ggml_metal_kargs_fwht & args,
+         device const float * src,
+         device float * dst,
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort3  ntg[[threads_per_threadgroup]]) {
+ 
+-    constexpr int NW = N_SIMDWIDTH;
+     constexpr int NE = N / NW;
+ 
+     const float scale = 1.0f / sqrt((float) N);
+ 
+     const int sg_per_tg = ntg.x / NW;
+     const int64_t r = tgpig.x * sg_per_tg + sgitg;
+     if (r >= args.nrows) {
+         return;
+@@ -6678,16 +6677,21 @@
+ }
+ 
+ typedef decltype(kernel_fwht_f32<64>) kernel_fwht_t;
+ 
+ template [[host_name("kernel_fwht_f32_64")]]  kernel kernel_fwht_t kernel_fwht_f32<64>;
+ template [[host_name("kernel_fwht_f32_128")]] kernel kernel_fwht_t kernel_fwht_f32<128>;
+ template [[host_name("kernel_fwht_f32_256")]] kernel kernel_fwht_t kernel_fwht_f32<256>;
+ template [[host_name("kernel_fwht_f32_512")]] kernel kernel_fwht_t kernel_fwht_f32<512>;
++
++template [[host_name("kernel_fwht_f32_64_w64")]]  kernel kernel_fwht_t kernel_fwht_f32<64,  64>;
++template [[host_name("kernel_fwht_f32_128_w64")]] kernel kernel_fwht_t kernel_fwht_f32<128, 64>;
++template [[host_name("kernel_fwht_f32_256_w64")]] kernel kernel_fwht_t kernel_fwht_f32<256, 64>;
++template [[host_name("kernel_fwht_f32_512_w64")]] kernel kernel_fwht_t kernel_fwht_f32<512, 64>;
+ 
+ constant bool FC_flash_attn_ext_pad_has_mask [[function_constant(FC_FLASH_ATTN_EXT_PAD + 0)]];
+ 
+ constant int32_t FC_flash_attn_ext_pad_ncpsg [[function_constant(FC_FLASH_ATTN_EXT_PAD + 25)]];
+ 
+ // pad the last chunk of C elements of k and v into a an extra pad buffer
+ kernel void kernel_flash_attn_ext_pad(
+         constant ggml_metal_kargs_flash_attn_ext_pad & args,
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -140,17 +140,17 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_topk_moe          (ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort           (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort_merge     (ggml_metal_library_t lib, const struct ggml_tensor * op);
+-struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht              (ggml_metal_library_t lib, int n);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht              (ggml_metal_library_t lib, int n, bool w64);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k             (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k_merge       (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin               (ggml_metal_library_t lib, const struct ggml_tensor * op, int32_t n_fuse );
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin_one           (ggml_metal_library_t lib, enum ggml_op op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_l2_norm           (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_group_norm        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm              (ggml_metal_library_t lib, const struct ggml_tensor * op, int32_t n_fuse);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope              (ggml_metal_library_t lib, const struct ggml_tensor * op);
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1506,21 +1506,21 @@
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+     }
+ 
+     return res;
+ }
+ 
+-ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht(ggml_metal_library_t lib, int n) {
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht(ggml_metal_library_t lib, int n, bool w64) {
+     char base[256];
+     char name[256];
+ 
+-    snprintf(base, 256, "kernel_fwht_f32_%d", n);
++    snprintf(base, 256, "kernel_fwht_f32_%d%s", n, w64 ? "_w64" : "");
+     snprintf(name, 256, "%s", base);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+     }
+ 
+     return res;
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -2292,32 +2292,33 @@
+ 
+     const int64_t n = src1->ne[0];
+     const int64_t nrows = ggml_nrows(src1);
+ 
+     ggml_metal_kargs_fwht args = {
+         /*.nrows = */ (int32_t) nrows,
+     };
+ 
+-    auto pipeline = ggml_metal_library_get_pipeline_fwht(lib, n);
++    const int simd_size = ggml_metal_device_get_props(ctx->dev)->simd_width;
++
++    auto pipeline = ggml_metal_library_get_pipeline_fwht(lib, n, simd_size == 64);
+ 
+     ggml_metal_encoder_set_pipeline(enc, pipeline);
+     ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), 0);
+     ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(src1), 1);
+     ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op), 2);
+ 
+     const int th_max = ggml_metal_pipeline_max_theads_per_threadgroup(pipeline);
+-    const int simd_size = 32;
+ 
+     int sg_per_tg = 2;
+     sg_per_tg = std::min(sg_per_tg, th_max/simd_size);
+     sg_per_tg = std::max(sg_per_tg, 1);
+ 
+     const int64_t n_tg = (nrows + sg_per_tg - 1) / sg_per_tg;
+-    ggml_metal_encoder_dispatch_threadgroups(enc, n_tg, 1, 1, 32*sg_per_tg, 1, 1);
++    ggml_metal_encoder_dispatch_threadgroups(enc, n_tg, 1, 1, simd_size*sg_per_tg, 1, 1);
+ 
+     return 1;
+ }
+ 
+ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+     ggml_metal_library_t lib = ctx->lib;

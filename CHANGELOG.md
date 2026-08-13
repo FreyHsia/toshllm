@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Memory is given back when a model is unloaded**... serving several models from one process kept the previous model's memory reserved if that model had never run anything on the card.
 - **Some layer widths no longer normalise to the wrong value**... a row whose length left a partial group of lanes dropped part of its sum, so the average and variance for that row came out wrong.
 - **Answers no longer stall in clients that reuse a conversation**... reading a prompt very similar to the previous one could count the reused tokens wrong when a draft model was in play.
+- **Models built around a Hadamard transform give correct answers on older Radeon cards**... the transform assumed lanes come in groups of 32, so on cards that group them in 64 it left half the rows untouched and wrote past the end of the others.
 
 ### Improved
 - **Serving several models chooses better which one to unload**... it now drops the least recently used instead of an arbitrary one, and never a model that is answering.
