@@ -743,15 +743,15 @@ struct DownloadRow: View {
                     if item.phase == .paused {
                         Button { item.resume() } label: { Image(systemName: "play.circle") }
                             .buttonStyle(.borderless)
-                            .help(loc.t("Reanudar", "Resume"))
+                            .iconHelp(loc.t("Reanudar", "Resume"))
                     } else {
                         Button { item.pause() } label: { Image(systemName: "pause.circle") }
                             .buttonStyle(.borderless)
-                            .help(loc.t("Pausar (reanudable)", "Pause (resumable)"))
+                            .iconHelp(loc.t("Pausar (reanudable)", "Pause (resumable)"))
                     }
                     Button { item.cancel() } label: { Image(systemName: "xmark.circle") }
                         .buttonStyle(.borderless)
-                        .help(loc.t("Cancelar", "Cancel"))
+                        .iconHelp(loc.t("Cancelar", "Cancel"))
                 }
             }
             if item.phase == .downloading || item.phase == .paused {

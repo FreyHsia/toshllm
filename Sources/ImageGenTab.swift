@@ -366,6 +366,7 @@ struct QueueFeedView: View {
             Text(loc.t("En cola", "Queued")).font(.caption).foregroundStyle(.secondary)
             Button { pool.removeFromQueue(q.id) } label: { Image(systemName: "xmark.circle") }
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .iconHelp(loc.t("Quitar de la cola", "Remove from the queue"))
         }
         .padding(12).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
     }
@@ -909,6 +910,7 @@ struct ImageInstanceForm: View {
             if !path.wrappedValue.isEmpty {
                 Button { path.wrappedValue = "" } label: { Image(systemName: "xmark.circle") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .iconHelp(loc.t("Quitar el archivo", "Clear the file"))
             }
         }
     }

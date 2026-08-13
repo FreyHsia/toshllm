@@ -283,6 +283,7 @@ struct SettingsView: View {
                             NSPasteboard.general.setString(Keychain.apiKey(), forType: .string)
                         } label: { Image(systemName: "doc.on.doc") }
                             .buttonStyle(.borderless)
+                            .accessibilityLabel(loc.t("Copiar la clave", "Copy the key"))
                             .infoTip(loc.t("Copiar para usarla desde otros clientes (Authorization: Bearer …).",
                                         "Copy to use from other clients (Authorization: Bearer …)."))
                     }
@@ -335,6 +336,7 @@ struct SettingsView: View {
                                         "Loads this configuration. Restart the server to use it."))
                         Button { profileStore.delete(p) } label: { Image(systemName: "trash") }
                             .buttonStyle(.borderless).foregroundStyle(.secondary)
+                            .accessibilityLabel(loc.t("Eliminar el perfil", "Delete the profile"))
                             .infoTip(loc.t("Eliminar este perfil.", "Delete this profile."))
                     }
                 }

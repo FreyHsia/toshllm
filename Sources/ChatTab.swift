@@ -151,11 +151,12 @@ struct ChatMainView: View {
                 NSWorkspace.shared.open(server.webChatURL)
             } label: { Image(systemName: "safari") }
                 .disabled(server.state != .running || mode == .images)
-                .help(loc.t("Abrir el chat web en el navegador", "Open the web chat in the browser"))
+                .iconHelp(loc.t("Abrir el chat web en el navegador", "Open the web chat in the browser"))
             Button {
                 openControl()
             } label: { Image(systemName: "gearshape") }
                 .keyboardShortcut(",", modifiers: .command)
+                .accessibilityLabel(loc.t("Configuración", "Configuration"))
                 .help(loc.t("Configuración: modelos, motor, benchmarks y ajustes (⌘,)",
                             "Configuration: models, engine, benchmarks and settings (⌘,)"))
         }

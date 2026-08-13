@@ -192,10 +192,10 @@ struct InlineDownloadProgress: View {
                     Image(systemName: item.phase == .paused ? "play.circle" : "pause.circle")
                 }
                 .buttonStyle(.borderless)
-                .help(item.phase == .paused ? loc.t("Reanudar", "Resume") : loc.t("Pausar", "Pause"))
+                .iconHelp(item.phase == .paused ? loc.t("Reanudar", "Resume") : loc.t("Pausar", "Pause"))
                 Button { item.cancel() } label: { Image(systemName: "xmark.circle") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
-                    .help(loc.t("Cancelar", "Cancel"))
+                    .iconHelp(loc.t("Cancelar", "Cancel"))
             }
         case .finished:
             Label(loc.t("Listo", "Done"), systemImage: "checkmark.seal.fill")
@@ -208,6 +208,7 @@ struct InlineDownloadProgress: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(loc.t("Reintentar la descarga", "Retry the download"))
                 .help(loc.t("Reintentar la descarga desde cero.", "Retry the download from scratch."))
             }
         }

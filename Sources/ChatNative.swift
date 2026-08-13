@@ -2122,6 +2122,7 @@ struct NativeChatView: View {
                     Image(systemName: "text.bubble.fill").font(.caption)
                 }
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .accessibilityLabel(loc.t("Prompt de esta conversación", "This conversation's prompt"))
                 .help(loc.t("Esta conversación tiene prompt propio; clic para editarlo.",
                             "This conversation has its own prompt; click to edit it."))
             }
@@ -3076,6 +3077,7 @@ struct NativeChatView: View {
                                 .foregroundStyle(.white, .black.opacity(0.55))
                         }
                         .buttonStyle(.plain).padding(2)
+                        .iconHelp(loc.t("Quitar esta imagen", "Remove this image"))
                     }
                 }
             }
@@ -3107,7 +3109,7 @@ struct NativeChatView: View {
                             Image(systemName: "xmark.circle.fill").font(.system(size: 10))
                         }
                         .buttonStyle(.borderless)
-                        .help(loc.t("Quitar este archivo.", "Remove this file."))
+                        .iconHelp(loc.t("Quitar este archivo.", "Remove this file."))
                     }
                     .font(.caption)
                     .padding(.horizontal, 9).padding(.vertical, 5)
@@ -3632,6 +3634,7 @@ struct ConversationListView: View {
                     Image(systemName: "folder.badge.plus")
                 }
                 .buttonStyle(GlassIconButtonStyle())
+                .accessibilityLabel(loc.t("Nuevo proyecto", "New project"))
                 .help(loc.t("Nuevo proyecto: una carpeta con su propio prompt de sistema.",
                             "New project: a folder with its own system prompt."))
 
@@ -3667,6 +3670,7 @@ struct ConversationListView: View {
                 .frame(width: 28, height: 28)
                 .glassSurface(in: Circle(), interactive: true)
                 .overlay(Circle().strokeBorder(.primary.opacity(0.07)))
+                .accessibilityLabel(loc.t("Acciones de conversaciones", "Conversation actions"))
                 .help(loc.t("Ordenar, importar, exportar y borrar conversaciones",
                             "Sort, import, export and delete conversations"))
             }

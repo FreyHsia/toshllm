@@ -357,7 +357,7 @@ struct DashboardView: View {
                     Button { NSWorkspace.shared.open(server.webChatURL) } label: {
                         Image(systemName: "safari")
                     }
-                    .help(loc.t("Abrir en el navegador", "Open in browser"))
+                    .iconHelp(loc.t("Abrir en el navegador", "Open in browser"))
                 }
                 if server.state == .running || server.state == .starting {
                     Button(role: .destructive) { server.stop() } label: {
@@ -645,6 +645,8 @@ struct AddedServerCard: View {
                             .imageScale(.large).foregroundStyle(on ? Color.accentColor : .secondary)
                     }
                     .buttonStyle(.plain).disabled(busy)
+                    .iconHelp(on ? loc.t("Desactivar la visión", "Turn vision off")
+                                 : loc.t("Activar la visión", "Turn vision on"))
                 }
             }
             DisclosureGroup {
@@ -739,7 +741,7 @@ struct AddedServerCard: View {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help(loc.t("Eliminar este servidor.", "Remove this server."))
+            .iconHelp(loc.t("Eliminar este servidor.", "Remove this server."))
         }
     }
 

@@ -15,24 +15,45 @@ import SwiftUI
 /// interactive controls (composer, jump-to-bottom button); applying it to
 /// every message bubble would stack many GPU-backed blurs and hurt scrolling.
 extension View {
-    @ViewBuilder
-    func glassSurface(in shape: some Shape, tint: Color? = nil, interactive: Bool = false) -> some View {
-        #if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
-            self.glassEffect(makeToshGlass(tint: tint, interactive: interactive), in: shape)
-        } else {
-            materialSurface(in: shape, tint: tint)
-        }
-        #else
-        materialSurface(in: shape, tint: tint)
-        #endif
+    func glassSurface(in shape: some InsettableShape, tint: Color? = nil, interactive: Bool = false) -> some View {
+        modifier(GlassSurface(shape: shape, tint: tint, interactive: interactive))
     }
+}
+
+/// Reading the accessibility environment needs a modifier, not a plain View
+/// extension: with "Reduce transparency" or "Increase contrast" on, a blurred
+/// surface over content is exactly what the user asked the system to remove.
+private struct GlassSurface<S: InsettableShape>: ViewModifier {
+    let shape: S
+    let tint: Color?
+    let interactive: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     @ViewBuilder
-    private func materialSurface(in shape: some Shape, tint: Color?) -> some View {
-        self.background(
-            tint.map { AnyShapeStyle($0.opacity(0.18)) } ?? AnyShapeStyle(.regularMaterial),
-            in: shape)
+    func body(content: Content) -> some View {
+        if reduceTransparency || contrast == .increased {
+            content
+                .background(tint.map { AnyShapeStyle($0.opacity(0.28)) } ?? AnyShapeStyle(.clear),
+                            in: shape)
+                .background(.background, in: shape)
+                .overlay(shape.strokeBorder(.primary.opacity(contrast == .increased ? 0.45 : 0.18)))
+        } else {
+            #if compiler(>=6.2)
+            if #available(macOS 26.0, *) {
+                content.glassEffect(makeToshGlass(tint: tint, interactive: interactive), in: shape)
+            } else {
+                materialSurface(content)
+            }
+            #else
+            materialSurface(content)
+            #endif
+        }
+    }
+
+    private func materialSurface(_ content: Content) -> some View {
+        content.background(tint.map { AnyShapeStyle($0.opacity(0.18)) } ?? AnyShapeStyle(.regularMaterial),
+                           in: shape)
     }
 }
 
@@ -170,6 +191,7 @@ struct GlassIconButtonStyle: ButtonStyle {
 struct GlassSearchField: View {
     let placeholder: String
     @Binding var text: String
+    @EnvironmentObject private var loc: Localizer
 
     var body: some View {
         HStack(spacing: 6) {
@@ -183,12 +205,23 @@ struct GlassSearchField: View {
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
+                .iconHelp(loc.t("Borrar la búsqueda", "Clear the search"))
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .glassSurface(in: Capsule())
         .overlay(Capsule().strokeBorder(.primary.opacity(0.07)))
+    }
+}
+
+// MARK: - Accessibility
+
+extension View {
+    /// Tooltip that a screen reader can also announce. An icon-only control is
+    /// read as just "button" otherwise, so use this wherever there is no text.
+    func iconHelp(_ text: String) -> some View {
+        help(text).accessibilityLabel(text)
     }
 }
 
