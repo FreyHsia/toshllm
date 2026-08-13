@@ -1,0 +1,27 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -854,18 +854,23 @@
+             case GGML_TYPE_IQ2_S:
+                 tail_32 = false; break;
+             default: break;
+         }
+     }
+     const bool narrow = use_mm_manual && !has_tensor && tsrc1 == GGML_TYPE_F32 &&
+                         (op->ne[1] <= 32 || tail_32);
+ 
++    // on wave64 the 8x4 tile measures 3-5% slower from 256 tokens up on both q4_K and
++    // q4_0, so it stays a wave32 tile; the narrow tail below still applies to both
++    const int simd_width = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
++    const bool wide_width_ok = simd_width != 64 || getenv("TOSH_MM_WIDE_W64_ENABLE") != nullptr;
++
+     // the tile also needs enough output rows, not just enough tokens
+-    bool wide = use_mm_manual && !has_tensor && !narrow && tsrc1 == GGML_TYPE_F32 &&
++    bool wide = use_mm_manual && !has_tensor && !narrow && tsrc1 == GGML_TYPE_F32 && wide_width_ok &&
+                 op->ne[1] >= wide_floor && (op->ne[0] >= 2048 || getenv("TOSH_MM_NE0_FLOOR_DISABLE") != nullptr) &&
+                 getenv("TOSH_MM_WIDE_DISABLE") == nullptr;
+     if (wide) {
+         // it needs 64 accumulators, so only where the dequant leaves the registers
+         switch (tsrc0) {
+             case GGML_TYPE_F16:
+             case GGML_TYPE_Q8_0:
+             case GGML_TYPE_Q5_0:
