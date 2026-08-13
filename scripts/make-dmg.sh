@@ -22,6 +22,7 @@ fi
 DMG="dist/ToshLLM-$VERSION$SUFFIX.dmg"
 VOLNAME="ToshLLM"
 TEMPLATE="Assets/dmg/DS_Store"
+ARTWORK="Assets/dmg/obsidian-hardware.png"
 
 STAGE=$(mktemp -d)
 TMPDMG=$(mktemp -u).dmg
@@ -35,8 +36,8 @@ ln -s /Applications "$STAGE/Applications"
 # without swiftc or tiffutil must not fail the release.
 BGDIR=$(mktemp -d)
 if swiftc -O scripts/dmg-background.swift -o "$BGDIR/dmgbg" 2>/dev/null \
-   && "$BGDIR/dmgbg" "$BGDIR/bg.png" AppIcon.icon/Assets/glyph.png 1 \
-   && "$BGDIR/dmgbg" "$BGDIR/bg@2x.png" AppIcon.icon/Assets/glyph.png 2; then
+   && "$BGDIR/dmgbg" "$BGDIR/bg.png" "$ARTWORK" AppIcon.icon/Assets/glyph.png 1 \
+   && "$BGDIR/dmgbg" "$BGDIR/bg@2x.png" "$ARTWORK" AppIcon.icon/Assets/glyph.png 2; then
     mkdir -p "$STAGE/.background"
     if tiffutil -cathidpicheck "$BGDIR/bg.png" "$BGDIR/bg@2x.png" \
                 -out "$STAGE/.background/background.tiff" > /dev/null 2>&1; then
