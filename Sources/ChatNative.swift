@@ -479,6 +479,26 @@ final class ChatStore: ObservableObject {
         save()
     }
 
+    /// Drops every conversation (projects and their prompts stay). Their
+    /// persisted KV slots go with them, or they would outlive their chat.
+    func deleteAll() {
+        if generating { stop() }
+        pendingToolPermission = nil
+        pendingAgentContinuation = nil
+        agentContext = nil
+        queuedMessage = nil
+        task?.cancel()
+        for c in conversations {
+            try? FileManager.default.removeItem(
+                at: ServerSettings.primarySlotCacheDir.appendingPathComponent(Self.slotFile(c.id)))
+        }
+        conversations.removeAll()
+        slotConvID = nil
+        currentID = nil
+        newConversation()
+        save()
+    }
+
     func rename(_ c: Conversation, to title: String) {
         guard let i = conversations.firstIndex(where: { $0.id == c.id }) else { return }
         conversations[i].title = title.trimmingCharacters(in: .whitespaces)
@@ -3515,6 +3535,7 @@ struct ConversationListView: View {
     @State private var promptProject: ChatProject?
     @State private var promptConversation: Conversation?
     @State private var archiveMessage: String?
+    @State private var confirmDeleteAll = false
     @AppStorage(SettingsKeys.chatSortOrder) private var sortOrderRaw = ConversationSortOrder.lastUsed.rawValue
 
     private var sortOrder: ConversationSortOrder {
@@ -3612,6 +3633,9 @@ struct ConversationListView: View {
                            systemImage: "square.and.arrow.up") { exportArchive() }
                     Button(loc.t("Exportar JSONL para llama.cpp…", "Export JSONL for llama.cpp…"),
                            systemImage: "doc.text") { exportJSONL() }
+                    Divider()
+                    Button(loc.t("Borrar todas las conversaciones…", "Delete all conversations…"),
+                           systemImage: "trash", role: .destructive) { confirmDeleteAll = true }
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: 13, weight: .medium))
@@ -3718,6 +3742,17 @@ struct ConversationListView: View {
             Button(loc.t("Aceptar", "OK")) { archiveMessage = nil }
         } message: {
             Text(archiveMessage ?? "")
+        }
+        .confirmationDialog(
+            loc.t("¿Borrar las \(chat.conversations.count) conversaciones?",
+                  "Delete all \(chat.conversations.count) conversations?"),
+            isPresented: $confirmDeleteAll, titleVisibility: .visible
+        ) {
+            Button(loc.t("Borrar todas", "Delete all"), role: .destructive) { chat.deleteAll() }
+            Button(loc.t("Cancelar", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(loc.t("No se puede deshacer. Tus proyectos y sus prompts se conservan; exporta antes si quieres una copia.",
+                       "This cannot be undone. Your projects and their prompts are kept; export first if you want a copy."))
         }
     }
 
