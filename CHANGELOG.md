@@ -8,15 +8,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - **More model families run**... the engine update brings MiniMax-M3, GLM-5.2 with vision, Granite-Switch, Nanbeige and Muse Glimmer, and multi-token prediction now works on Nemotron, Qwen3-Next, GLM-4.7-Flash and DeepSeek V3.2.
 - **Models built around a Hadamard transform run on GCN and Vega cards too**... the transform assumes lanes come in groups of 32, and those cards group them in 64.
+- **Every conversation can be deleted at once**, from the menu next to the chat search box. Projects and their prompts are kept.
 
 ### Fixed
 - **Mixture-of-experts models no longer crash when split between card and processor**... a step handing more than thirty inputs to the next one overflowed a fixed-size list, which is reachable on Gemma 4, Qwen and DeepSeek.
 - **Memory is given back when a model is unloaded**... serving several models from one process kept the previous model's memory reserved if that model had never run anything on the card.
 - **Some layer widths no longer normalise to the wrong value**... a row whose length left a partial group of lanes dropped part of its sum, so the average and variance for that row came out wrong.
+- **Locking the model in RAM no longer switches off memory mapping behind your back**... the updated engine folds both options into a single setting where the last one given wins, so on the Macs that keep mapping on, turning the lock on silently disabled it.
 - **Answers no longer stall in clients that reuse a conversation**... reading a prompt very similar to the previous one could count the reused tokens wrong when a draft model was in play.
 
 ### Improved
-- **Predictable answers arrive about 5% faster on GCN and Vega cards**... the draft head gave up whenever acceptance fell below a bar that sat above what real content reaches on them.
+- **Predictable answers arrive 3 to 5% faster**... the draft head gave up whenever acceptance fell below a bar that sat above what real content reaches, on every card and not only the older ones.
 - **Prompts are read 3 to 5% faster on GCN and Vega cards**... the wide matmul tile was measured on RDNA 2 and loses on the older ones from 256 tokens up, so they keep the narrow one.
 - **Serving several models chooses better which one to unload**... it now drops the least recently used instead of an arbitrary one, and never a model that is answering.
 - **Both engines move to current upstream**... the language engine had drifted 329 commits behind and the image engine four releases of its shared core, which also carries the security updates of the bundled web stack. Prompt and generation speed measure identical on dense and mixture-of-experts models.
