@@ -34,9 +34,9 @@ GOOD=(
  'Write a Python class for a stack with push, pop, peek and len.'
 )
 BAD=(
- 'Invent 20 proper names of alien creatures that exist in no mythology, no explanation, one per line.'
+ 'Escribe un cuento original de 200 palabras sobre un farero que una mañana descubre que el mar ha desaparecido.'
+ 'Escribe un poema de 20 versos libres, sin rima, sobre la nostalgia que produce un objeto cotidiano.'
  'Write a list of 20 random 8-character combinations of letters and digits, one per line.'
- 'Alternate the language of each sentence: English, German, Japanese, Swahili, about yesterday weather.'
 )
 
 serve() {
@@ -68,24 +68,39 @@ measure() {
     serve "$@" || return
     local prompts n=0
     if [ "$kind" = bad ]; then prompts=("${BAD[@]}"); else prompts=("${GOOD[@]}"); fi
+    # a metrics snapshot per prompt: the cell mean hides which prompt the
+    # backoff actually engaged on
+    curl -s -m 30 "http://127.0.0.1:$PORT/metrics" > "$TMP/m-1.txt"
     for p in "${prompts[@]}"; do
         curl -s -m 900 -o "$TMP/r$n.json" "http://127.0.0.1:$PORT/v1/chat/completions" \
             -H 'Content-Type: application/json' \
             -d "{\"messages\":[{\"role\":\"user\",\"content\":\"$p\"}],\"max_tokens\":400,\"temperature\":0,\"cache_prompt\":false}"
+        curl -s -m 30 "http://127.0.0.1:$PORT/metrics" > "$TMP/m$n.txt"
         n=$((n+1))
     done
-    curl -s -m 30 "http://127.0.0.1:$PORT/metrics" > "$TMP/m.txt"
-    python3 - "$label" "$TMP" <<'EOF'
+    python3 - "$label" "$TMP" "$n" <<'EOF'
 import json,re,sys
-label,tmp=sys.argv[1],sys.argv[2]
-sp=[json.load(open(f"{tmp}/r{i}.json")).get('timings',{}).get('predicted_per_second',0) for i in range(3)]
-t=open(f"{tmp}/m.txt").read()
-def g(n):
-    m=re.search(r'^llamacpp:spec_decode_%s (\d+)$'%n,t,re.M); return int(m.group(1)) if m else 0
-d,a,dr=g('num_draft_tokens_total'),g('num_accepted_tokens_total'),g('num_drafts_total')
+label,tmp,n=sys.argv[1],sys.argv[2],int(sys.argv[3])
+def metrics(i):
+    t=open(f"{tmp}/m{i}.txt").read()
+    def g(name):
+        m=re.search(r'^llamacpp:spec_decode_%s (\d+)$'%name,t,re.M); return int(m.group(1)) if m else 0
+    return g('num_draft_tokens_total'),g('num_accepted_tokens_total'),g('num_drafts_total')
+sp=[json.load(open(f"{tmp}/r{i}.json")).get('timings',{}).get('predicted_per_second',0) for i in range(n)]
+prev=metrics(-1)
+rows=[]
+for i in range(n):
+    cur=metrics(i)
+    d,a,dr=(c-p for c,p in zip(cur,prev))
+    prev=cur
+    rows.append("      prompt %d: tg %6.2f  drafts=%-4d acceptance=%s" %
+                (i+1, sp[i], dr, "%.3f"%(a/d) if d else "  -  "))
+d,a,dr=metrics(n-1)
+t=open(f"{tmp}/m{n-1}.txt").read()
 pos={int(m.group(1)):int(m.group(2)) for m in re.finditer(r'per_pos_total\{position="(\d+)"\} (\d+)',t)}
-by = ' '.join('p%d=%.0f%%'%(i,100*pos[i]/dr) for i in sorted(pos)) if dr else ''
+by=' '.join('p%d=%.0f%%'%(i,100*pos[i]/dr) for i in sorted(pos)) if dr else ''
 print("  %-28s tg %6.2f t/s   drafts=%-5d acceptance=%.3f  %s" % (label, sum(sp)/len(sp), dr, a/d if d else 0, by))
+print("\n".join(rows))
 EOF
     stop
 }
