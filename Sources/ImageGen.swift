@@ -999,12 +999,15 @@ final class ImageGenPool: ObservableObject {
     }
 
     /// Deletes generated outputs (`toshllm_*`) from the imagen folder, when the
-    /// user opts in. Called on app close so the timestamped files don't pile up.
+    /// user opts in. Upscales of those files are kept: they are the version the
+    /// user asked to produce, not accumulated output.
     nonisolated static func cleanupOutputsIfEnabled() {
         guard UserDefaults.standard.bool(forKey: SettingsKeys.imagenCleanupOnClose) else { return }
         let dir = ServerSettings.modelsDirectory.appendingPathComponent("imagen", isDirectory: true)
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        for f in files where f.lastPathComponent.hasPrefix("toshllm_") {
+        for f in files {
+            let name = f.deletingPathExtension().lastPathComponent
+            guard name.hasPrefix("toshllm_"), !name.contains("-x2"), !name.contains("-x4") else { continue }
             try? FileManager.default.removeItem(at: f)
         }
     }
@@ -1149,10 +1152,24 @@ final class ImageUpscaler: ObservableObject {
         run(source: source, flavor: flavor, models: models, gpuIndex: gpuIndex)
     }
 
+    /// Next to the original, so upscaling a photo doesn't drop the result among
+    /// the model weights. Falls back to the imagen folder when that is read-only.
+    private func outputURL(for source: URL, fallback: URL) -> URL {
+        let folder = source.deletingLastPathComponent()
+        let dir = FileManager.default.isWritableFile(atPath: folder.path) ? folder : fallback
+        let base = source.deletingPathExtension().lastPathComponent + "-x\(scale.factor)"
+        var candidate = dir.appendingPathComponent(base + ".png")
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = dir.appendingPathComponent("\(base)-\(n).png")
+            n += 1
+        }
+        return candidate
+    }
+
     private func run(source: URL, flavor: Flavor, models: ModelStore, gpuIndex: Int) {
         let dir = models.imagenDirectory
-        let out = models.imagenDirectory
-            .appendingPathComponent(source.deletingPathExtension().lastPathComponent + "-x4.png")
+        let out = outputURL(for: source, fallback: dir)
 
         guard let component = flavor.component(customPath: customPath) else {
             state = .failed("no model"); return
