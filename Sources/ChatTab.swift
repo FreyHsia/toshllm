@@ -203,7 +203,7 @@ struct ChatMainView: View {
                  : loc.t("Todo listo para conversar", "Ready to chat"))
                 .font(.title2.weight(.semibold))
             if case .failed(let msg) = server.state {
-                Label(msg, systemImage: "exclamationmark.triangle")
+                Label(loc.half(msg), systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
                     .frame(maxWidth: 480)
             } else {

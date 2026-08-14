@@ -186,17 +186,27 @@ struct ServerStatsToolbar: View {
     }
 
     private var statusBadge: some View {
+        // a failed engine used to spill its whole diagnosis across the toolbar; the
+        // word is enough here and the detail belongs in the tooltip
         let (text, color): (String, Color) = {
             switch server.state {
             case .stopped: return (loc.t("Detenido", "Stopped"), .secondary)
             case .starting: return (loc.t("Cargando…", "Loading…"), .orange)
             case .running: return (loc.t("Activo", "Running"), .green)
-            case .failed(let msg): return (msg, .red)
+            case .failed: return (loc.t("Error", "Error"), .red)
             }
         }()
+        var detail = text
+        if case .failed(let msg) = server.state { detail = loc.half(msg) }
         return HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 8, height: 8)
+            if case .failed = server.state {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.red)
+            } else {
+                Circle().fill(color).frame(width: 8, height: 8)
+            }
             Text(text).font(.caption).lineLimit(1)
         }
+        .help(detail)
     }
 }

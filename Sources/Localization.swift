@@ -43,6 +43,13 @@ final class Localizer: ObservableObject {
     /// to the English branch of those.
     var isSpanish: Bool { language == "es" }
 
+    /// Engine diagnostics are built where no Localizer exists, so they carry both
+    /// halves separated by " / ". Pick one instead of showing the pair.
+    func half(_ bilingual: String) -> String {
+        guard let r = bilingual.range(of: " / ") else { return bilingual }
+        return String(isSpanish ? bilingual[..<r.lowerBound] : bilingual[r.upperBound...])
+    }
+
     /// Returns the string for the active language.
     func t(_ es: String, _ en: String) -> String {
         switch language {

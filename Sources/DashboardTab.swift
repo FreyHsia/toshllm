@@ -502,9 +502,10 @@ struct ServerStateBadge: View {
         case .starting:
             Label(loc.t("Iniciando…", "Starting…"), systemImage: "circle.fill")
                 .foregroundStyle(.orange).font(.caption)
-        case .failed:
+        case .failed(let msg):
             Label(loc.t("Error", "Error"), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red).font(.caption)
+                .help(loc.half(msg))
         case .stopped:
             Label(loc.t("Detenido", "Stopped"), systemImage: "circle")
                 .foregroundStyle(.secondary).font(.caption)
