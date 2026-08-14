@@ -112,7 +112,8 @@ struct ImageControls: View {
                                    : (upscalerCustom as NSString).lastPathComponent) { pickCustomModel() }
                                 .font(.caption).lineLimit(1).truncationMode(.middle)
                             if !upscalerCustom.isEmpty {
-                                Button { upscalerCustom = "" } label: { Image(systemName: "xmark.circle") }
+                                Button { upscalerCustom = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
+                        .labelStyle(.iconOnly)
                                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                             }
                         }
@@ -530,7 +531,8 @@ struct QueueFeedView: View {
                 instanceBadge(label)
             }
             Text(loc.t("En cola", "Queued")).font(.caption).foregroundStyle(.secondary)
-            Button { pool.removeFromQueue(q.id) } label: { Image(systemName: "xmark.circle") }
+            Button { pool.removeFromQueue(q.id) } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
+                        .labelStyle(.iconOnly)
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
                 .iconHelp(loc.t("Quitar de la cola", "Remove from the queue"))
         }
@@ -1074,7 +1076,8 @@ struct ImageInstanceForm: View {
             }
             .font(.caption).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150, alignment: .trailing)
             if !path.wrappedValue.isEmpty {
-                Button { path.wrappedValue = "" } label: { Image(systemName: "xmark.circle") }
+                Button { path.wrappedValue = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
+                        .labelStyle(.iconOnly)
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .iconHelp(loc.t("Quitar el archivo", "Clear the file"))
             }
@@ -1612,6 +1615,17 @@ private struct UpscaleCompare: View {
                         fraction = min(1, max(0, value.location.x / max(1, geo.size.width)))
                     }
             )
+            // the wipe is drag-only, which is unreachable without a pointer
+            .accessibilityElement()
+            .accessibilityLabel(Text("Before and after comparison"))
+            .accessibilityValue(Text("\(Int(fraction * 100))%"))
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: fraction = min(1, fraction + 0.1)
+                case .decrement: fraction = max(0, fraction - 0.1)
+                @unknown default: break
+                }
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))

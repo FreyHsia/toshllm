@@ -741,15 +741,18 @@ struct DownloadRow: View {
                     Text(String(format: "%.0f / %.0f MB", item.receivedMB, item.totalMB))
                         .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                     if item.phase == .paused {
-                        Button { item.resume() } label: { Image(systemName: "play.circle") }
+                        Button { item.resume() } label: { Label(loc.t("Reanudar", "Resume"), systemImage: "play.circle") }
+                        .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .iconHelp(loc.t("Reanudar", "Resume"))
                     } else {
-                        Button { item.pause() } label: { Image(systemName: "pause.circle") }
+                        Button { item.pause() } label: { Label(loc.t("Pausar", "Pause"), systemImage: "pause.circle") }
+                        .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .iconHelp(loc.t("Pausar (reanudable)", "Pause (resumable)"))
                     }
-                    Button { item.cancel() } label: { Image(systemName: "xmark.circle") }
+                    Button { item.cancel() } label: { Label(loc.t("Cancelar", "Cancel"), systemImage: "xmark.circle") }
+                        .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .iconHelp(loc.t("Cancelar", "Cancel"))
                 }
