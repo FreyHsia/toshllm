@@ -191,6 +191,10 @@ build_image_engine() {
     # sd.cpp core (outside the ggml submodule): per-op CPU fallback for wave64.
     git apply -p1 "$ROOT/patches/image/0004-image-cpu-fallback-sched.patch"
     git apply -p1 "$ROOT/patches/image/0008-image-ext-wave64.patch"
+    # after 0008: both edit ggml-metal.metal and ggml-metal-ops.cpp, and 0021 was
+    # generated on top of it. Without a Metal im2col_3d, ggml_conv_3d falls back to
+    # the direct 3D convolution, slow enough that the Wan VAE trips the watchdog.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0021-image-metal-im2col-3d.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
