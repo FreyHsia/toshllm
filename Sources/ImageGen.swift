@@ -546,6 +546,9 @@ final class ImageGenerator: ObservableObject {
             // Tiled VAE decode keeps each Metal command buffer under the AMD GPU
             // watchdog; without it the decode times out and the colors corrupt.
             "--vae-tiling",
+            // The text encoder runs once and then sits in VRAM for the whole
+            // sampling: measured 1.56 GB freed on SDXL for 0.4 s of encode.
+            "--params-backend", "te=cpu",
             // The output format follows the file extension (PNG lossless, JPG lighter).
             "-o", out.path,
         ]

@@ -36,7 +36,7 @@ struct VideoControls: View {
 
     private var vramFraction: Double {
         VideoGenLimits.vramFraction(width: base, height: height, frames: frames,
-                                    vramGB: vram, totalGB: model.totalGB)
+                                    vramGB: vram, residentGB: model.vramResidentGB)
     }
     private var height: Int { Self.shortEdge(base) }
 
@@ -155,7 +155,8 @@ struct VideoControls: View {
                         }
                         .font(.caption)
                         if !initImage.isEmpty {
-                            Button { initImage = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            Button { initImage = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle.fill") }
+                        .labelStyle(.iconOnly)
                                 .buttonStyle(.plain)
                         }
                     }
@@ -299,12 +300,13 @@ struct VideoCanvas: View {
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = "toshllm-video.mp4"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let frames = gen.frames
+        let urls = gen.frameURLs
         let fps = gen.lastFPS
         exporting = true
         Task.detached {
             do {
-                try VideoExporter.writeMP4(frames: frames, fps: fps, to: url)
+                let full = urls.compactMap { NSImage(contentsOf: $0) }
+                try VideoExporter.writeMP4(frames: full, fps: fps, to: url)
                 await MainActor.run {
                     exporting = false
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -354,9 +356,13 @@ struct VideoCanvas: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            Button { playing.toggle() } label: {
-                Image(systemName: playing ? "pause.fill" : "play.fill")
+            Button {
+                playing.toggle()
+            } label: {
+                Label(playing ? loc.t("Pausar", "Pause") : loc.t("Reproducir", "Play"),
+                      systemImage: playing ? "pause.fill" : "play.fill")
             }
+            .labelStyle(.iconOnly)
             if !playing {
                 Slider(value: Binding(get: { Double(frameIndex) },
                                       set: { frameIndex = Int($0) }),

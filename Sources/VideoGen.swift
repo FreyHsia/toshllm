@@ -3,6 +3,7 @@ import SwiftUI
 import Metal
 import Combine
 import AVFoundation
+import ImageIO
 
 /// A text/image-to-video model: the same component machinery as image generation
 /// (download, flags, paths) plus the temporal settings sd-cli needs for `vid_gen`.
@@ -26,9 +27,12 @@ struct VideoGenModel: Identifiable {
     var id: String { name }
     var totalGB: Double { components.reduce(0) { $0 + $1.sizeGB } }
 
-    var residentGB: Double {
-        components.filter { $0.kind == .checkpoint || $0.kind == .diffusion }
-            .map(\.sizeGB).max() ?? totalGB
+    /// What actually stays in VRAM: the text encoder runs on the CPU, so only the
+    /// diffusion model and the VAE are resident. Measured on Wan 2.1 1.3B: 2951 MB
+    /// against 9615 MB with the encoder in VRAM.
+    var vramResidentGB: Double {
+        components.filter { $0.kind != .textEncoder && $0.kind != .t5 && $0.kind != .connectors }
+            .reduce(0) { $0 + $1.sizeGB }
     }
 
     func fitsVRAMClass(_ vramGB: Double) -> Bool { vramGB >= minVRAMGB * 0.9 }
@@ -172,17 +176,17 @@ enum VideoGenLimits {
         Double(frames) / Double(fps)
     }
 
-    /// Peak VRAM (GB). The fixed term is the WHOLE model, not just the diffusion
-    /// part: the engine frees nothing until the run ends, so the text encoder sits
-    /// in VRAM through the sampling it takes no part in. Measured 08-13 on the 1.3B:
-    /// 9.5 GB of parameter buffers for a 6.8 GB model, 11.7 GB total at 480x272x49.
-    static func estVRAMGB(px: Int, frames: Int, totalGB: Double) -> Double {
-        totalGB * 1.4 + 0.35e-6 * Double(px) * Double(frames)
+    /// Peak VRAM (GB): what stays resident plus the activations, which scale with
+    /// the latent volume. Calibrated 08-13 on Wan 2.1 1.3B at 480x272: params
+    /// measured 2951 MB with the encoder on CPU, and the activation term from the
+    /// 11.7 GB total observed at 49 frames.
+    static func estVRAMGB(px: Int, frames: Int, residentGB: Double) -> Double {
+        residentGB + 0.35e-6 * Double(px) * Double(frames)
     }
 
     static func vramFraction(width: Int, height: Int, frames: Int,
-                             vramGB: Double, totalGB: Double) -> Double {
-        estVRAMGB(px: width * height, frames: frames, totalGB: totalGB) / max(0.1, vramGB)
+                             vramGB: Double, residentGB: Double) -> Double {
+        estVRAMGB(px: width * height, frames: frames, residentGB: residentGB) / max(0.1, vramGB)
     }
 
     /// Every size the model is good for. Not filtered by VRAM: the estimate is too
@@ -271,6 +275,9 @@ final class VideoGenerator: ObservableObject {
             "--seed", String(seed),
             // measured 6% faster sampling on RDNA2 with byte-identical output
             "--diffusion-fa",
+            // umt5 is 6.66 GB and does nothing after the first 20 s; in RAM it costs
+            // 12 s of encode once and frees the VRAM that caps resolution
+            "--params-backend", "te=cpu",
             // a PNG sequence, not a container: the app animates the frames
             "-o", runDir.appendingPathComponent("frame_%03d.png").path,
         ]
@@ -326,6 +333,19 @@ final class VideoGenerator: ObservableObject {
 
     func cancel() { process?.terminate() }
 
+    /// Playback copy: full frames are only needed for the mp4, which reads the PNGs.
+    nonisolated static func displayFrame(_ url: URL) -> NSImage? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 960,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+        else { return NSImage(contentsOf: url) }
+        return NSImage(cgImage: cg, size: .zero)
+    }
+
     private func consume(_ text: String) {
         logTail = String((logTail + text).suffix(4000))
         fileLog.append(text)
@@ -361,10 +381,11 @@ final class VideoGenerator: ObservableObject {
         progress = 1
         lastDuration = elapsed
         state = .done
-        // decoding 81 PNGs is far too much to do on the main actor; a 720p clip
-        // would freeze the window for seconds
+        // Off the main actor, and downsampled for playback: 81 frames at 720p held
+        // at full size are ~300 MB of NSImage for a view a few hundred points wide.
+        // The PNGs stay on disk as the source of truth, so export is unaffected.
         Task.detached(priority: .userInitiated) {
-            let decoded = urls.compactMap { NSImage(contentsOf: $0) }
+            let decoded = urls.compactMap { Self.displayFrame($0) }
             await MainActor.run { self.frames = decoded }
         }
     }
