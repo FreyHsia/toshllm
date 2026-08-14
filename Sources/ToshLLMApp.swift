@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler {
-            ServerManager.shared.stopAll()
+            ServerManager.shared.stopAllImmediately()
             NSApp.terminate(nil)
         }
         source.resume()
@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        ServerManager.shared.stopAll()
+        ServerManager.shared.stopAllImmediately()
         ImageGenPool.cleanupOutputsIfEnabled()
     }
 }

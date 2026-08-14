@@ -1006,6 +1006,8 @@ final class ServerManager: ObservableObject {
 
     func stopAll() { servers.forEach { $0.stop() } }
 
+    func stopAllImmediately() { servers.forEach { $0.stopImmediately() } }
+
     /// Persists only the added servers (those with their own profile).
     func persist() {
         let profiles = servers.compactMap { $0.profile }
@@ -1395,6 +1397,32 @@ final class ServerController: ObservableObject {
         }
         process = nil
         state = .stopped
+    }
+
+    /// Quitting the app: the engine has to be signalled inline. The prewarm path
+    /// of `stop()` terminates it after an await, and that task does not outlive
+    /// the process, so the child was left running holding its VRAM.
+    func stopImmediately() {
+        healthTask?.cancel()
+        dflashMemoryTask?.cancel()
+        activeDflashModelPath = nil
+        dflashAcceptance = nil
+        stopDiscovery()
+        defer { process = nil; state = .stopped }
+        guard let p = process else {
+            if let pid = lastStoppedPID { EngineLock.remove(pid: pid) }
+            return
+        }
+        let pid = p.processIdentifier
+        lastStoppedPID = pid
+        EngineLock.remove(pid: pid)
+        p.terminate()
+        var waited = 0
+        while p.isRunning && waited < 20 {
+            usleep(100_000)
+            waited += 1
+        }
+        if p.isRunning { kill(pid, SIGKILL) }
     }
 
     /// Restart with new settings, if currently up. Waits (bounded) for the old
