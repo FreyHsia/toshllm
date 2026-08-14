@@ -109,14 +109,12 @@ private struct ToolCallDetailView: View {
     @ViewBuilder
     private func codePanel(_ source: String, language: String) -> some View {
         if !source.isEmpty {
-            ScrollView([.horizontal, .vertical]) {
-                SyntaxHighlightedCode(source: source, language: language)
-                    .font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            }
-            .frame(maxHeight: 280)
-            .background(Color(nsColor: OneDarkPro.background), in: RoundedRectangle(cornerRadius: 8))
+            SyntaxHighlightedCode(source: source, language: language)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8)
+                .background(Color(nsColor: OneDarkPro.background), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -140,15 +138,13 @@ private struct ToolCallDetailView: View {
         Label(title, systemImage: "terminal")
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         if let result = presentation.result, !result.isEmpty {
-            ScrollView([.horizontal, .vertical]) {
-                Text(result)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            }
-            .frame(maxHeight: 300)
-            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+            Text(result)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8)
+                .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
         } else { emptyState(call.state == .running ? "Running…" : "No output") }
     }
 
@@ -171,18 +167,15 @@ private struct DiffPanel: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(oldLines.enumerated()), id: \.offset) { _, line in
-                    diffLine("−", line, color: .red)
-                }
-                ForEach(Array(newLines.enumerated()), id: \.offset) { _, line in
-                    diffLine("+", line, color: .green)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(oldLines.enumerated()), id: \.offset) { _, line in
+                diffLine("−", line, color: .red)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(newLines.enumerated()), id: \.offset) { _, line in
+                diffLine("+", line, color: .green)
+            }
         }
-        .frame(maxHeight: 280)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
     }
 

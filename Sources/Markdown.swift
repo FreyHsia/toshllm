@@ -471,11 +471,14 @@ struct CodeBlock: View {
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(Color(nsColor: OneDarkPro.background).brightness(-0.04))
 
-            ScrollView(.horizontal) {
-                SyntaxHighlightedCode(source: content, language: language)
-                    .padding(10)
-            }
-            .background(Color(nsColor: OneDarkPro.background))
+            // No scroll view of its own: nested inside the transcript's scroll it
+            // re-tiles on every geometry change and hangs the layout pass. Long
+            // lines wrap here and the preview sheet keeps the horizontal view.
+            SyntaxHighlightedCode(source: content, language: language)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: OneDarkPro.background))
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .sheet(isPresented: $previewing) {

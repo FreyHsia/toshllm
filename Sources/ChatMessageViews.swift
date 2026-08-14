@@ -479,25 +479,22 @@ struct StreamingRichText: View {
     private let tick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Group {
-            if smooth {
-                RichText(text: String(text.prefix(revealed)), streaming: true)
-                    .onReceive(tick) { _ in
-                        let target = text.count
-                        guard revealed < target else { return }
-                        guard target - revealed < Self.jumpThreshold else { revealed = target; return }
-                        // Ease-out catch-up so it never lags far behind fast generation.
-                        revealed = min(target, revealed + max(1, (target - revealed) / 8))
-                    }
-                    .onChange(of: text) { _, newValue in
-                        if revealed > newValue.count { revealed = newValue.count }
-                    }
-            } else {
-                RichText(text: text, streaming: true)
+        // One view, not a branch: switching branches would tear down and rebuild
+        // the whole formatted subtree every time the reader scrolls away.
+        RichText(text: smooth ? String(text.prefix(revealed)) : text, streaming: true)
+            .onReceive(tick) { _ in
+                guard smooth else { return }
+                let target = text.count
+                guard revealed < target else { return }
+                guard target - revealed < Self.jumpThreshold else { revealed = target; return }
+                // Ease-out catch-up so it never lags far behind fast generation.
+                revealed = min(target, revealed + max(1, (target - revealed) / 8))
             }
-        }
-        // On resume, land on the live text instead of typing out the backlog.
-        .onChange(of: smooth) { _, on in if on { revealed = text.count } }
+            .onChange(of: text) { _, newValue in
+                if revealed > newValue.count { revealed = newValue.count }
+            }
+            // On resume, land on the live text instead of typing out the backlog.
+            .onChange(of: smooth) { _, on in if on { revealed = text.count } }
     }
 }
 
