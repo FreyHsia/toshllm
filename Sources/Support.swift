@@ -159,6 +159,12 @@ enum SettingsKeys {
     static let imagenInstances = "imagenInstances"
     /// Delete generated output images (toshllm_*) when the app quits.
     static let imagenCleanupOnClose = "imagenCleanupOnClose"
+    static let videoModel = "videoModel"
+    static let videoFrames = "videoFrames"
+    static let videoSteps = "videoSteps"
+    static let videoBase = "videoBase"
+    static let videoGPU = "videoGPU"
+    static let upscalerFlavor = "upscalerFlavor"
     /// Show results as a grid instead of a list (queue feed / instances canvas).
     static let imagenQueueGrid = "imagenQueueGrid"
     static let imagenCanvasGrid = "imagenCanvasGrid"

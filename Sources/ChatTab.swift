@@ -25,7 +25,7 @@ enum SettingsAnchor: Hashable {
 }
 
 /// Top-level mode of the main window: the chat, or the image studio.
-enum MainMode: String { case chat, images }
+enum MainMode: String { case chat, images, video }
 
 struct ChatMainView: View {
     @EnvironmentObject var server: ServerController
@@ -45,6 +45,7 @@ struct ChatMainView: View {
     // (canvas): it owns every generation instance and its generator, so both
     // halves of the split view drive the same runs.
     @StateObject private var imageGenPool = ImageGenPool()
+    @StateObject private var videoGen = VideoGenerator()
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
     @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
 
@@ -55,6 +56,8 @@ struct ChatMainView: View {
             Group {
                 if mode == .images {
                     ImageControls(pool: imageGenPool).transition(.opacity)
+                } else if mode == .video {
+                    VideoControls(gen: videoGen).transition(.opacity)
                 } else {
                     ConversationListView().transition(.opacity)
                 }
@@ -63,6 +66,8 @@ struct ChatMainView: View {
             Group {
                 if mode == .images {
                     ImageCanvas(pool: imageGenPool).transition(.opacity)
+                } else if mode == .video {
+                    VideoCanvas(gen: videoGen).transition(.opacity)
                 } else {
                     chatDetail.transition(.opacity)
                 }
@@ -139,6 +144,7 @@ struct ChatMainView: View {
         Picker("", selection: $mode) {
             Label(loc.t("Chat", "Chat"), systemImage: "bubble.left.and.bubble.right").tag(MainMode.chat)
             Label(loc.t("Imágenes", "Images"), systemImage: "photo.on.rectangle.angled").tag(MainMode.images)
+            Label(loc.t("Vídeo", "Video"), systemImage: "film").tag(MainMode.video)
         }
         .pickerStyle(.segmented).labelStyle(.titleAndIcon).fixedSize()
         .help(loc.t("Cambia entre el chat y la generación de imágenes.",
