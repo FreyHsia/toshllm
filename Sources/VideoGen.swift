@@ -287,6 +287,9 @@ final class VideoGenerator: ObservableObject {
         args += model.extraArgs
 
         var env = ProcessInfo.processInfo.environment
+        // The wide matmul tile is tuned for LLM prefill shapes; on diffusion it costs
+        // 1.7% on SDXL and 3% on Wan, with byte-identical output. Measured 08-14.
+        env["TOSH_MM_WIDE_DISABLE"] = "1"
         let devices = MTLCopyAllDevices()
         if gpuIndex >= 0 && devices.count > 1 {
             env["GGML_METAL_DEVICE_INDEX"] = String(gpuIndex)
