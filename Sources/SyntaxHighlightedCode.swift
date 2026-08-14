@@ -21,7 +21,13 @@ struct SyntaxHighlightedCode: View {
 }
 
 enum SyntaxHighlighter {
+    private static let cache = FormattedTextCache(limit: 60)
+
     static func highlight(_ source: String, language: String) -> AttributedString {
+        cache.formatted("\(language)\u{0}\(source)") { build(source, language: language) }
+    }
+
+    private static func build(_ source: String, language: String) -> AttributedString {
         let text = NSMutableAttributedString(string: source, attributes: [
             .foregroundColor: OneDarkPro.foreground
         ])

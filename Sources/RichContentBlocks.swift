@@ -102,7 +102,8 @@ private struct RichContentPreview: View {
             }
             .padding()
             Divider()
-            RichWebView(source: source, kind: kind, contentHeight: $height, zoom: zoom)
+            RichWebView(source: source, kind: kind, contentHeight: $height, zoom: zoom,
+                        scrollsInternally: true)
         }
         .frame(minWidth: 720, minHeight: 520)
     }
@@ -119,20 +120,39 @@ struct InlineMathText: View {
     }
 }
 
+/// Embedded in the transcript the page must not take the wheel: its own scroll
+/// area would swallow the gesture.
+final class RichContentWebView: WKWebView {
+    var forwardsVerticalScroll = false
+
+    override func scrollWheel(with event: NSEvent) {
+        guard forwardsVerticalScroll,
+              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+              let next = nextResponder else {
+            super.scrollWheel(with: event)
+            return
+        }
+        next.scrollWheel(with: event)
+    }
+}
+
 struct RichWebView: NSViewRepresentable {
     let source: String
     let kind: RichContentKind
     @Binding var contentHeight: CGFloat
     var zoom: CGFloat = 1
+    /// Only the expanded preview keeps its own scrolling.
+    var scrollsInternally = false
 
     func makeCoordinator() -> Coordinator { Coordinator(height: $contentHeight) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> RichContentWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.userContentController.add(context.coordinator, name: "height")
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = RichContentWebView(frame: .zero, configuration: configuration)
+        view.forwardsVerticalScroll = !scrollsInternally
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
         view.allowsMagnification = true
@@ -142,7 +162,8 @@ struct RichWebView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: WKWebView, context: Context) {
+    func updateNSView(_ view: RichContentWebView, context: Context) {
+        view.forwardsVerticalScroll = !scrollsInternally
         context.coordinator.height = $contentHeight
         if abs(view.magnification - zoom) > 0.001 {
             view.setMagnification(zoom, centeredAt: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
@@ -210,9 +231,11 @@ struct RichWebView: NSViewRepresentable {
             <script>
             const raw = \#(encoded);
             const formulas = [];
-            const tokenized = raw.replace(/\\\((.+?)\\\)|(?<![\\$])\$(?!\$)(.+?)(?<![\\$])\$(?!\$)/gs, (_, paren, dollar) => {
+            const tokenized = raw.replace(/\\\(([^\n]{1,160}?)\\\)|(?<![\\$])\$(?![\s\d])([^\n$]{1,160}?)(?<![\s\\$])\$(?!\$)/g, (match, paren, dollar) => {
+              const body = paren ?? dollar;
+              if (body.length > 3 && !/[\\^_{}]/.test(body)) return match;
               const token = `TOSHMATH${formulas.length}TOKEN`;
-              formulas.push(paren ?? dollar);
+              formulas.push(body);
               return token;
             });
             const escaped = tokenized.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');

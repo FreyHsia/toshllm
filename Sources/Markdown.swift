@@ -18,27 +18,29 @@ private enum MDBlock: Equatable {
     case rule
 }
 
-/// Formatted paragraphs outlive the rows that show them: a LazyVStack drops a
-/// row on the way out and rebuilds it on the way back, and re-running
-/// AttributedString(markdown:) for each block costs ~0.13 ms apiece — enough to
-/// drop frames while scrolling a long conversation.
-private final class InlineCache {
-    static let shared = InlineCache()
+/// Formatted text outlives the row that shows it: a LazyVStack drops a row on
+/// the way out and rebuilds it on the way back, so formatting again there costs
+/// frames.
+final class FormattedTextCache {
+    static let inline = FormattedTextCache(limit: 800)
+
     private let lock = NSLock()
     private var entries: [String: AttributedString] = [:]
     private var order: [String] = []
-    private let limit = 800
+    private let limit: Int
 
-    func formatted(_ s: String, build: (String) -> AttributedString) -> AttributedString {
+    init(limit: Int) { self.limit = limit }
+
+    func formatted(_ key: String, build: () -> AttributedString) -> AttributedString {
         lock.lock()
-        let hit = entries[s]
+        let hit = entries[key]
         lock.unlock()
         if let hit { return hit }
 
-        let value = build(s)
+        let value = build()
         lock.lock()
-        if entries.updateValue(value, forKey: s) == nil {
-            order.append(s)
+        if entries.updateValue(value, forKey: key) == nil {
+            order.append(key)
             if order.count > limit { entries.removeValue(forKey: order.removeFirst()) }
         }
         lock.unlock()
@@ -48,37 +50,18 @@ private final class InlineCache {
 
 struct RichText: View {
     let text: String
-    /// While true, only the settled portion of `text` is parsed as Markdown and
-    /// the still-growing tail is rendered as plain text (see `body`). Off for
-    /// finished messages, which are always fully formatted.
+    /// Formats only the settled prefix and leaves the growing tail plain, so a
+    /// full parse doesn't re-run on every token.
     var streaming = false
 
-    // Caches the parsed blocks of the settled prefix so a flush only re-parses
-    // when that prefix actually changes (i.e. when a new block boundary is
-    // reached), not on every token. Held in @State so it survives view updates;
-    // it's a plain reference, so mutating it never invalidates the view.
     @State private var cache = BlockCache()
 
     var body: some View {
-        // While streaming, format only the settled text (everything up to the
-        // last block boundary) and render the in-progress tail plainly. The
-        // settled blocks are parsed once per boundary (cached) and frozen by
-        // Equatable below, so the expensive inline-Markdown/AttributedString
-        // work never runs on the hot path. The tail — which changes on every
-        // flush — is rendered by PlainGrowingText (chunked + frozen), and snaps
-        // to full formatting the moment its block closes.
-        //
-        // Without this the trailing block re-ran a full Markdown parse on every
-        // token (O(n²) over a long answer); that re-layout starved the GPU —
-        // which also drives Metal inference — and stalled generation on discrete
-        // AMD GPUs.
         let (settled, tail) = streaming ? Self.splitSettled(text) : (text, "")
         let blocks = cache.blocks(for: settled)
         VStack(alignment: .leading, spacing: 8) {
-            // Positional identity keeps each block's view alive across flushes;
-            // the Equatable wrapper means SwiftUI re-lays-out only the block
-            // whose value changed — and while streaming the settled blocks above
-            // the tail never change, so they stay frozen.
+            // Positional identity plus Equatable: settled blocks stay frozen
+            // while the tail grows.
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MDBlockView(block: block).equatable()
             }
@@ -88,10 +71,8 @@ struct RichText: View {
         }
     }
 
-    /// Splits `text` into the settled prefix (safe to format) and the
-    /// in-progress tail. The boundary is the last blank line that is *not*
-    /// inside an open code fence; everything after it may still change as more
-    /// tokens arrive, so it is rendered plainly until its block closes.
+    /// Boundary is the last blank line outside an open code fence: anything
+    /// after it may still change as tokens arrive.
     private static func splitSettled(_ text: String) -> (settled: String, tail: String) {
         let lines = text.components(separatedBy: "\n")
         var inFence = false
@@ -114,9 +95,8 @@ struct RichText: View {
         return (settled, tail)
     }
 
-    /// Memoizes the parsed blocks of the settled prefix. Re-parses only when the
-    /// settled string changes, turning a per-flush full parse into one parse per
-    /// new block boundary.
+    /// Re-parses only when the settled prefix changes, i.e. once per block
+    /// boundary instead of once per flush.
     private final class BlockCache {
         private var key = "\u{0}"   // sentinel so an empty prefix parses once
         private var cached: [MDBlock] = []
@@ -167,11 +147,7 @@ struct RichText: View {
             } else if let fence = fenceInfo(l) {
                 flush()
                 var code: [String] = []
-                // CommonMark: close only on a bare fence of the same char and
-                // length >= the opening one. A shorter inner fence (e.g. a
-                // ```python example inside a ````markdown block) is content,
-                // not a close — without this the block ends early and the code
-                // leaks out as a paragraph.
+                // CommonMark: a shorter inner fence is content, not a close.
                 while let next = lines.first {
                     if let close = fenceInfo(String(next)),
                        close.info.isEmpty, close.char == fence.char, close.length >= fence.length {
@@ -228,10 +204,8 @@ struct RichText: View {
         return blocks
     }
 
-    /// A fenced-code delimiter: leading spaces, then >=3 backticks or tildes,
-    /// then an optional info string. Returns the fence char, its length and the
-    /// info string, or nil when the line is not a fence. Backtick info strings
-    /// may not contain backticks (CommonMark), which also rules out inline code.
+    /// Fence char, length and info string, or nil when the line is not a fence.
+    /// Backtick info strings may not contain backticks, which rules out inline code.
     private static func fenceInfo(_ line: String) -> (char: Character, length: Int, info: String)? {
         let t = line.drop(while: { $0 == " " })
         guard let first = t.first, first == "`" || first == "~" else { return nil }
@@ -273,7 +247,7 @@ struct RichText: View {
     }
 
     static func inline(_ s: String) -> AttributedString {
-        InlineCache.shared.formatted(s, build: format)
+        FormattedTextCache.inline.formatted(s) { format(s) }
     }
 
     private static func format(_ s: String) -> AttributedString {
@@ -289,31 +263,41 @@ struct RichText: View {
         return attr
     }
 
+    /// Delimiters must hug non-space text and the body look like LaTeX, so that
+    /// prose about `$HOME … $PATH` or `$10 … $25` is not a formula.
+    static let inlineMathPattern =
+        #"\\\(([^\n]{1,160}?)\\\)|(?<![\\$])\$(?![\s\d])([^\n$]{1,160}?)(?<![\s\\$])\$(?!\$)"#
+
+    static func looksLikeFormula(_ body: String) -> Bool {
+        body.count <= 3 || body.contains { "\\^_{}".contains($0) }
+    }
+
     static func containsInlineMath(_ value: String) -> Bool {
-        value.range(of: #"\\\([\s\S]+?\\\)|(?<![\\$])\$(?!\$)[\s\S]+?(?<![\\$])\$(?!\$)"#,
-                    options: .regularExpression) != nil
+        guard let regex = try? NSRegularExpression(pattern: inlineMathPattern) else { return false }
+        let range = NSRange(value.startIndex..., in: value)
+        return regex.matches(in: value, range: range).contains { match in
+            (1...2).contains { group in
+                guard let r = Range(match.range(at: group), in: value) else { return false }
+                return looksLikeFormula(String(value[r]))
+            }
+        }
     }
 }
 
-/// Renders the still-growing tail of a streaming answer cheaply. Completed
-/// line-chunks are frozen (Equatable) so they lay out once; only the last,
-/// growing chunk re-renders per flush — turning the tail's per-flush cost from
-/// O(n) into O(1). Without this a single huge block (e.g. a long code listing,
-/// which never produces a settling blank line so the whole thing stays in the
-/// tail) re-laid-out in full on every token and the UI crawled far behind the
-/// already-finished backend.
+/// Freezes completed line-chunks so only the growing one re-renders per flush.
+/// A long code listing never settles, so without this the whole tail re-laid
+/// out on every token.
 private struct PlainGrowingText: View {
     let text: String
     @Environment(\.chatFontScale) private var scale
-    /// Lines per frozen chunk: small enough that the live remainder stays cheap
-    /// to re-render, large enough that chunk boundaries are infrequent.
+    /// Small enough to keep the live remainder cheap, large enough that
+    /// boundaries are infrequent.
     private static let chunkLines = 50
 
     var body: some View {
         var lines = text.components(separatedBy: "\n")
-        // An open code fence streams in monospace (it snaps to a full CodeBlock
-        // once the closing fence settles the block). Drop the opening ```/~~~
-        // line while the fence is still open.
+        // An open fence streams in monospace and snaps to a CodeBlock when it
+        // closes; hide its opening line meanwhile.
         var font: Font = .system(size: ChatFont.Base.body.points * scale)
         if let first = lines.first?.trimmingCharacters(in: .whitespaces),
            first.hasPrefix("```") || first.hasPrefix("~~~") {
@@ -335,9 +319,7 @@ private struct PlainGrowingText: View {
     }
 }
 
-/// One settled line-chunk of a streaming tail. Equatable on its text alone (the
-/// font is constant for a given chunk), so once its lines stop changing SwiftUI
-/// never re-lays-it-out again.
+/// Equatable on its text alone, so a settled chunk is never laid out again.
 private struct FrozenChunk: View, Equatable {
     let text: String
     let font: Font
@@ -345,10 +327,8 @@ private struct FrozenChunk: View, Equatable {
     var body: some View { Text(verbatim: text).font(font).textSelection(.enabled) }
 }
 
-/// Renders one parsed Markdown block. Equatable on its block value so that,
-/// during streaming, SwiftUI skips re-rendering every completed block above the
-/// one currently being written — the key to not re-laying-out the whole answer
-/// on each token (see RichText.body).
+/// Equatable on its block value, so streaming skips every block above the one
+/// being written.
 private struct MDBlockView: View, Equatable {
     let block: MDBlock
 

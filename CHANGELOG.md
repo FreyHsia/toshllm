@@ -6,12 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- **Scrolling the chat no longer gets stuck on an answer about code** (#58)... a paragraph mentioning two shell variables, or two prices, was read as a formula and handed to the formula renderer, which turned the text into unreadable maths and swallowed the mouse wheel. Only what really looks like a formula is treated as one now, and a formula or diagram in the middle of a conversation passes the wheel through to the chat.
 - **Engine errors are shown in your language.** Every diagnostic the engine produces was being printed with the Spanish and the English text one after the other, separated by a slash, in the same line. There are thirty of these messages and all of them read that way.
 - **A failed engine no longer spills its whole explanation across the toolbar.** The state now shows a warning triangle and the word Error, with the full diagnosis when you hover it.
 - **The menu bar icon tells a crashed engine from a stopped one.** They looked identical, which mattered because a crash is the one thing worth noticing while you are working in another app. Starting has its own icon too, and the icon now announces its state to VoiceOver.
 - **The video studio says it is preparing the frames** instead of looking as if nothing had been generated during the moment between the run finishing and the frames being ready.
 
 ### Improved
+- **Scrolling back through long code answers is smoother.** The syntax colouring of a code block was recomputed every time the block came back into view; it is now kept.
 - **Video generation needs 6.7 GB less video memory, and image generation 1.6 GB less.** The text encoder was staying on the card for the whole run after finishing its work in the first seconds; it now waits in system memory. On a 12 GB card this is the difference between 480p and larger formats.
 - **Images and video are generated 2 to 3% quicker**, using a matmul shape better suited to them than the one tuned for reading prompts. The result is identical.
 - **The upscaler asks before it starts.** Choosing files now queues them, with a separate button to run, and every finished image of a batch stays one click away under the comparison.
