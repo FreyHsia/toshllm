@@ -1,0 +1,53 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -13547,15 +13547,15 @@
+ 
+                     lsma += 8*64;
+                     lsmb += 4*64;
+                 }
+             } else {
+-                for (short ik = 0; ik < NK/8; ik++) {
+-                    // packed rank-1 updates on (k, k+1) pairs: half the instructions of the
+-                    // scalar loop; partials flush to float every 8-deep slice for precision
+-                    vec<S0,2> pacc[4][4];
++                // pacc lives across the whole NK, as the dense kernel already does: flushing it
++                // once per 8-deep slice cost four times the float conversions
++                vec<S0,2> pacc[4][4];
+ 
++                for (short ik = 0; ik < NK/8; ik++) {
+                     FOR_UNROLL (short k = 0; k < 8; k += 2) {
+                         vec<S0,2> av[4];
+                         vec<S1,2> bv[4];
+                         for (short rr = 0; rr < 4; rr++) {
+                             av[rr] = *(threadgroup const vec<S0,2> *)(lsma + 64*rr + 8*lr + k);
+@@ -13566,23 +13566,23 @@
+                         }
+                         for (short rr = 0; rr < 4; rr++) {
+                             for (short cc = 0; cc < 4; cc++) {
+                                 // mul+add: no bfloat2 fma() overload; fast math contracts it anyway
+                                 const vec<S0,2> p = vec<S0,2>(av[rr])*vec<S0,2>(bv[cc]);
+-                                pacc[rr][cc] = k == 0 ? p : p + pacc[rr][cc];
++                                pacc[rr][cc] = (ik == 0 && k == 0) ? p : p + pacc[rr][cc];
+                             }
+-                        }
+-                    }
+-
+-                    for (short rr = 0; rr < 4; rr++) {
+-                        for (short cc = 0; cc < 4; cc++) {
+-                            acc[rr][cc] += (float) pacc[rr][cc][0] + (float) pacc[rr][cc][1];
+                         }
+                     }
+ 
+                     lsma += 8*64;
+                     lsmb += 4*64;
++                }
++
++                for (short rr = 0; rr < 4; rr++) {
++                    for (short cc = 0; cc < 4; cc++) {
++                        acc[rr][cc] += (float) pacc[rr][cc][0] + (float) pacc[rr][cc][1];
++                    }
+                 }
+             }
+         } else {
+             FOR_UNROLL (short ik = 0; ik < NK/8; ik++) {
+                 simdgroup_barrier(mem_flags::mem_none);
