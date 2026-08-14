@@ -3,6 +3,14 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.84.3] - 2026-08-14
+
+### Improved
+- **Prompts are read 5 to 7% faster.** The prefill matrix kernel stalled on shared memory more often than it needed to; widening one of its two reads cuts those stalls by two thirds, and the faster kernel now also pays off on shorter prompts, so it starts being used from 112 tokens instead of 192. Measured on llama-2-7B: 799 to 859 tokens/s at 128, 868 to 933 at 190, 944 to 990 at 512.
+- **Mixture-of-experts models read prompts about 2.7% faster.** Their matrix kernel converted its running totals four times more often than the one dense models use; it now does it once, like the other.
+- **Mixture-of-experts models kept in video memory also answer about 1.5% faster.** The engine reordered their graph while writing, which disturbs the expert lookup for no gain on AMD; it no longer does.
+- **Models quantised as Q5_K answer a little faster.** Their fifth-bit path took six narrow memory loads per step and now takes three wide ones, reaching the throughput the other quantisations already had.
+
 ## [0.84.2] - 2026-08-14
 
 ### Fixed
