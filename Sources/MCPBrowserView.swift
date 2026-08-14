@@ -29,6 +29,14 @@ struct MCPBrowserView: View {
             || ($0.description?.localizedCaseInsensitiveContains(query) ?? false) }
     }
 
+    private var matchingTemplates: [MCPResourceTemplateItem] {
+        guard !query.isEmpty else { return catalog.templates }
+        return catalog.templates.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.uriTemplate.localizedCaseInsensitiveContains(query)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -117,10 +125,7 @@ struct MCPBrowserView: View {
             }
             if !catalog.templates.isEmpty {
                 Section(loc.t("Plantillas", "Templates")) {
-                    ForEach(catalog.templates.filter {
-                        query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
-                            || $0.uriTemplate.localizedCaseInsensitiveContains(query)
-                    }) { template in
+                    ForEach(matchingTemplates) { template in
                         HStack(spacing: 10) {
                             Image(systemName: attachedIDs.contains(template.id)
                                   ? "checkmark.circle.fill" : "doc.badge.gearshape")

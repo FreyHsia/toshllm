@@ -13,79 +13,58 @@ import ImageIO
 // drives all of them so both halves see the same runs.
 
 /// Sidebar column: one accordion per instance plus the add/generate actions.
+/// Create makes images, Upscale enlarges an existing one. Two jobs that share the
+/// engine but not the controls, so they get a tab each instead of one crowded list.
+enum ImageStudioMode: String, CaseIterable { case create, upscale }
+
 struct ImageControls: View {
     @ObservedObject var pool: ImageGenPool
+    @ObservedObject var upscaler: ImageUpscaler
     @EnvironmentObject var loc: Localizer
     @EnvironmentObject var models: ModelStore
     @EnvironmentObject var server: ServerController
 
-    @StateObject private var upscaler = ImageUpscaler()
+    @AppStorage(SettingsKeys.imageStudioMode) private var studioModeRaw = ImageStudioMode.create.rawValue
     @AppStorage(SettingsKeys.upscalerFlavor) private var upscalerFlavor = ImageUpscaler.Flavor.photo.rawValue
+    @AppStorage(SettingsKeys.upscalerScale) private var upscalerScale = ImageUpscaler.Scale.x4.rawValue
+    @AppStorage(SettingsKeys.upscalerCustomModel) private var upscalerCustom = ""
+
+    private var scale: ImageUpscaler.Scale {
+        ImageUpscaler.Scale(rawValue: upscalerScale) ?? .x4
+    }
 
     private var flavor: ImageUpscaler.Flavor {
         ImageUpscaler.Flavor(rawValue: upscalerFlavor) ?? .photo
     }
 
     /// Downloads the model on first use, so the button never dead-ends.
-    private func startUpscale(_ url: URL) {
-        guard ImageUpscaler.installed(flavor, in: models) else {
-            models.downloadImageComponent(urlString: flavor.component.urlString,
-                                          fileName: flavor.component.fileName)
+    private func startUpscale(_ urls: [URL]) {
+        guard ImageUpscaler.installed(flavor, customPath: upscalerCustom, in: models) else {
+            if let c = flavor.component(customPath: upscalerCustom), !c.urlString.isEmpty {
+                models.downloadImageComponent(urlString: c.urlString, fileName: c.fileName)
+            }
             return
         }
-        upscaler.upscale(source: url, flavor: flavor, models: models, gpuIndex: -1)
+        upscaler.upscale(sources: urls, flavor: flavor, customPath: upscalerCustom,
+                         scale: scale, models: models, gpuIndex: -1)
     }
 
-    /// Any image on disk, not just a generated one.
-    private func pickAndUpscale() {
+    private func pickCustomModel() {
+        let panel = NSOpenPanel()
+        panel.allowedFileTypes = ["pth", "safetensors", "bin"]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url { upscalerCustom = url.path }
+    }
+
+    /// Picking only queues. Starting a GPU run on a file chooser is a surprise,
+    /// especially with a batch.
+    private func pickImages() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        startUpscale(url)
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        upscaler.queued = panel.urls
     }
-
-    /// Standalone upscaler: works on any image the user picks, not only on a
-    /// generated one, and on the last result with the same model choice.
-    private var upscalerCard: some View {
-        Card(title: loc.t("Escalar imagen ×4", "Upscale image x4"),
-             icon: "arrow.up.left.and.arrow.down.right") {
-            VStack(alignment: .leading, spacing: 8) {
-                Picker("", selection: $upscalerFlavor) {
-                    ForEach(ImageUpscaler.Flavor.allCases) { f in
-                        Text(f.label(loc.isSpanish)).tag(f.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                Text(flavor.detail(loc.isSpanish)).font(.caption).foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    Button(loc.t("Elegir imagen…", "Choose image…")) { pickAndUpscale() }
-                        .disabled(upscaler.isBusy)
-                    if upscaler.isBusy {
-                        ProgressView().controlSize(.small)
-                    } else if !ImageUpscaler.installed(flavor, in: models) {
-                        Text(loc.t("descarga 64 MB al usarlo", "downloads 64 MB on first use"))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                if let url = upscaler.resultURL {
-                    HStack(spacing: 8) {
-                        Label(loc.t("Listo", "Done"), systemImage: "checkmark.circle.fill")
-                            .font(.caption).foregroundStyle(.green)
-                        Button(loc.t("Mostrar", "Reveal")) {
-                            NSWorkspace.shared.activateFileViewerSelecting([url])
-                        }.font(.caption)
-                    }
-                }
-                if case .failed(let why) = upscaler.state, !why.isEmpty {
-                    Text(why).font(.caption).foregroundStyle(.red)
-                }
-            }
-        }
-    }
-
 
     /// Collapsed accordions (default: expanded).
     @State private var collapsed: Set<UUID> = []
@@ -95,6 +74,128 @@ struct ImageControls: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 experimentalBadge
+                Picker("", selection: $studioModeRaw) {
+                    Text(loc.t("Crear", "Create")).tag(ImageStudioMode.create.rawValue)
+                    Text(loc.t("Escalar", "Upscale")).tag(ImageStudioMode.upscale.rawValue)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                if studioMode == .upscale { upscalePanel } else { createPanel }
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 260)
+    }
+
+    private var studioMode: ImageStudioMode {
+        ImageStudioMode(rawValue: studioModeRaw) ?? .create
+    }
+
+    /// Upscaling is a one-shot job on a file: model choice, the file, and the result.
+    private var upscalePanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Card(title: loc.t("Modelo", "Model"), icon: "wand.and.stars") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("", selection: $upscalerFlavor) {
+                        ForEach(ImageUpscaler.Flavor.allCases) { f in
+                            Text(f.label(loc.isSpanish)).tag(f.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    Text(flavor.detail(loc.isSpanish))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if flavor == .custom {
+                        HStack(spacing: 6) {
+                            Button(upscalerCustom.isEmpty
+                                   ? loc.t("Elegir modelo…", "Choose model…")
+                                   : (upscalerCustom as NSString).lastPathComponent) { pickCustomModel() }
+                                .font(.caption).lineLimit(1).truncationMode(.middle)
+                            if !upscalerCustom.isEmpty {
+                                Button { upscalerCustom = "" } label: { Image(systemName: "xmark.circle") }
+                                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+                            }
+                        }
+                        Text(loc.t("Debe ser ESRGAN ×4. Los DAT y SwinIR que encabezan las listas no los carga este motor.",
+                                   "Must be a 4x ESRGAN. The DAT and SwinIR models topping the charts do not load in this engine."))
+                            .font(.caption2).foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let c = flavor.component(customPath: upscalerCustom),
+                              !ImageUpscaler.installed(flavor, customPath: upscalerCustom, in: models) {
+                        Label(loc.t("Se descargan \(Int(c.sizeGB * 1000)) MB la primera vez",
+                                    "Downloads \(Int(c.sizeGB * 1000)) MB on first use"),
+                              systemImage: "arrow.down.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    Picker("", selection: $upscalerScale) {
+                        ForEach(ImageUpscaler.Scale.allCases) { s in
+                            Text(s.label).tag(s.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    .help(loc.t("El motor solo carga modelos ×4, así que el ×2 escala y remuestrea a la mitad.",
+                                "The engine only loads 4x models, so x2 upscales and resamples to half."))
+                }
+            }
+            Card(title: loc.t("Imagen", "Image"), icon: "photo") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button {
+                        pickImages()
+                    } label: {
+                        Label(loc.t("Elegir imágenes…", "Choose images…"), systemImage: "folder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(upscaler.isBusy)
+
+                    if !upscaler.queued.isEmpty {
+                        Text(upscaler.queued.count == 1
+                             ? upscaler.queued[0].lastPathComponent
+                             : loc.t("\(upscaler.queued.count) imágenes en cola",
+                                     "\(upscaler.queued.count) images queued"))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Button {
+                            startUpscale(upscaler.queued)
+                        } label: {
+                            Label(loc.t("Escalar \(scale.label)", "Upscale \(scale.label)"),
+                                  systemImage: "arrow.up.left.and.arrow.down.right")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(upscaler.isBusy)
+                    }
+                    if upscaler.isBusy {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: upscaler.progress)
+                            HStack {
+                                Text(upscaler.total > 1
+                                     ? loc.t("Imagen \(upscaler.index) de \(upscaler.total)",
+                                             "Image \(upscaler.index) of \(upscaler.total)")
+                                     : loc.t("Escalando ×4…", "Upscaling x4…"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(upscaler.elapsed)s")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                Button(loc.t("Cancelar", "Cancel")) { upscaler.cancel() }.font(.caption)
+                            }
+                        }
+                    }
+                    if case .failed(let why) = upscaler.state, !why.isEmpty {
+                        Text(why).font(.caption).foregroundStyle(.red)
+                    }
+                }
+            }
+            Text(loc.t("Multiplica el ancho y el alto por 4. Una foto de 12 MP pasa de 200 MP: en tarjetas pequeñas conviene recortar antes.",
+                       "Multiplies width and height by 4. A 12 MP photo becomes 200 MP: on small cards, crop first."))
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var createPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
                 if server.state == .running && serverGPUOverlap { serverBusyWarning }
                 ForEach($pool.configs) { $cfg in
                     instanceAccordion($cfg)
@@ -114,8 +215,6 @@ struct ImageControls: View {
                 }
                 generateButton
                 Divider().padding(.vertical, 2)
-                upscalerCard
-                Divider().padding(.vertical, 2)
                 Toggle(isOn: $cleanupOnClose) {
                     Text(loc.t("Borrar imágenes al cerrar la app", "Delete images on app close"))
                         .font(.caption)
@@ -123,10 +222,7 @@ struct ImageControls: View {
                 .toggleStyle(.switch).controlSize(.mini)
                 .help(loc.t("Al salir de la app borra las imágenes generadas (toshllm_*) de la carpeta de salida, para no acumular cientos con los nombres por fecha.",
                             "On quitting the app, deletes the generated images (toshllm_*) from the output folder, so the date-named files don't pile up."))
-            }
-            .padding(16)
         }
-        .frame(minWidth: 260)
     }
 
     private var experimentalBadge: some View {
@@ -1024,15 +1120,19 @@ private func imageFailureText(_ raw: String, _ loc: Localizer) -> String {
 /// Detail column: single canvas for one instance, a tile grid for several.
 struct ImageCanvas: View {
     @ObservedObject var pool: ImageGenPool
+    @ObservedObject var upscaler: ImageUpscaler
     @EnvironmentObject var loc: Localizer
     @EnvironmentObject var models: ModelStore
     @State private var detailTab: ImageDetailTab = .instances
+    @AppStorage(SettingsKeys.imageStudioMode) private var studioModeRaw = ImageStudioMode.create.rawValue
     @AppStorage(SettingsKeys.imagenCanvasGrid) private var canvasGrid = false
 
     var body: some View {
         Group {
             if !ImageGenerator.engineInstalled {
                 centered { engineMissingCard }
+            } else if studioMode == .upscale {
+                upscaleCanvas
             } else {
                 VStack(spacing: 14) {
                     Picker("", selection: $detailTab) {
@@ -1238,6 +1338,96 @@ struct ImageCanvas: View {
         }
     }
 
+    private var studioMode: ImageStudioMode {
+        ImageStudioMode(rawValue: studioModeRaw) ?? .create
+    }
+
+    /// Before and after side by side: the point of a 4x upscale is the comparison,
+    /// and both are shown at the same on-screen size so the difference is the detail.
+    private var upscaleCanvas: some View {
+        VStack(spacing: 14) {
+            if let entry = shownResult {
+                UpscaleCompare(pair: entry)
+                    .id(entry.id)
+                HStack(spacing: 12) {
+                    Text(loc.t("Arrastra la línea para comparar", "Drag the line to compare"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let a = Self.pixelSize(entry.source), let b = Self.pixelSize(entry.output) {
+                        Text("\(Int(a.width))×\(Int(a.height))  →  \(Int(b.width))×\(Int(b.height))")
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([entry.output])
+                    } label: {
+                        Label(loc.t("Mostrar en Finder", "Reveal in Finder"), systemImage: "folder")
+                    }
+                }
+                .frame(maxWidth: 700)
+                if upscaler.done.count > 1 { resultStrip }
+            } else if upscaler.isBusy, let source = upscaler.sourceImage {
+                VStack(spacing: 12) {
+                    Image(nsImage: source)
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: 520, maxHeight: 420)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+                    ProgressView().controlSize(.small)
+                    Text(loc.t("Escalando ×4…", "Upscaling x4…"))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 42)).foregroundStyle(.tertiary)
+                    Text(loc.t("Elige una imagen para ampliarla ×4.",
+                               "Pick an image to enlarge it 4x."))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+    }
+
+    /// The pair being compared: whatever the user clicked, else the newest.
+    private var shownResult: UpscaleResult? {
+        upscaler.done.first { $0.id == upscaler.selected } ?? upscaler.done.last
+    }
+
+    /// A batch would otherwise show only its last result; this keeps every finished
+    /// pair one click away.
+    private var resultStrip: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 8) {
+                ForEach(upscaler.done) { entry in
+                    Button { upscaler.selected = entry.id } label: {
+                        VStack(spacing: 3) {
+                            AsyncThumbnail(url: entry.output)
+                            Text(entry.source.lastPathComponent)
+                                .font(.system(size: 9)).lineLimit(1).truncationMode(.middle)
+                                .frame(width: 78)
+                        }
+                        .padding(4)
+                        .background(entry.id == shownResult?.id ? Color.appAccent.opacity(0.22) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .frame(height: 96)
+    }
+
+    /// Pixel size from the file, not from NSImage.size, which reports points.
+    private static func pixelSize(_ url: URL) -> CGSize? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = p[kCGImagePropertyPixelWidth] as? Int,
+              let h = p[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        return CGSize(width: w, height: h)
+    }
 }
 
 /// One tile on the multi-instance canvas: as a list row the image fills the
@@ -1367,5 +1557,96 @@ struct ImageInstanceRow: View {
             Label(loc.t("Mostrar en Finder", "Reveal in Finder"), systemImage: "folder")
         }
         .help(loc.t("Abre el archivo en el Finder.", "Reveal the file in Finder."))
+    }
+}
+
+/// Before/after wipe. Both images are laid out in the same frame and the top one
+/// is masked to the drag position, so the comparison is at identical on-screen
+/// scale: that is the only way the added detail is visible rather than implied.
+private struct UpscaleCompare: View {
+    let pair: UpscaleResult
+    @State private var fraction: CGFloat = 0.5
+    @State private var source: NSImage?
+    @State private var result: NSImage?
+
+    var body: some View {
+        Group {
+            if let source, let result {
+                wipe(source: source, result: result)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: pair.id) {
+            // decoding a 4x PNG is far too slow for the main actor
+            let (s, r) = await Task.detached(priority: .userInitiated) { [pair] in
+                (NSImage(contentsOf: pair.source), NSImage(contentsOf: pair.output))
+            }.value
+            source = s
+            result = r
+        }
+    }
+
+    private func wipe(source: NSImage, result: NSImage) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                Image(nsImage: result)
+                    .resizable().scaledToFit()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                Image(nsImage: source)
+                    .resizable().scaledToFit()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .mask(alignment: .leading) {
+                        Rectangle().frame(width: geo.size.width * fraction)
+                    }
+                Rectangle()
+                    .fill(.white.opacity(0.9))
+                    .frame(width: 2)
+                    .offset(x: geo.size.width * fraction - 1)
+                    .shadow(radius: 2)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        fraction = min(1, max(0, value.location.x / max(1, geo.size.width)))
+                    }
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Thumbnail loaded off the main actor and downsampled by ImageIO, so a strip of
+/// 4x results does not decode full-size images just to draw 78 points.
+private struct AsyncThumbnail: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .frame(width: 78, height: 60)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .task(id: url) {
+            image = await Task.detached(priority: .utility) { [url] in
+                let opts: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 160,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ]
+                guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+                else { return nil }
+                return NSImage(cgImage: cg, size: .zero)
+            }.value
+        }
     }
 }

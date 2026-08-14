@@ -412,7 +412,13 @@ struct SettingsView: View {
                         Toggle(loc.t("Infinity Fabric Link entre GPUs (experimental)",
                                      "Infinity Fabric Link between GPUs (experimental)"), isOn: $mgpuPeer)
                             .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Acelera el procesamiento del prompt. Repartiendo por tensores se usa solo donde gana, leyendo el prompt, y el traspaso rápido se queda con la generación. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
-                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo), copies activations directly between them instead of through system RAM. Speeds up prompt processing. When splitting by tensors it is used only where it wins, reading the prompt, and the fast hand-off keeps generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
+                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo, or two cards joined by the external bridge), copies activations directly between them instead of through system RAM. Speeds up prompt processing. When splitting by tensors it is used only where it wins, reading the prompt, and the fast hand-off keeps generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
+                        if mgpuPeer && splitMode != "tensor" {
+                            Label(loc.t("Con reparto por capas no hace nada: el puente acelera la reducción que solo existe repartiendo por tensores.",
+                                        "With a layer split it does nothing: the bridge speeds up the reduction that only exists when splitting by tensors."),
+                                  systemImage: "info.circle")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
                     }
                 }
                 // eGPU fix: shown only when an external GPU is present. When the user

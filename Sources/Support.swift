@@ -165,6 +165,9 @@ enum SettingsKeys {
     static let videoBase = "videoBase"
     static let videoGPU = "videoGPU"
     static let upscalerFlavor = "upscalerFlavor"
+    static let imageStudioMode = "imageStudioMode"
+    static let upscalerScale = "upscalerScale"
+    static let upscalerCustomModel = "upscalerCustomModel"
     /// Show results as a grid instead of a list (queue feed / instances canvas).
     static let imagenQueueGrid = "imagenQueueGrid"
     static let imagenCanvasGrid = "imagenCanvasGrid"

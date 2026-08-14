@@ -21,6 +21,9 @@ struct BenchResult: Codable, Identifiable {
     /// GPU that ran this benchmark, and the full config snapshot — the snapshot
     /// lets any past run be saved as a profile, not just the most recent.
     var gpu: String?
+    /// Infinity Fabric peer transfer was enabled for this run. Testers asked for it:
+    /// without it a pasted result cannot be told apart from one with the bridge off.
+    var peer: Bool?
     var profile: Profile?
     /// Workload sizes (-p / -n / -d). Nil on older results (pp512/tg128, depth 0).
     var ppN: Int?
@@ -55,6 +58,7 @@ struct BenchResult: Codable, Identifiable {
         if let ctk, ctk != "f16" { parts.append("K:\(ctk)") }
         if let ctv, ctv != "f16" { parts.append("V:\(ctv)") }
         if let faLabel { parts.append(faLabel) }
+        if peer == true { parts.append("IF Link") }
         if let engine, engine != "bundled" { parts.append(engine) }
         return parts.isEmpty ? "base" : parts.joined(separator: " · ")
     }
@@ -250,7 +254,7 @@ final class BenchmarkController: ObservableObject {
             history.insert(BenchResult(date: .now, model: name, ncmoe: s.ncmoe, pp: pp, tg: tg,
                                        ctk: s.cacheTypeK, ctv: s.cacheTypeV, engine: engine,
                                        fa: s.benchmarkFlashAttentionRoute,
-                                       gpu: s.gpuLabel, profile: base.makeProfile(name: name),
+                                       gpu: s.gpuLabel, peer: s.mgpuPeer && s.isSplitting, profile: base.makeProfile(name: name),
                                        ppN: nil, tgN: s.benchTGClamped,
                                        kind: "real", accept: accept),
                            at: 0)
@@ -331,7 +335,7 @@ final class BenchmarkController: ObservableObject {
             history.insert(BenchResult(date: .now, model: name, ncmoe: settings.ncmoe, pp: pp, tg: tg,
                                        ctk: settings.cacheTypeK, ctv: settings.cacheTypeV, engine: engine,
                                        fa: settings.benchmarkFlashAttentionRoute,
-                                       gpu: settings.gpuLabel, profile: settings.makeProfile(name: name),
+                                       gpu: settings.gpuLabel, peer: settings.mgpuPeer && settings.isSplitting, profile: settings.makeProfile(name: name),
                                        ppN: settings.benchPPClamped, tgN: settings.benchTGClamped,
                                        depth: settings.benchDepthClamped),
                            at: 0)
@@ -534,7 +538,7 @@ final class BenchmarkController: ObservableObject {
                                        pp: finalPp, tg: finalTg,
                                        ctk: finalSettings.cacheTypeK, ctv: finalSettings.cacheTypeV,
                                        engine: engine, fa: finalSettings.benchmarkFlashAttentionRoute,
-                                       gpu: finalSettings.gpuLabel,
+                                       gpu: finalSettings.gpuLabel, peer: finalSettings.mgpuPeer && finalSettings.isSplitting,
                                        profile: finalSettings.makeProfile(name: "\(name) ncmoe \(recommended)"),
                                        ppN: finalSettings.benchPPClamped, tgN: finalSettings.benchTGClamped),
                            at: 0)
@@ -575,7 +579,7 @@ final class BenchmarkController: ObservableObject {
         history.insert(BenchResult(date: .now, model: name, ncmoe: cfg.ncmoe, pp: pp, tg: tg,
                                    ctk: cfg.cacheTypeK, ctv: cfg.cacheTypeV, engine: engine,
                                    fa: cfg.benchmarkFlashAttentionRoute,
-                                   gpu: cfg.gpuLabel, profile: cfg.makeProfile(name: name),
+                                   gpu: cfg.gpuLabel, peer: cfg.mgpuPeer && cfg.isSplitting, profile: cfg.makeProfile(name: name),
                                    ppN: nil, tgN: nil, kind: nil, accept: nil, shared: true),
                        at: 0)
         save()

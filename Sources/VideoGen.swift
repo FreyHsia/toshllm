@@ -69,17 +69,21 @@ enum VideoGenCatalog {
         ],
         defaultSteps: 30, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 8, maxLongEdge: 832)
 
+    /// Only safetensors: every Wan GGUF stores patch_embedding.weight with 5 dims
+    /// (it is a 3D convolution) and ggml's GGUF reader caps at 4, so the file fails
+    /// to load and the run returns noise. Checked on QuantStack, unsloth and the
+    /// isfs build that advertises sd.cpp support: all three are 5D.
     static let wan22TI2V5B = VideoGenModel(
         name: "Wan 2.2 TI2V 5B",
-        detailES: "5B, 720p. Texto e imagen a vídeo en un solo modelo; el mejor equilibrio.",
-        detailEN: "5B, 720p. Text and image to video in one model; the best balance.",
+        detailES: "5B, 720p. Texto e imagen a vídeo en un solo modelo; pide una tarjeta grande.",
+        detailEN: "5B, 720p. Text and image to video in one model; needs a large card.",
         components: [
             ImageGenComponent(kind: .diffusion,
-                urlString: "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q4_K_M.gguf",
-                fileName: "Wan2.2-TI2V-5B-Q4_K_M.gguf", sizeGB: 3.43),
+                urlString: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+                fileName: "wan2.2_ti2v_5B_fp16.safetensors", sizeGB: 10.0),
             wan22VAE, umt5,
         ],
-        defaultSteps: 30, cfgScale: 5.0, flowShift: 5.0, minVRAMGB: 12,
+        defaultSteps: 30, cfgScale: 5.0, flowShift: 5.0, minVRAMGB: 24,
         maxLongEdge: 1280, supportsI2V: true,
         // keeps the VAE from allocating its whole working set at once (sd.cpp #868)
         extraArgs: ["--vae-conv-direct"])
@@ -90,11 +94,11 @@ enum VideoGenCatalog {
         detailEN: "14B, 480p. Top image-to-video quality; needs a large card.",
         components: [
             ImageGenComponent(kind: .diffusion,
-                urlString: "https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf/resolve/main/wan2.1-i2v-14b-480p-Q4_K_M.gguf",
-                fileName: "wan2.1-i2v-14b-480p-Q4_K_M.gguf", sizeGB: 11.34),
+                urlString: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors",
+                fileName: "wan2.1_i2v_480p_14B_fp8_scaled.safetensors", sizeGB: 16.40),
             wan21VAE, umt5,
         ],
-        defaultSteps: 30, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 24,
+        defaultSteps: 30, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 32,
         maxLongEdge: 832, supportsI2V: true,
         extraArgs: ["--vae-conv-direct"])
 
@@ -354,10 +358,15 @@ final class VideoGenerator: ObservableObject {
             return
         }
         frameURLs = urls
-        frames = urls.compactMap { NSImage(contentsOf: $0) }
         progress = 1
         lastDuration = elapsed
         state = .done
+        // decoding 81 PNGs is far too much to do on the main actor; a 720p clip
+        // would freeze the window for seconds
+        Task.detached(priority: .userInitiated) {
+            let decoded = urls.compactMap { NSImage(contentsOf: $0) }
+            await MainActor.run { self.frames = decoded }
+        }
     }
 }
 

@@ -5,6 +5,8 @@
 import SwiftUI
 import Metal
 import Combine
+import ImageIO
+import UniformTypeIdentifiers
 
 // Local text-to-image via a bundled stable-diffusion.cpp engine. A model is one
 // or more files (a full checkpoint, or a diffusion transformer plus its VAE and
@@ -1009,6 +1011,14 @@ final class ImageGenPool: ObservableObject {
 
 /// ESRGAN upscaling of an already generated image. Separate from ImageGenerator:
 /// it reuses the finished PNG as input, so it never re-runs the diffusion model.
+/// One finished upscale. Only paths: keeping every pair decoded in memory would
+/// cost hundreds of MB on a batch.
+struct UpscaleResult: Identifiable, Equatable {
+    let id = UUID()
+    let source: URL
+    let output: URL
+}
+
 @MainActor
 final class ImageUpscaler: ObservableObject {
     enum State: Equatable { case idle, running, done, failed(String) }
@@ -1016,61 +1026,133 @@ final class ImageUpscaler: ObservableObject {
     @Published var state: State = .idle
     @Published var resultImage: NSImage?
     @Published var resultURL: URL?
+    /// Kept so the canvas can show a before/after and the sidebar the file name.
+    @Published var sourceImage: NSImage?
+    @Published var sourceURL: URL?
+    /// Tile progress parsed from the engine, 0...1.
+    @Published var progress: Double = 0
+    /// Position in the batch, 1-based; total is 1 for a single file.
+    @Published var index = 0
+    @Published var total = 0
+    /// Picked but not started: choosing a file must not launch a GPU run.
+    @Published var queued: [URL] = []
+    /// Everything finished this session, so a batch does not hide its own results.
+    @Published var done: [UpscaleResult] = []
+    @Published var selected: UpscaleResult.ID?
+
+    private var pending: [URL] = []
+    private var flavor: Flavor = .photo
+    private var customPath = ""
+    private var scale: Scale = .x4
+    private var models: ModelStore?
+    private var gpuIndex = -1
+    private var startedAt: Date?
+
+    var elapsed: Int { startedAt.map { Int(-$0.timeIntervalSinceNow) } ?? 0 }
 
     /// Both are ESRGAN-architecture and load in sd-cli; they are specialists, not
     /// ranks. Measured on the same crop: x4plus keeps gradients smooth, UltraSharp
     /// adds contrast and micro-detail, which flatters generated art and invents
     /// texture on a real photo.
+    /// sd.cpp only loads plain 4x RRDBNet: RealESRGAN x2plus uses pixel-unshuffle
+    /// (12-channel input) and is rejected, and the DAT models that top the 2026
+    /// rankings are a different architecture entirely. So 4x native, 2x by
+    /// downsampling the 4x result, which also beats a native 2x in practice.
+    enum Scale: String, CaseIterable, Identifiable {
+        case x2, x4
+        var id: String { rawValue }
+        var factor: Int { self == .x2 ? 2 : 4 }
+        var label: String { self == .x2 ? "×2" : "×4" }
+    }
+
     enum Flavor: String, CaseIterable, Identifiable {
-        case photo, art
+        case photo, art, custom
         var id: String { rawValue }
 
-        var component: ImageGenComponent {
+        func component(customPath: String = "") -> ImageGenComponent? {
             switch self {
             case .photo:
                 return ImageGenComponent(kind: .checkpoint,
-                    urlString: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-                    fileName: "RealESRGAN_x4plus.pth", sizeGB: 0.064)
+                    urlString: "https://github.com/Phhofm/models/releases/download/4xNomosWebPhoto_esrgan/4xNomosWebPhoto_esrgan.pth",
+                    fileName: "4xNomosWebPhoto_esrgan.pth", sizeGB: 0.032)
             case .art:
                 return ImageGenComponent(kind: .checkpoint,
                     urlString: "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x-UltraSharp.pth",
                     fileName: "4x-UltraSharp.pth", sizeGB: 0.064)
+            case .custom:
+                guard !customPath.isEmpty else { return nil }
+                return ImageGenComponent(kind: .checkpoint, urlString: "",
+                                         fileName: customPath, sizeGB: 0)
             }
         }
 
         func label(_ spanish: Bool) -> String {
             switch self {
-            case .photo: return spanish ? "Fotos" : "Photos"
-            case .art:   return spanish ? "Imagen generada" : "Generated art"
+            case .photo:  return spanish ? "Fotos" : "Photos"
+            case .art:    return spanish ? "Generada" : "Generated"
+            case .custom: return spanish ? "Otro" : "Custom"
             }
         }
 
         func detail(_ spanish: Bool) -> String {
             switch self {
-            case .photo: return spanish ? "RealESRGAN x4plus. Respeta la textura real; no inventa detalle."
-                                        : "RealESRGAN x4plus. Respects real texture; invents no detail."
-            case .art:   return spanish ? "4x-UltraSharp. Más contraste y detalle fino; luce en arte generado."
-                                        : "4x-UltraSharp. More contrast and fine detail; shines on generated art."
+            case .photo:  return spanish ? "4xNomosWebPhoto. Entrenado con ruido, desenfoque y recompresión reales."
+                                         : "4xNomosWebPhoto. Trained on real noise, lens blur and re-compression."
+            case .art:    return spanish ? "4x-UltraSharp. Más contraste y detalle fino; luce en arte generado."
+                                         : "4x-UltraSharp. More contrast and fine detail; shines on generated art."
+            case .custom: return spanish ? "Tu propio modelo ESRGAN ×4 (.pth o .safetensors)."
+                                         : "Your own 4x ESRGAN model (.pth or .safetensors)."
             }
         }
     }
 
-    static func installed(_ flavor: Flavor, in models: ModelStore) -> Bool {
-        FileManager.default.fileExists(atPath: flavor.component.path(in: models.imagenDirectory).path)
+    static func installed(_ flavor: Flavor, customPath: String, in models: ModelStore) -> Bool {
+        guard let c = flavor.component(customPath: customPath) else { return false }
+        return FileManager.default.fileExists(atPath: c.path(in: models.imagenDirectory).path)
     }
 
     var isBusy: Bool { state == .running }
 
     private var process: Process?
 
-    func upscale(source: URL, flavor: Flavor, models: ModelStore, gpuIndex: Int) {
-        guard !isBusy else { return }
+    /// Upscales the queued files one at a time: two ESRGAN runs at once would
+    /// contend for the same VRAM the tiles already stretch.
+    func upscale(sources: [URL], flavor: Flavor, customPath: String = "", scale: Scale = .x4,
+                 models: ModelStore, gpuIndex: Int) {
+        guard !isBusy, !sources.isEmpty else { return }
+        pending = sources
+        queued = []
+        self.customPath = customPath
+        self.scale = scale
+        self.flavor = flavor
+        self.models = models
+        self.gpuIndex = gpuIndex
+        index = 0
+        total = sources.count
+        startedAt = Date()
+        next()
+    }
+
+    private func next() {
+        guard let models, !pending.isEmpty else {
+            if total > 0 { state = .done }
+            return
+        }
+        let source = pending.removeFirst()
+        index += 1
+        run(source: source, flavor: flavor, models: models, gpuIndex: gpuIndex)
+    }
+
+    private func run(source: URL, flavor: Flavor, models: ModelStore, gpuIndex: Int) {
         let dir = models.imagenDirectory
         let out = models.imagenDirectory
             .appendingPathComponent(source.deletingPathExtension().lastPathComponent + "-x4.png")
 
+        guard let component = flavor.component(customPath: customPath) else {
+            state = .failed("no model"); return
+        }
         let args = ["-M", "upscale",
-                    "--upscale-model", flavor.component.path(in: dir).path,
+                    "--upscale-model", component.path(in: dir).path,
                     // tiled so a single Metal dispatch stays under the GPU watchdog
                     "--upscale-tile-size", "128",
                     "-i", source.path,
@@ -1089,21 +1171,42 @@ final class ImageUpscaler: ObservableObject {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let data = h.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            Task { @MainActor in self?.consume(text) }
+        }
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor in
-                self?.process = nil
+                guard let self else { return }
+                self.process = nil
                 guard proc.terminationStatus == 0, let img = NSImage(contentsOf: out) else {
-                    self?.state = .failed("exit \(proc.terminationStatus)")
+                    if proc.terminationStatus == 15 || proc.terminationStatus == 2 {
+                        self.state = .failed("")
+                    } else {
+                        self.state = .failed("exit \(proc.terminationStatus)")
+                    }
+                    self.pending = []
                     return
                 }
-                self?.resultImage = img
-                self?.resultURL = out
-                self?.state = .done
+                if self.scale == .x2 { Self.halve(out) }
+                self.resultImage = NSImage(contentsOf: out) ?? img
+                self.resultURL = out
+                self.progress = 1
+                if let src = self.sourceURL {
+                    let entry = UpscaleResult(source: src, output: out)
+                    self.done.append(entry)
+                    self.selected = entry.id
+                }
+                self.next()
             }
         }
         state = .running
+        progress = 0
         resultImage = nil
         resultURL = nil
+        sourceURL = source
+        sourceImage = NSImage(contentsOf: source)
         do {
             try p.run()
             process = p
@@ -1112,5 +1215,39 @@ final class ImageUpscaler: ObservableObject {
         }
     }
 
-    func cancel() { process?.terminate() }
+    func cancel() {
+        pending = []
+        process?.terminate()
+    }
+
+    /// x2 = the 4x result resampled to half. Done with ImageIO so the downsample
+    /// is a proper Lanczos pass, not a display-time scale.
+    nonisolated static func halve(_ url: URL) {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int else { return }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, w / 2),
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary),
+              let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)
+        else { return }
+        CGImageDestinationAddImage(dest, cg, nil)
+        CGImageDestinationFinalize(dest)
+    }
+
+    /// Same tile-progress line the generator prints: `N/M ... s/it`.
+    private func consume(_ text: String) {
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = String(raw)
+            guard line.contains("s/it"),
+                  let r = line.range(of: #"(\d+)/(\d+)"#, options: .regularExpression) else { continue }
+            let parts = line[r].split(separator: "/")
+            if parts.count == 2, let a = Int(parts[0]), let b = Int(parts[1]), b > 0 {
+                progress = Double(a) / Double(b)
+            }
+        }
+    }
 }

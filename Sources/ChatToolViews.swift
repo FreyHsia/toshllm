@@ -160,16 +160,24 @@ private struct ToolCallDetailView: View {
 }
 
 private struct DiffPanel: View {
-    let edit: ToolCallPresentation.Edit
+    // split once at init: body re-runs on every streamed token, and splitting both
+    // sides of every open diff there was the cost
+    private let oldLines: [String]
+    private let newLines: [String]
+
+    init(edit: ToolCallPresentation.Edit) {
+        oldLines = edit.oldText.components(separatedBy: "\n")
+        newLines = edit.newText.components(separatedBy: "\n")
+    }
 
     var body: some View {
         ScrollView(.horizontal) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(edit.oldText.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                    diffLine("−", String(line), color: .red)
+                ForEach(Array(oldLines.enumerated()), id: \.offset) { _, line in
+                    diffLine("−", line, color: .red)
                 }
-                ForEach(Array(edit.newText.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                    diffLine("+", String(line), color: .green)
+                ForEach(Array(newLines.enumerated()), id: \.offset) { _, line in
+                    diffLine("+", line, color: .green)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

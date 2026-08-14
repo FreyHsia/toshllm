@@ -46,6 +46,7 @@ struct ChatMainView: View {
     // halves of the split view drive the same runs.
     @StateObject private var imageGenPool = ImageGenPool()
     @StateObject private var videoGen = VideoGenerator()
+    @StateObject private var upscaler = ImageUpscaler()
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
     @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
 
@@ -55,7 +56,7 @@ struct ChatMainView: View {
         NavigationSplitView {
             Group {
                 if mode == .images {
-                    ImageControls(pool: imageGenPool).transition(.opacity)
+                    ImageControls(pool: imageGenPool, upscaler: upscaler).transition(.opacity)
                 } else if mode == .video {
                     VideoControls(gen: videoGen).transition(.opacity)
                 } else {
@@ -65,7 +66,7 @@ struct ChatMainView: View {
         } detail: {
             Group {
                 if mode == .images {
-                    ImageCanvas(pool: imageGenPool).transition(.opacity)
+                    ImageCanvas(pool: imageGenPool, upscaler: upscaler).transition(.opacity)
                 } else if mode == .video {
                     VideoCanvas(gen: videoGen).transition(.opacity)
                 } else {

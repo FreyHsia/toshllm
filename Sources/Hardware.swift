@@ -205,7 +205,9 @@ enum Estimator {
         let scale = (kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeK) ?? "f16")
                    + kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeV) ?? "f16")) / 2
         return estimate(spec: spec, hw: hw, ctx: ctx, kvScale: scale,
-                        multiGPU: d.bool(forKey: SettingsKeys.multiGPU), ncmoeOverride: ncmoeOverride)
+                        multiGPU: d.bool(forKey: SettingsKeys.multiGPU),
+                        tensorSplit: (d.string(forKey: SettingsKeys.splitMode) ?? "layer") == "tensor",
+                        ncmoeOverride: ncmoeOverride)
     }
 
     /// KV cache size of a quantization type relative to f16.
@@ -221,8 +223,25 @@ enum Estimator {
     }
 
     /// Estimates required VRAM/RAM and suggested configuration for a model on this machine.
+    /// Tensor split allocates one reduction scratch buffer per device AND per
+    /// butterfly step (ggml-metal.cpp), each holding a layer output at the current
+    /// batch. Layer split has no allreduce, so it pays none of this.
+    static func tensorSplitScratchGB(spec: ModelSpec, devices: Int) -> Double {
+        guard devices >= 2 else { return 0 }
+        var offsetMax = devices / 2
+        while offsetMax > 0 && (offsetMax & (offsetMax - 1)) != 0 { offsetMax -= 1 }
+        var steps = devices > 2 * offsetMax ? 1 : 0
+        var offset = offsetMax
+        while offset >= 1 { steps += 1; offset /= 2 }
+        // params ~= 12 * layers * d^2 gives the hidden size within a few percent
+        let d = (spec.paramsB * 1e9 / (12 * Double(max(1, spec.layers)))).squareRoot()
+        let bytes = Double(devices * steps) * 512 * d * 4
+        return bytes / 1e9
+    }
+
     static func estimate(spec: ModelSpec, hw: HardwareInfo, ctx: Int = 16384, kvScale: Double = 1.0,
-                         multiGPU: Bool = false, ncmoeOverride: Int? = nil) -> MemoryEstimate {
+                         multiGPU: Bool = false, tensorSplit: Bool = false,
+                         ncmoeOverride: Int? = nil) -> MemoryEstimate {
         // A layer split is sequential (pipeline): combined VRAM raises capacity,
         // not per-token speed. Use summed VRAM (driver reserve per device) when
         // the user enabled the split and there are 2+ GPUs; otherwise one card.
@@ -230,7 +249,9 @@ enum Estimator {
         let splitting = multiGPU && splitGPUs >= 2
         let vramBudget = (splitting ? hw.combinedVramGB : hw.vramGB) - Double(splitting ? splitGPUs : 1)
         let kvGB = kvCache(spec: spec, ctx: ctx) * kvScale
-        let computeGB = 0.9 + spec.paramsB * 0.012
+        let scratchGB = (splitting && tensorSplit)
+            ? tensorSplitScratchGB(spec: spec, devices: splitGPUs) : 0
+        let computeGB = 0.9 + spec.paramsB * 0.012 + scratchGB
 
         if !spec.isMoE {
             let need = spec.fileGB * 1.03 + kvGB + computeGB

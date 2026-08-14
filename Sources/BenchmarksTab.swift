@@ -134,7 +134,7 @@ struct BenchmarksView: View {
     private var shareCard: some View {
         Card(title: loc.t("Compartir con la comunidad", "Share with the community"),
              icon: "square.and.arrow.up",
-             trailing: AnyView(shareToggle)) {
+             trailing: { shareToggle }) {
             if showShare {
                 BenchmarkShareCard(cfg: cfg, inheritanceLabel: inheritanceLabel)
             } else {
@@ -170,7 +170,7 @@ struct BenchmarksView: View {
 
     private var runCard: some View {
         Card(title: loc.t("Ejecutar benchmark", "Run benchmark"), icon: "speedometer",
-             trailing: AnyView(cardAccessories)) {
+             trailing: { cardAccessories }) {
             VStack(alignment: .leading, spacing: 14) {
                 // Model on its own row so it shares a left edge with the config
                 // fields below; selecting a MoE model seeds the recommended ncmoe.
@@ -284,6 +284,9 @@ struct BenchmarksView: View {
                          active: cfg.benchmarkFlashAttentionRoute != "off",
                          icon: cfg.benchmarkFlashAttentionRoute == "amd-gpu" ? "bolt.fill" : "cpu")
                     chip(cfg.gpuLabel, active: cfg.gpuIndex >= 0 || cfg.multiGPU || cfg.gpuList.count >= 2, icon: "cpu")
+                    if cfg.mgpuPeer && cfg.isSplitting {
+                        chip("IF Link", active: true, icon: "bolt.horizontal")
+                    }
                     Spacer()
                 }
 
@@ -656,7 +659,7 @@ struct BenchmarksView: View {
         let bestTG = bench.history.max(by: { $0.tg < $1.tg })?.id
         let lastID = bench.history.last?.id
         return Card(title: loc.t("Historial completo", "Full history"), icon: "clock",
-                    trailing: bench.history.isEmpty ? nil : AnyView(clearHistoryButton)) {
+                    trailing: { if !bench.history.isEmpty { clearHistoryButton } }) {
             // Lazy + Equatable rows: offscreen rows aren't built, and visible
             // ones skip re-rendering during the frequent in-run publishes.
             LazyVStack(spacing: 0) {

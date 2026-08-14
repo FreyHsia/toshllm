@@ -185,7 +185,7 @@ struct DashboardView: View {
 
     private var serverCard: some View {
         Card(title: loc.t("Servidor", "Server"), icon: "server.rack", fill: true,
-             trailing: profileStore.profiles.isEmpty ? nil : AnyView(profileMenu)) {
+             trailing: { if !profileStore.profiles.isEmpty { profileMenu } }) {
             if routerMode {
                 HStack(spacing: 8) {
                     Image(systemName: "shippingbox.and.arrow.backward").frame(width: 18).foregroundStyle(.secondary)
@@ -537,7 +537,7 @@ struct AddedServerCard: View {
         let busy = c.state == .running || c.state == .starting
         let modelPath = isPinned(Profile.Pin.model) ? (c.profile?.modelPath ?? "") : gModelPath
         let routerMode = isPinned(Profile.Pin.router) ? (c.profile?.routerMode ?? false) : gRouterMode
-        Card(title: c.name, icon: "server.rack", fill: true, trailing: AnyView(accessory)) {
+        Card(title: c.name, icon: "server.rack", fill: true, trailing: { accessory }) {
             if routerMode {
                 HStack(spacing: 8) {
                     Image(systemName: "shippingbox.and.arrow.backward").frame(width: 18).foregroundStyle(.secondary)
@@ -772,16 +772,27 @@ struct AddedServerCard: View {
     }
 }
 
-struct Card<Content: View>: View {
+struct Card<Content: View, Trailing: View>: View {
     let title: String
     let icon: String
     /// When true the card stretches to fill the tallest sibling in its row, so
     /// side-by-side cards line up even with different amounts of content.
     var fill: Bool = false
-    /// Optional accessory pinned to the top-right of the title row (e.g. a
-    /// profile picker or a "clear" action).
-    var trailing: AnyView? = nil
+    /// Accessory pinned to the top-right of the title row (e.g. a profile picker
+    /// or a "clear" action). Generic rather than AnyView so the accessory keeps
+    /// its identity across updates.
+    @ViewBuilder let trailing: Trailing
     @ViewBuilder let content: Content
+
+    init(title: String, icon: String, fill: Bool = false,
+         @ViewBuilder trailing: () -> Trailing = { EmptyView() },
+         @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.fill = fill
+        self.trailing = trailing()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -789,7 +800,7 @@ struct Card<Content: View>: View {
                 Label(title, systemImage: icon)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                if let trailing {
+                if Trailing.self != EmptyView.self {
                     Spacer(minLength: 8)
                     trailing
                 }
