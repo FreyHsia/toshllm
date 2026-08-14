@@ -7,7 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **A conversation with code blocks no longer freezes while you scroll it** ([#58](https://github.com/engeldlgado/toshllm/issues/58))... every code block, and every panel of a tool call, carried a scroll view of its own, and each one re-tiled on every geometry change while scrolling. On macOS 15 that could leave the app unresponsive for half a minute. Long lines now wrap to the bubble and the expand button still opens the full-width view.
-- **Quitting the app always stops the engine.** With the prompt cache enabled the engine was asked to stop only after the app had saved its cached prefix, and that save outlived the app itself, so the engine stayed running and holding video memory until you noticed it.
+- **Quitting the app always stops the engine.** With the prompt cache enabled the engine was told to stop only after the app had finished saving its cached prefix, and that save could not finish once the app was on its way out, so the engine stayed running and holding video memory until you noticed it. The prefix is still saved on the way out, now with a time limit that the shutdown never waits past.
 
 ### Improved
 - **The window no longer stalls for a few seconds on launch.** The model menu was reading the header of every model in the folder while it drew, which on a folder of large models meant a spinning cursor before the app was usable. The headers are now read in the background and the menu fills in as they arrive.

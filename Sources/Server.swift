@@ -1415,6 +1415,11 @@ final class ServerController: ObservableObject {
         let pid = p.processIdentifier
         lastStoppedPID = pid
         EngineLock.remove(pid: pid)
+        if prewarmActive {
+            Self.slotSaveBlocking(port: currentPort,
+                                  file: Self.externalSlotFile(port: currentPort).lastPathComponent,
+                                  timeout: 10)
+        }
         p.terminate()
         var waited = 0
         while p.isRunning && waited < 20 {
@@ -1450,6 +1455,23 @@ final class ServerController: ObservableObject {
         if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["filename": file])
         _ = try? await URLSession.shared.data(for: req)
+    }
+
+    /// Same request on the way out, where an await would never resume. Bounded so
+    /// a busy engine cannot hold the quit open.
+    nonisolated static func slotSaveBlocking(port: Int, file: String, timeout: TimeInterval) {
+        guard var comps = URLComponents(string: "http://127.0.0.1:\(port)/slots/0") else { return }
+        comps.queryItems = [URLQueryItem(name: "action", value: "save")]
+        guard let url = comps.url else { return }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["filename": file])
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: req) { _, _, _ in done.signal() }
+        task.resume()
+        if done.wait(timeout: .now() + timeout) == .timedOut { task.cancel() }
     }
 
     /// Restore the saved external-client prefix into slot 0 (only if a file exists).
