@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.84.2] - 2026-08-14
 
 ### Fixed
 - **A conversation with code blocks no longer freezes while you scroll it** ([#58](https://github.com/engeldlgado/toshllm/issues/58))... every code block, and every panel of a tool call, carried a scroll view of its own, and each one re-tiled on every geometry change while scrolling. On macOS 15 that could leave the app unresponsive for half a minute. Long lines now wrap to the bubble and the expand button still opens the full-width view.
