@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.84.0] - 2026-08-13
 
 ### Added
 - **Video generation, and it is experimental.** Treat this as a first cut, not a finished feature: a third mode next to Chat and Images turns a description into a short clip, with Wan 2.1, Wan 2.2, LTX-2 and HunyuanVideo in the model list and the download sizes stated before you commit to one. The result arrives as individual frames you can scrub through, and exports to mp4. What to expect before you try it: a few seconds of video take minutes, a clip of 49 frames at 480p already fills a 12 GB card, and only the smallest model (Wan 2.1 1.3B) fits one at all. The rest ask for 24 GB or more. Longer clips and higher resolutions fail rather than degrade, and the frame count has to be one of the values offered. Expect the settings and the defaults to move in the next releases.
