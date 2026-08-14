@@ -29,7 +29,7 @@ struct RichContentBlock: View {
                 Button(loc.t("Ampliar", "Expand"), systemImage: "arrow.up.left.and.arrow.down.right") {
                     previewing = true
                 }
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .help(loc.t("Abrir vista interactiva", "Open interactive preview"))
             }
@@ -82,7 +82,7 @@ private struct RichContentPreview: View {
                 Button(loc.t("Reducir", "Zoom out"), systemImage: "minus.magnifyingglass") {
                     zoom = max(0.5, zoom - 0.15)
                 }
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 .disabled(zoom <= 0.5)
                 Text("\(Int((zoom * 100).rounded()))%")
                     .font(.system(.caption, design: .monospaced))
@@ -90,11 +90,11 @@ private struct RichContentPreview: View {
                 Button(loc.t("Tamaño real", "Actual size"), systemImage: "1.magnifyingglass") {
                     zoom = 1
                 }
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 Button(loc.t("Ampliar", "Zoom in"), systemImage: "plus.magnifyingglass") {
                     zoom = min(3, zoom + 0.15)
                 }
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 .disabled(zoom >= 3)
                 Button(loc.t("Cerrar", "Close"), systemImage: "xmark", action: dismiss.callAsFunction)
                     .labelStyle(.iconOnly)

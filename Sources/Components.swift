@@ -194,7 +194,7 @@ struct InlineDownloadProgress: View {
                 .buttonStyle(.borderless)
                 .iconHelp(item.phase == .paused ? loc.t("Reanudar", "Resume") : loc.t("Pausar", "Pause"))
                 Button { item.cancel() } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
-                        .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .iconHelp(loc.t("Cancelar", "Cancel"))
             }

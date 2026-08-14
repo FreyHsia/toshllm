@@ -335,7 +335,7 @@ struct SettingsView: View {
                             .infoTip(loc.t("Carga esta configuración. Reinicia el servidor para usarla.",
                                         "Loads this configuration. Restart the server to use it."))
                         Button { profileStore.delete(p) } label: { Label(loc.t("Borrar", "Delete"), systemImage: "trash") }
-                        .labelStyle(.iconOnly)
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless).foregroundStyle(.secondary)
                             .accessibilityLabel(loc.t("Eliminar el perfil", "Delete the profile"))
                             .infoTip(loc.t("Eliminar este perfil.", "Delete this profile."))

@@ -742,12 +742,12 @@ struct DownloadRow: View {
                         .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                     if item.phase == .paused {
                         Button { item.resume() } label: { Label(loc.t("Reanudar", "Resume"), systemImage: "play.circle") }
-                        .labelStyle(.iconOnly)
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .iconHelp(loc.t("Reanudar", "Resume"))
                     } else {
                         Button { item.pause() } label: { Label(loc.t("Pausar", "Pause"), systemImage: "pause.circle") }
-                        .labelStyle(.iconOnly)
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .iconHelp(loc.t("Pausar (reanudable)", "Pause (resumable)"))
                     }

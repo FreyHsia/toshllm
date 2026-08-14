@@ -156,7 +156,7 @@ struct VideoControls: View {
                         .font(.caption)
                         if !initImage.isEmpty {
                             Button { initImage = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle.fill") }
-                        .labelStyle(.iconOnly)
+                                .labelStyle(.iconOnly)
                                 .buttonStyle(.plain)
                         }
                     }
@@ -284,11 +284,19 @@ struct VideoCanvas: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            if gen.frames.isEmpty {
-                emptyState
-            } else {
+            if !gen.frames.isEmpty {
                 player
                 controls
+            } else if !gen.frameURLs.isEmpty {
+                // the frames decode off the main actor, so the run is done before
+                // they are ready; without this the canvas reads as "nothing here"
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text(loc.t("Preparando los fotogramas…", "Preparing the frames…"))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                emptyState
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -362,7 +370,7 @@ struct VideoCanvas: View {
                 Label(playing ? loc.t("Pausar", "Pause") : loc.t("Reproducir", "Play"),
                       systemImage: playing ? "pause.fill" : "play.fill")
             }
-            .labelStyle(.iconOnly)
+                .labelStyle(.iconOnly)
             if !playing {
                 Slider(value: Binding(get: { Double(frameIndex) },
                                       set: { frameIndex = Int($0) }),

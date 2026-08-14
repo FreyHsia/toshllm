@@ -2464,7 +2464,7 @@ struct NativeChatView: View {
         if chat.generating {
             Button(loc.t("Intervenir", "Steer"), systemImage: "arrow.up.circle.fill",
                    action: send)
-                .labelStyle(.iconOnly)
+                       .labelStyle(.iconOnly)
                 .font(.system(size: 26))
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(.white, canSend ? AppTheme.accent(accentRaw) : Color.secondary.opacity(0.45))
@@ -2475,7 +2475,7 @@ struct NativeChatView: View {
                             "Send a steering message after the agent's current turn."))
             Button(loc.t("Detener", "Stop"), systemImage: "stop.circle.fill",
                    action: chat.stop)
-                .labelStyle(.iconOnly)
+                       .labelStyle(.iconOnly)
                 .font(.system(size: 26))
                 .foregroundStyle(.red)
                 .buttonStyle(.borderless)

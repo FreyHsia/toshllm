@@ -58,7 +58,7 @@ struct MCPSettingsSection: View {
                         Button(loc.t("Eliminar", "Delete"), systemImage: "trash", role: .destructive) {
                             delete(server)
                         }
-                        .labelStyle(.iconOnly)
+                            .labelStyle(.iconOnly)
                     }
                 }
             }

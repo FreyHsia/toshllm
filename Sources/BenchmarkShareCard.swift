@@ -152,7 +152,7 @@ struct BenchmarkShareCard: View {
                         } label: {
                             Label(loc.t("Copiar la huella pública", "Copy the public fingerprint"),
                                   systemImage: "doc.on.doc")
-                                .labelStyle(.iconOnly)
+                                      .labelStyle(.iconOnly)
                         }
                         .buttonStyle(.borderless)
                         .help(loc.t("Copiar la huella pública", "Copy the public fingerprint"))

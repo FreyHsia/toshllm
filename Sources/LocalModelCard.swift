@@ -122,7 +122,7 @@ private struct LocalModelMenu: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .labelStyle(.iconOnly)
+            .labelStyle(.iconOnly)
         .fixedSize()
         .help(loc.t("Mostrar en Finder, actualizar o eliminar este modelo.",
                     "Reveal in Finder, update or delete this model."))

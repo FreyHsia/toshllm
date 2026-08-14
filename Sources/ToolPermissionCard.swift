@@ -27,7 +27,7 @@ struct ToolPermissionCard: View {
                 Button(loc.t("Ver argumentos", "Show arguments"), systemImage: "chevron.down") {
                     showingArguments.toggle()
                 }
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
             }
             if showingArguments {

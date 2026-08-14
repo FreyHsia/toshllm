@@ -128,7 +128,7 @@ struct ServerLogView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                 .fixedSize()
                 .help(loc.t("Abrir la carpeta de registros, exportar un diagnóstico o vaciar la vista. El archivo en disco se conserva.",
                             "Open the logs folder, export diagnostics, or clear the view. The file on disk is kept."))

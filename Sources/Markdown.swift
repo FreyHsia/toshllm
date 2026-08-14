@@ -469,7 +469,7 @@ struct CodeBlock: View {
                 } label: {
                     Label(loc.t("Ampliar código", "Expand code"),
                           systemImage: "arrow.up.left.and.arrow.down.right")
-                        .labelStyle(.iconOnly)
+                              .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
                 .help(loc.t("Abrir código en una vista amplia", "Open code in a larger view"))
@@ -481,7 +481,7 @@ struct CodeBlock: View {
                 } label: {
                     Label(loc.t("Copiar código", "Copy code"),
                           systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .labelStyle(.iconOnly)
+                              .labelStyle(.iconOnly)
                         .font(.system(size: 10))
                         .foregroundStyle(copied ? .green : .secondary)
                 }

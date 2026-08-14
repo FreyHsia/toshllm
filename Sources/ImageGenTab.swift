@@ -113,7 +113,7 @@ struct ImageControls: View {
                                 .font(.caption).lineLimit(1).truncationMode(.middle)
                             if !upscalerCustom.isEmpty {
                                 Button { upscalerCustom = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
-                        .labelStyle(.iconOnly)
+                                    .labelStyle(.iconOnly)
                                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                             }
                         }
@@ -164,7 +164,9 @@ struct ImageControls: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(upscaler.isBusy)
+                        // Custom with no file picked resolves to no model, so the
+                        // button would run nothing and say nothing
+                        .disabled(upscaler.isBusy || flavor.component(customPath: upscalerCustom) == nil)
                     }
                     if upscaler.isBusy {
                         VStack(alignment: .leading, spacing: 6) {
@@ -532,7 +534,7 @@ struct QueueFeedView: View {
             }
             Text(loc.t("En cola", "Queued")).font(.caption).foregroundStyle(.secondary)
             Button { pool.removeFromQueue(q.id) } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
-                        .labelStyle(.iconOnly)
+                .labelStyle(.iconOnly)
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
                 .iconHelp(loc.t("Quitar de la cola", "Remove from the queue"))
         }
@@ -1077,7 +1079,7 @@ struct ImageInstanceForm: View {
             .font(.caption).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150, alignment: .trailing)
             if !path.wrappedValue.isEmpty {
                 Button { path.wrappedValue = "" } label: { Label(loc.t("Quitar", "Clear"), systemImage: "xmark.circle") }
-                        .labelStyle(.iconOnly)
+                    .labelStyle(.iconOnly)
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .iconHelp(loc.t("Quitar el archivo", "Clear the file"))
             }

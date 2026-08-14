@@ -21,7 +21,7 @@ struct QueuedMessageBanner: View {
             Spacer()
             Button(loc.t("Cancelar intervención", "Cancel steering message"),
                    systemImage: "xmark", action: cancel)
-                .labelStyle(.iconOnly)
+                       .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
