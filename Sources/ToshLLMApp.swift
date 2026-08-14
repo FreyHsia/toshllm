@@ -75,6 +75,61 @@ struct ToshLLMApp: App {
     }
 
     @AppStorage(SettingsKeys.appAccent) private var appAccentRaw = AppTheme.defaultKey
+    @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
+    @Environment(\.openWindow) private var openWindow
+
+    /// A crashed engine used to look exactly like a stopped one from here, which is
+    /// the one state worth noticing from another app.
+    private var menuBarIconName: String {
+        switch server.state {
+        case .running:  return "cpu.fill"
+        case .starting: return "cpu.badge.clock"
+        case .failed:   return "exclamationmark.triangle.fill"
+        case .stopped:  return "cpu"
+        }
+    }
+
+    private var menuBarStateLabel: String {
+        switch server.state {
+        case .running:  return loc.t("ToshLLM: servidor activo", "ToshLLM: server running")
+        case .starting: return loc.t("ToshLLM: iniciando", "ToshLLM: starting")
+        case .failed:   return loc.t("ToshLLM: el motor falló", "ToshLLM: the engine failed")
+        case .stopped:  return loc.t("ToshLLM: servidor parado", "ToshLLM: server stopped")
+        }
+    }
+
+    /// The chat font shortcuts already existed on hidden buttons, which made them
+    /// undiscoverable and scene-local; they are AppStorage, so a command reaches them.
+    @CommandsBuilder private var appCommands: some Commands {
+        CommandGroup(after: .toolbar) {
+            Button(loc.t("Aumentar el texto del chat", "Increase chat text")) {
+                setFontScale(chatFontScale + ChatFont.step)
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            Button(loc.t("Reducir el texto del chat", "Decrease chat text")) {
+                setFontScale(chatFontScale - ChatFont.step)
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            Button(loc.t("Tamaño original del texto", "Actual chat text size")) {
+                setFontScale(1)
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            Divider()
+        }
+        CommandGroup(replacing: .help) {
+            Button(loc.t("Documentación de ToshLLM", "ToshLLM documentation")) {
+                control.section = .docs
+                openWindow(id: "control")
+            }
+            Button(loc.t("Reportar un problema", "Report an issue")) {
+                NSWorkspace.shared.open(URL(string: "https://github.com/engeldlgado/toshllm/issues")!)
+            }
+        }
+    }
+
+    private func setFontScale(_ value: Double) {
+        chatFontScale = ChatFont.clamp(value)
+    }
 
     var body: some Scene {
         // Main window: the chat. A single Window (not WindowGroup) keeps ⌘N
@@ -100,6 +155,7 @@ struct ToshLLMApp: App {
                 }
         }
         .defaultSize(width: 1240, height: 820)
+        .commands { appCommands }
 
         Window(loc.t("Configuración", "Configuration"), id: "control") {
             ControlPanelView()
@@ -126,13 +182,13 @@ struct ToshLLMApp: App {
                 .environmentObject(loc)
                 .environmentObject(vram)
         } label: {
-            let icon = server.state == .running ? "cpu.fill" : "cpu"
             // "icon" mode shows aggregate VRAM next to the glyph; per-GPU bars
             // live in the panel.
             if menuBarGPU == "icon", vram.totalMB > 0 {
-                Label("\(Int(vram.fraction * 100))%", systemImage: icon)
+                Label("\(Int(vram.fraction * 100))%", systemImage: menuBarIconName)
             } else {
-                Image(systemName: icon)
+                Label(menuBarStateLabel, systemImage: menuBarIconName)
+                    .labelStyle(.iconOnly)
             }
         }
         .menuBarExtraStyle(.window)

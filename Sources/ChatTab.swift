@@ -80,18 +80,11 @@ struct ChatMainView: View {
         .environmentObject(chat)
         .environment(\.chatFontScale, ChatFont.clamp(chatFontScale))
         .background {
-            // hidden holders for the shortcuts: menu commands cannot reach this scene's state
-            Group {
-                Button("") { chatFontScale = ChatFont.clamp(chatFontScale + ChatFont.step) }
-                    .keyboardShortcut("+", modifiers: .command)
-                Button("") { chatFontScale = ChatFont.clamp(chatFontScale + ChatFont.step) }
-                    .keyboardShortcut("=", modifiers: .command)
-                Button("") { chatFontScale = ChatFont.clamp(chatFontScale - ChatFont.step) }
-                    .keyboardShortcut("-", modifiers: .command)
-                Button("") { chatFontScale = 1 }
-                    .keyboardShortcut("0", modifiers: .command)
-            }
-            .opacity(0)
+            // ⌘= as well as ⌘+, since the unshifted key is what most keyboards send;
+            // the rest are in the View menu, where they are discoverable
+            Button("") { chatFontScale = ChatFont.clamp(chatFontScale + ChatFont.step) }
+                .keyboardShortcut("=", modifiers: .command)
+                .opacity(0)
         }
         .navigationTitle("ToshLLM")
         .navigationSubtitle(mode == .images
