@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.84.1] - 2026-08-14
 
 ### Fixed
 - **An upscaled image is saved next to the original**, instead of landing in the models folder. Upscaling a photo from anywhere on the disk left the result among the model weights, and upscaling a generated image produced a file the "delete images on app close" option then wiped. The name also states the size you asked for, ×2 or ×4, rather than always ×4, and an existing file is never overwritten.
