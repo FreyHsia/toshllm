@@ -19,6 +19,74 @@ struct ImageControls: View {
     @EnvironmentObject var models: ModelStore
     @EnvironmentObject var server: ServerController
 
+    @StateObject private var upscaler = ImageUpscaler()
+    @AppStorage(SettingsKeys.upscalerFlavor) private var upscalerFlavor = ImageUpscaler.Flavor.photo.rawValue
+
+    private var flavor: ImageUpscaler.Flavor {
+        ImageUpscaler.Flavor(rawValue: upscalerFlavor) ?? .photo
+    }
+
+    /// Downloads the model on first use, so the button never dead-ends.
+    private func startUpscale(_ url: URL) {
+        guard ImageUpscaler.installed(flavor, in: models) else {
+            models.downloadImageComponent(urlString: flavor.component.urlString,
+                                          fileName: flavor.component.fileName)
+            return
+        }
+        upscaler.upscale(source: url, flavor: flavor, models: models, gpuIndex: -1)
+    }
+
+    /// Any image on disk, not just a generated one.
+    private func pickAndUpscale() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        startUpscale(url)
+    }
+
+    /// Standalone upscaler: works on any image the user picks, not only on a
+    /// generated one, and on the last result with the same model choice.
+    private var upscalerCard: some View {
+        Card(title: loc.t("Escalar imagen ×4", "Upscale image x4"),
+             icon: "arrow.up.left.and.arrow.down.right") {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("", selection: $upscalerFlavor) {
+                    ForEach(ImageUpscaler.Flavor.allCases) { f in
+                        Text(f.label(loc.isSpanish)).tag(f.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                Text(flavor.detail(loc.isSpanish)).font(.caption).foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Button(loc.t("Elegir imagen…", "Choose image…")) { pickAndUpscale() }
+                        .disabled(upscaler.isBusy)
+                    if upscaler.isBusy {
+                        ProgressView().controlSize(.small)
+                    } else if !ImageUpscaler.installed(flavor, in: models) {
+                        Text(loc.t("descarga 64 MB al usarlo", "downloads 64 MB on first use"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                if let url = upscaler.resultURL {
+                    HStack(spacing: 8) {
+                        Label(loc.t("Listo", "Done"), systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                        Button(loc.t("Mostrar", "Reveal")) {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }.font(.caption)
+                    }
+                }
+                if case .failed(let why) = upscaler.state, !why.isEmpty {
+                    Text(why).font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+
     /// Collapsed accordions (default: expanded).
     @State private var collapsed: Set<UUID> = []
     @AppStorage(SettingsKeys.imagenCleanupOnClose) private var cleanupOnClose = false
@@ -45,6 +113,8 @@ struct ImageControls: View {
                         .font(.caption2).foregroundStyle(.orange)
                 }
                 generateButton
+                Divider().padding(.vertical, 2)
+                upscalerCard
                 Divider().padding(.vertical, 2)
                 Toggle(isOn: $cleanupOnClose) {
                     Text(loc.t("Borrar imágenes al cerrar la app", "Delete images on app close"))
@@ -1021,6 +1091,14 @@ struct ImageCanvas: View {
 
     private func progressCanvas(_ gen: ImageGenerator) -> some View {
         VStack(spacing: 18) {
+            if let preview = gen.previewImage {
+                Image(nsImage: preview)
+                    .resizable().scaledToFit()
+                    .frame(maxWidth: 520, maxHeight: 520)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+                    .transition(.opacity)
+            }
             ProgressView(value: gen.progress > 0 ? gen.progress : nil)
                 .progressViewStyle(.linear).frame(width: 260)
             Text(stageLabel(gen)).font(.headline)

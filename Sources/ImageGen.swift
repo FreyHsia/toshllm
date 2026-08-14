@@ -14,7 +14,7 @@ import Combine
 
 /// One downloadable piece of an image model, tagged with the sd-cli flag it maps to.
 struct ImageGenComponent: Identifiable {
-    enum Kind { case checkpoint, diffusion, vae, textEncoder, t5, clipL }
+    enum Kind { case checkpoint, diffusion, vae, audioVAE, connectors, textEncoder, t5, clipL }
     let kind: Kind
     let urlString: String
     let fileName: String
@@ -27,6 +27,8 @@ struct ImageGenComponent: Identifiable {
         case .checkpoint:  return "--model"
         case .diffusion:   return "--diffusion-model"
         case .vae:         return "--vae"
+        case .audioVAE:    return "--audio-vae"
+        case .connectors:  return "--embeddings-connectors"
         case .textEncoder: return "--llm"
         case .t5:          return "--t5xxl"
         case .clipL:       return "--clip_l"
@@ -38,6 +40,8 @@ struct ImageGenComponent: Identifiable {
         case .checkpoint:  return spanish ? "Modelo" : "Model"
         case .diffusion:   return spanish ? "Modelo de difusión" : "Diffusion model"
         case .vae:         return "VAE"
+        case .audioVAE:    return spanish ? "VAE de audio" : "Audio VAE"
+        case .connectors:  return spanish ? "Conectores" : "Connectors"
         case .textEncoder, .t5, .clipL: return spanish ? "Codificador de texto" : "Text encoder"
         }
     }
@@ -406,6 +410,9 @@ final class ImageGenerator: ObservableObject {
     @Published var stepText: String = ""
     @Published var resultImage: NSImage?
     @Published var resultURL: URL?
+    /// Latent preview refreshed by the engine every few steps, so the wait shows
+    /// the image forming instead of a bare bar.
+    @Published var previewImage: NSImage?
     /// Wall-clock seconds of the last completed run, for the "generated in" caption.
     @Published var lastDuration: Int = 0
 
@@ -421,6 +428,9 @@ final class ImageGenerator: ObservableObject {
     private var process: Process?
     private var startedAt: Date?
     private var firstStepAt: Date?
+    private var previewURL: URL?
+    private var previewTimer: Timer?
+    private var previewSeenAt: Date?
     /// Tail of the engine output, kept so a failure can be diagnosed (e.g. a GPU
     /// watchdog timeout) into a helpful message.
     private var logTail = ""
@@ -537,6 +547,12 @@ final class ImageGenerator: ObservableObject {
             // The output format follows the file extension (PNG lossless, JPG lighter).
             "-o", out.path,
         ]
+        // `proj` needs no extra weights (it projects the latents), so the preview
+        // costs a rescale per interval and never a second model download.
+        let preview = FileManager.default.temporaryDirectory
+            .appendingPathComponent("toshllm-preview-\(token).png")
+        previewURL = preview
+        args += ["--preview", "proj", "--preview-interval", "3", "--preview-path", preview.path]
         // img2img: seed the run with an existing image. Strength is how much to
         // change it (0 keeps it, 1 regenerates from scratch).
         if !initImagePath.isEmpty {
@@ -608,6 +624,7 @@ final class ImageGenerator: ObservableObject {
 
         resultImage = nil
         resultURL = nil
+        previewImage = nil
         progress = 0
         stepText = ""
         stage = .loading
@@ -617,8 +634,30 @@ final class ImageGenerator: ObservableObject {
         do {
             try p.run()
             process = p
+            startPreviewWatch()
         } catch {
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Poll the preview file while the run lasts. Reading it mid-write just yields
+    /// nil, so a failed load is skipped rather than treated as an error.
+    private func startPreviewWatch() {
+        previewTimer?.invalidate()
+        previewSeenAt = nil
+        previewTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshPreview() }
+        }
+    }
+
+    private func refreshPreview() {
+        guard isBusy, let url = previewURL,
+              let mod = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                                .contentModificationDate else { return }
+        guard previewSeenAt != mod else { return }
+        if let img = NSImage(contentsOf: url) {
+            previewSeenAt = mod
+            previewImage = img
         }
     }
 
@@ -645,6 +684,10 @@ final class ImageGenerator: ObservableObject {
 
     private func finish(status: Int32, output: URL) {
         process = nil
+        previewTimer?.invalidate()
+        previewTimer = nil
+        if let p = previewURL { try? FileManager.default.removeItem(at: p) }
+        previewImage = nil
         defer { onFinish?() }
         guard status == 0, let img = NSImage(contentsOf: output) else {
             // 15/SIGTERM and 2/SIGINT are user cancels, not errors.
@@ -962,4 +1005,112 @@ final class ImageGenPool: ObservableObject {
         UserDefaults.standard.set(try? JSONEncoder().encode(configs),
                                   forKey: SettingsKeys.imagenInstances)
     }
+}
+
+/// ESRGAN upscaling of an already generated image. Separate from ImageGenerator:
+/// it reuses the finished PNG as input, so it never re-runs the diffusion model.
+@MainActor
+final class ImageUpscaler: ObservableObject {
+    enum State: Equatable { case idle, running, done, failed(String) }
+
+    @Published var state: State = .idle
+    @Published var resultImage: NSImage?
+    @Published var resultURL: URL?
+
+    /// Both are ESRGAN-architecture and load in sd-cli; they are specialists, not
+    /// ranks. Measured on the same crop: x4plus keeps gradients smooth, UltraSharp
+    /// adds contrast and micro-detail, which flatters generated art and invents
+    /// texture on a real photo.
+    enum Flavor: String, CaseIterable, Identifiable {
+        case photo, art
+        var id: String { rawValue }
+
+        var component: ImageGenComponent {
+            switch self {
+            case .photo:
+                return ImageGenComponent(kind: .checkpoint,
+                    urlString: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+                    fileName: "RealESRGAN_x4plus.pth", sizeGB: 0.064)
+            case .art:
+                return ImageGenComponent(kind: .checkpoint,
+                    urlString: "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x-UltraSharp.pth",
+                    fileName: "4x-UltraSharp.pth", sizeGB: 0.064)
+            }
+        }
+
+        func label(_ spanish: Bool) -> String {
+            switch self {
+            case .photo: return spanish ? "Fotos" : "Photos"
+            case .art:   return spanish ? "Imagen generada" : "Generated art"
+            }
+        }
+
+        func detail(_ spanish: Bool) -> String {
+            switch self {
+            case .photo: return spanish ? "RealESRGAN x4plus. Respeta la textura real; no inventa detalle."
+                                        : "RealESRGAN x4plus. Respects real texture; invents no detail."
+            case .art:   return spanish ? "4x-UltraSharp. Más contraste y detalle fino; luce en arte generado."
+                                        : "4x-UltraSharp. More contrast and fine detail; shines on generated art."
+            }
+        }
+    }
+
+    static func installed(_ flavor: Flavor, in models: ModelStore) -> Bool {
+        FileManager.default.fileExists(atPath: flavor.component.path(in: models.imagenDirectory).path)
+    }
+
+    var isBusy: Bool { state == .running }
+
+    private var process: Process?
+
+    func upscale(source: URL, flavor: Flavor, models: ModelStore, gpuIndex: Int) {
+        guard !isBusy else { return }
+        let dir = models.imagenDirectory
+        let out = models.imagenDirectory
+            .appendingPathComponent(source.deletingPathExtension().lastPathComponent + "-x4.png")
+
+        let args = ["-M", "upscale",
+                    "--upscale-model", flavor.component.path(in: dir).path,
+                    // tiled so a single Metal dispatch stays under the GPU watchdog
+                    "--upscale-tile-size", "128",
+                    "-i", source.path,
+                    "-o", out.path]
+
+        var env = ProcessInfo.processInfo.environment
+        let devices = MTLCopyAllDevices()
+        if gpuIndex >= 0 && devices.count > 1 {
+            env["GGML_METAL_DEVICE_INDEX"] = String(gpuIndex)
+        }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ImageGenerator.binary)
+        p.arguments = args
+        p.environment = env
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        p.terminationHandler = { [weak self] proc in
+            Task { @MainActor in
+                self?.process = nil
+                guard proc.terminationStatus == 0, let img = NSImage(contentsOf: out) else {
+                    self?.state = .failed("exit \(proc.terminationStatus)")
+                    return
+                }
+                self?.resultImage = img
+                self?.resultURL = out
+                self?.state = .done
+            }
+        }
+        state = .running
+        resultImage = nil
+        resultURL = nil
+        do {
+            try p.run()
+            process = p
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    func cancel() { process?.terminate() }
 }
