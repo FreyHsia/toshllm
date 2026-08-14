@@ -7,7 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **An upscaled image is saved next to the original**, instead of landing in the models folder. Upscaling a photo from anywhere on the disk left the result among the model weights, and upscaling a generated image produced a file the "delete images on app close" option then wiped. The name also states the size you asked for, ×2 or ×4, rather than always ×4, and an existing file is never overwritten.
-- **Scrolling the chat no longer gets stuck on an answer about code** (#58)... a paragraph mentioning two shell variables, or two prices, was read as a formula and handed to the formula renderer, which turned the text into unreadable maths and swallowed the mouse wheel. Only what really looks like a formula is treated as one now, and a formula or diagram in the middle of a conversation passes the wheel through to the chat.
+- **Scrolling the chat no longer gets stuck on an answer about code** ([#58](https://github.com/engeldlgado/toshllm/issues/58))... a paragraph mentioning two shell variables, or two prices, was read as a formula and handed to the formula renderer, which turned the text into unreadable maths and swallowed the mouse wheel. Only what really looks like a formula is treated as one now, and a formula or diagram in the middle of a conversation passes the wheel through to the chat.
 - **Engine errors are shown in your language.** Every diagnostic the engine produces was being printed with the Spanish and the English text one after the other, separated by a slash, in the same line. There are thirty of these messages and all of them read that way.
 - **A failed engine no longer spills its whole explanation across the toolbar.** The state now shows a warning triangle and the word Error, with the full diagnosis when you hover it.
 - **The menu bar icon tells a crashed engine from a stopped one.** They looked identical, which mattered because a crash is the one thing worth noticing while you are working in another app. Starting has its own icon too, and the icon now announces its state to VoiceOver.
@@ -160,9 +160,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Improved
 - **Long prompts are much faster on GCN/Vega**... attention during prompt processing was decomposed into separate matrix multiplications there, because the blocked Flash Attention kernel had only been validated on 32-lane GPUs: on a Radeon RX Vega 64, Qwen3 4B went from 295 to 457 t/s at 8k of context, and Llama 3.2 1B from 917 to 1553 t/s, with identical perplexity.
 - **More operations run on the GPU on GCN/Vega**... sums, argmax, count-equal and the SSM scan were gated on a 32-lane reduction and fell back to the CPU: they now size their reductions and shared memory by the detected 64-lane width. Argmax matters for speculative decoding, and the SSM scan for Mamba-style models.
-- **Ternary Q1_0 and Q2_0 models generate on the GPU there too** (#41)... they loaded and processed prompts on the GPU but decoded on the CPU, because their matrix-vector kernels split work across a fixed 32 lanes.
+- **Ternary Q1_0 and Q2_0 models generate on the GPU there too** ([#41](https://github.com/engeldlgado/toshllm/issues/41))... they loaded and processed prompts on the GPU but decoded on the CPU, because their matrix-vector kernels split work across a fixed 32 lanes.
 - **Fused Q/K/V decode covers Q2_K on GCN/Vega**... the specialization was held back to 32-lane GPUs while its matrix-vector kernel was ported, which finished in 0.83.9.
-- **Qwen3-VL, Qwen3.5 and Qwen3.6 models now reuse the prompt cache and can shift context** (#52)... the engine refused every cache shift on these models, so editing the beginning of a prompt reprocessed all of it: an 821-token prompt whose opening note was deleted is now reused whole instead of processed again.
+- **Qwen3-VL, Qwen3.5 and Qwen3.6 models now reuse the prompt cache and can shift context** ([#52](https://github.com/engeldlgado/toshllm/issues/52))... the engine refused every cache shift on these models, so editing the beginning of a prompt reprocessed all of it: an 821-token prompt whose opening note was deleted is now reused whole instead of processed again.
 - **BF16 models and vision towers are faster on AMD GPUs**... their matrix multiplications now accumulate in float instead of emulated bfloat: prompt processing measured 77% faster on Qwen3 0.6B BF16, and a BF16 vision encoder went from 8.6 to 7.6 seconds per image on a Radeon RX Vega 64.
 
 ## [0.83.9] - 2026-08-02
@@ -292,8 +292,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.82.4] - 2026-07-18
 
 ### Added
-- **Ternary Q2_0 models now load** (#41)... mainline's Q2_0 type runs Prism ML's Ternary Bonsai GGUFs on Metal instead of failing with "invalid ggml type 42".
-- **Manual vision projector selection** (#35)... pick a specific `mmproj`, keep auto-pairing, or turn vision off, from each model card.
+- **Ternary Q2_0 models now load** ([#41](https://github.com/engeldlgado/toshllm/issues/41))... mainline's Q2_0 type runs Prism ML's Ternary Bonsai GGUFs on Metal instead of failing with "invalid ggml type 42".
+- **Manual vision projector selection** ([#35](https://github.com/engeldlgado/toshllm/issues/35))... pick a specific `mmproj`, keep auto-pairing, or turn vision off, from each model card.
 - **DFlash speculative decoding (experimental)**... a downloaded per-model draft with Off/Auto/Forced modes; Auto only engages on MoE with CPU-offloaded experts, up to +21% generation on an RX 6700 XT.
 - **DFlash sizes itself to the GPU**... Auto budgets the weights, both KV caches and the VRAM reserve before launch, then offloads draft layers or stays off, and warns if VRAM stays above 95%.
 
@@ -314,8 +314,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Share your benchmarks to [toshllm.com](https://toshllm.com) from the app**... Benchmarks → Share with the community runs the standard workload and, after you review the exact data, submits it signed per-install (no account needed); opt-in, nothing leaves your machine until you confirm.
 
 ### Fixed
-- **Image generation no longer aborts on AMD GCN/Vega (wave64) GPUs** (#39)... an op the wave64 backend has no kernel for (e.g. the VAE encode's small matmul in img2img) now falls to CPU instead of crashing the whole run.
-- **Added servers now follow the global Settings** (#40)... they used to freeze a snapshot at creation, so changing e.g. Context never reached them; now they inherit everything except the fields you change on their own card (a pin-slash button restores full inheritance), and the card gained a Context row.
+- **Image generation no longer aborts on AMD GCN/Vega (wave64) GPUs** ([#39](https://github.com/engeldlgado/toshllm/issues/39))... an op the wave64 backend has no kernel for (e.g. the VAE encode's small matmul in img2img) now falls to CPU instead of crashing the whole run.
+- **Added servers now follow the global Settings** ([#40](https://github.com/engeldlgado/toshllm/issues/40))... they used to freeze a snapshot at creation, so changing e.g. Context never reached them; now they inherit everything except the fields you change on their own card (a pin-slash button restores full inheritance), and the card gained a Context row.
 
 ## [0.82.2] - 2026-07-17
 
@@ -352,7 +352,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Improved
 - **Conversation persistence now works on the bundled engine**, where it was limited to the experimental one... reopening an 8.6k-token prompt after an engine restart takes 0.9 s instead of 24.8 s.
 - **Vision models keep Flash Attention on the GPU**... describing an image costs 248-358 MB of VRAM instead of 3.4-4.7 GB.
-- **Browse reads each candidate's GGUF header** (#36)... a Mixture-of-Experts model whose filename hides it is no longer sized against full VRAM.
+- **Browse reads each candidate's GGUF header** ([#36](https://github.com/engeldlgado/toshllm/issues/36))... a Mixture-of-Experts model whose filename hides it is no longer sized against full VRAM.
 - **The engine stamps the ToshLLM version in its startup log**... llama.cpp's own build number only identifies the upstream commit.
 
 ### Fixed
@@ -364,7 +364,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.81.67] - 2026-07-14
 
 ### Improved
-- **MoE prompt processing on GCN/Vega now uses the tiled matmul** (#29)... expert layers were still going through the mat-vec kernels during prefill; `TOSH_W64_MMID_PREFILL_DISABLE=1` in Extra arguments reverts to the old route.
+- **MoE prompt processing on GCN/Vega now uses the tiled matmul** ([#29](https://github.com/engeldlgado/toshllm/issues/29))... expert layers were still going through the mat-vec kernels during prefill; `TOSH_W64_MMID_PREFILL_DISABLE=1` in Extra arguments reverts to the old route.
 - **Model names and speed estimates are clearer**... local GGUFs show readable titles, capabilities and quantization, while estimates now account for quant size and active MoE parameters.
 
 ### Fixed
@@ -389,8 +389,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **Multi-GPU hand-off hardening** (candidate fix for #31)... the layer hand-off now drains the destination GPU before writing its input, and the fallback copy no longer issues an invalid cross-device blit.
-- **Image generation no longer times out on eGPUs** (#33)... the image engine now gets the same private-VRAM buffer fix the LLM engine got in 0.81.30.
-- **Chat text no longer cuts off with "…" on indented lines** at certain window widths (#32).
+- **Image generation no longer times out on eGPUs** ([#33](https://github.com/engeldlgado/toshllm/issues/33))... the image engine now gets the same private-VRAM buffer fix the LLM engine got in 0.81.30.
+- **Chat text no longer cuts off with "…" on indented lines** at certain window widths ([#32](https://github.com/engeldlgado/toshllm/issues/32)).
 
 ## [0.81.65] - 2026-07-13
 
@@ -543,7 +543,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.81.50] - 2026-07-07
 
 ### Fixed
-- **Qwen-Image no longer crashes at the end of generation**... its 3D VAE uses an operation (`IM2COL_3D`) that Metal doesn't implement, so the run aborted right at the decode step after minutes of sampling (#19). The VAE now runs on the CPU for this model automatically: decoding takes a few extra seconds and the image comes out. A Metal kernel to put it back on the GPU is planned.
+- **Qwen-Image no longer crashes at the end of generation**... its 3D VAE uses an operation (`IM2COL_3D`) that Metal doesn't implement, so the run aborted right at the decode step after minutes of sampling ([#19](https://github.com/engeldlgado/toshllm/issues/19)). The VAE now runs on the CPU for this model automatically: decoding takes a few extra seconds and the image comes out. A Metal kernel to put it back on the GPU is planned.
 
 ### Changed
 - **Clearer offload label**... the image studio's "VAE on CPU" toggle is now "Offload to CPU", which is what it always did (keep weights in RAM and stream them to VRAM per stage, to save VRAM). The Qwen-Image VAE fix above is independent and automatic.
@@ -560,7 +560,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - **Parallel image instances**... the image studio can now run several generations at once. Each instance is a collapsible accordion with its own full configuration (model, prompt, size, GPU, steps, seed, format, img2img), so a multi-GPU Mac renders up to one variation per card from a single Generate. New instances inherit instance 1's prompt until you type their own, and the canvas becomes a grid with per-instance progress and results. Two instances on the same GPU show a warning (that can hang the card on AMD Macs).
-- **Benchmark workload sizes**... two new fields choose how many prompt tokens (-p) and generated tokens (-n) the benchmark measures, while keeping every ToshLLM optimization active (#22). Defaults stay at the comparable pp512/tg128; each result records its sizes and the history labels non-standard runs.
+- **Benchmark workload sizes**... two new fields choose how many prompt tokens (-p) and generated tokens (-n) the benchmark measures, while keeping every ToshLLM optimization active ([#22](https://github.com/engeldlgado/toshllm/issues/22)). Defaults stay at the comparable pp512/tg128; each result records its sizes and the history labels non-standard runs.
 - **Flux 2 image models**... the catalog adds Flux.2 klein 9B (Apache license, 4 steps, for 16 GB GPUs) and Flux.2 dev (the 32B quality reference, for 24 GB+ GPUs, non-commercial license). Both download from non-gated mirrors and sample with euler as upstream recommends; dev offloads idle models to CPU to fit. Fresh additions, feedback welcome.
 
 ### Fixed
