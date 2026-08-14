@@ -1,0 +1,24 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -835,17 +835,19 @@
+ 
+     // The 8x4 tile halves the simdgroups per threadgroup, so it needs enough tokens to keep
+     // the GPU in threadgroups; below ~192 it loses (measured 8.7% at 64 tokens on q8_0).
+     static const int wide_floor = []() {
+         const char * s = getenv("TOSH_MM_WIDE_FLOOR");
+-        return s ? atoi(s) : 192;
++        return s ? atoi(s) : 112;
+     }();
+ 
+     // the 64-token tile rounds the batch up, so a tail of 32 or fewer pays for a half-empty
+     // group that this one covers exactly. Past 128 the padding is a smaller share and the
+     // grid-lookup quants lose more re-dequantizing than they save.
+-    bool tail_32 = op->ne[1] < wide_floor && (op->ne[1] % 64) >= 1 && (op->ne[1] % 64) <= 32 &&
++    // the tail keeps its own bound: it beats the 8x4 tile on a 32-token remainder at any size,
++    // so it must not follow the wide floor down
++    bool tail_32 = op->ne[1] < 192 && (op->ne[1] % 64) >= 1 && (op->ne[1] % 64) <= 32 &&
+                    getenv("TOSH_MM_NARROW_TAIL_DISABLE") == nullptr;
+     if (tail_32 && op->ne[1] > 128) {
+         switch (tsrc0) {
+             case GGML_TYPE_IQ1_S:
+             case GGML_TYPE_IQ1_M:
