@@ -489,7 +489,7 @@ private struct MyModelsTab: View {
     private var shown: [LocalModel] {
         guard filter != .all else { return models.models }
         return models.models.filter { model in
-            let traits = ModelTraitsCache.traits(for: model.url.path)
+            let traits = ModelTraitsCache.cached(for: model.url.path) ?? .unknown
             switch filter {
             case .all: return true
             case .vision: return traits.hasVision

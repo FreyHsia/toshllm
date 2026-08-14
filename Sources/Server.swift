@@ -1399,9 +1399,8 @@ final class ServerController: ObservableObject {
         state = .stopped
     }
 
-    /// Quitting the app: the engine has to be signalled inline. The prewarm path
-    /// of `stop()` terminates it after an await, and that task does not outlive
-    /// the process, so the child was left running holding its VRAM.
+    /// Quitting: the engine must be signalled inline, since a detached task does
+    /// not outlive the process.
     func stopImmediately() {
         healthTask?.cancel()
         dflashMemoryTask?.cancel()

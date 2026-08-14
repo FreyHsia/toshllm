@@ -156,7 +156,7 @@ struct ServerLogView: View {
                                 modelPath = m.url.path
                                 ncmoe = Estimator.estimateCurrent(spec: Catalog.spec(forLocal: m), hw: hardware).suggestedNcmoe
                             } label: {
-                                Label(m.name + ModelTraitsCache.traits(for: m.url.path).pickerSuffix(spanish: loc.isSpanish),
+                                Label(m.name + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""),
                                       systemImage: modelPath == m.url.path ? "checkmark" : "cpu")
                             }
                         }

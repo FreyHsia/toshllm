@@ -471,9 +471,8 @@ struct CodeBlock: View {
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(Color(nsColor: OneDarkPro.background).brightness(-0.04))
 
-            // No scroll view of its own: nested inside the transcript's scroll it
-            // re-tiles on every geometry change and hangs the layout pass. Long
-            // lines wrap here and the preview sheet keeps the horizontal view.
+            // No scroll view of its own: nested in the transcript's scroll it
+            // re-tiles on every geometry change.
             SyntaxHighlightedCode(source: content, language: language)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

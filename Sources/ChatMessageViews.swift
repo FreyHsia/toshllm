@@ -479,8 +479,8 @@ struct StreamingRichText: View {
     private let tick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        // One view, not a branch: switching branches would tear down and rebuild
-        // the whole formatted subtree every time the reader scrolls away.
+        // One view, not a branch: switching branches rebuilds the whole
+        // formatted subtree.
         RichText(text: smooth ? String(text.prefix(revealed)) : text, streaming: true)
             .onReceive(tick) { _ in
                 guard smooth else { return }

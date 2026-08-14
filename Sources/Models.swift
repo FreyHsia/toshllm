@@ -278,6 +278,9 @@ final class ModelStore: ObservableObject {
         ModelTraitsCache.invalidate()
         models = LocalModel.scan(in: directory)
         presentFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+        ModelTraitsCache.warm(paths: models.map(\.url.path)) { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
 
     /// Every name in the folder, including the projectors and drafts the model

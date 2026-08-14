@@ -179,7 +179,7 @@ struct BenchmarksView: View {
                         Text(loc.t("— elegir —", "— pick —")).tag("")
                         ForEach(models.models) { m in
                             Text(ModelName.forPath(m.url.path).display
-                                 + ModelTraitsCache.traits(for: m.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                 + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""))
                                 .tag(m.url.path)
                         }
                     }

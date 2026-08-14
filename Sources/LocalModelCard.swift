@@ -17,7 +17,7 @@ struct LocalModelCard: View {
 
     var body: some View {
         let path = model.url.path
-        let traits = ModelTraitsCache.traits(for: path)
+        let traits = ModelTraitsCache.cached(for: path) ?? .unknown
         let parsed = ModelName.forPath(path)
         let est = Estimator.estimateCurrent(spec: Catalog.spec(forLocal: model), hw: hardware,
                                             ncmoeOverride: ServerSettings.recalledNcmoe(forModel: path))

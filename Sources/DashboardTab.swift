@@ -205,7 +205,8 @@ struct DashboardView: View {
                         Text(loc.t("Sin modelo", "No model")).tag("")
                         ForEach(models.models) {
                             Text(ModelName.forPath($0.url.path).display
-                                 + ModelTraitsCache.traits(for: $0.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                 + (ModelTraitsCache.cached(for: $0.url.path)?
+                                        .pickerSuffix(spanish: loc.isSpanish) ?? ""))
                                 .tag($0.url.path)
                         }
                     }
@@ -559,7 +560,8 @@ struct AddedServerCard: View {
                         Text(loc.t("Sin modelo", "No model")).tag("")
                         ForEach(models.models) {
                             Text(ModelName.forPath($0.url.path).display
-                                 + ModelTraitsCache.traits(for: $0.url.path).pickerSuffix(spanish: loc.isSpanish))
+                                 + (ModelTraitsCache.cached(for: $0.url.path)?
+                                        .pickerSuffix(spanish: loc.isSpanish) ?? ""))
                                 .tag($0.url.path)
                         }
                     }

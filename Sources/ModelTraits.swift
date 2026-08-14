@@ -11,6 +11,9 @@ struct ModelTraits {
     let hasMTP: Bool
     let hasDflash: Bool
 
+    /// Shown until the background warm has read the header.
+    static let unknown = ModelTraits(isMoE: false, hasVision: false, hasMTP: false, hasDflash: false)
+
     static func of(path: String) -> ModelTraits {
         ModelTraits(isMoE: ServerSettings.modelIsMoE(at: path),
                     hasVision: ServerSettings.mmprojPath(forModel: path) != nil,
@@ -47,6 +50,20 @@ enum ModelTraitsCache {
         entries[path] = traits
         lock.unlock()
         return traits
+    }
+
+    /// For view bodies: never reads the header, so drawing cannot block on it.
+    static func cached(for path: String) -> ModelTraits? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[path]
+    }
+
+    static func warm(paths: [String], then done: @escaping () -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            for path in paths { _ = traits(for: path) }
+            DispatchQueue.main.async(execute: done)
+        }
     }
 
     static func invalidate() {

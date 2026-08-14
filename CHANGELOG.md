@@ -3,6 +3,16 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **A conversation with code blocks no longer freezes while you scroll it** ([#58](https://github.com/engeldlgado/toshllm/issues/58))... every code block, and every panel of a tool call, carried a scroll view of its own, and each one re-tiled on every geometry change while scrolling. On macOS 15 that could leave the app unresponsive for half a minute. Long lines now wrap to the bubble and the expand button still opens the full-width view.
+- **Quitting the app always stops the engine.** With the prompt cache enabled the engine was asked to stop only after the app had saved its cached prefix, and that save outlived the app itself, so the engine stayed running and holding video memory until you noticed it.
+
+### Improved
+- **The window no longer stalls for a few seconds on launch.** The model menu was reading the header of every model in the folder while it drew, which on a folder of large models meant a spinning cursor before the app was usable. The headers are now read in the background and the menu fills in as they arrive.
+- **Scrolling away from an answer while it is being written no longer rebuilds it.** The typewriter and the plain view were two separate branches, so stepping away threw the formatted text away and built it again from scratch.
+
 ## [0.84.1] - 2026-08-14
 
 ### Fixed
