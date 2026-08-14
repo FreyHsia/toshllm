@@ -3,6 +3,22 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Video generation.** A third mode next to Chat and Images turns a description into a short clip, with Wan 2.1, Wan 2.2, LTX-2 and HunyuanVideo in the model list and the download sizes stated before you commit to one. The result arrives as individual frames you can scrub through, and exports to mp4.
+- **An image upscaler that also takes your own photos.** Images now has Create and Upscale tabs; Upscale enlarges anything you pick, several files at a time, and shows the before and after under a slider you drag to compare. Three models: one trained on real photographic damage, one for generated art, and your own file if you have a favourite.
+- **The image being generated is now visible while it is generated**, refreshed every few steps, instead of a progress bar and a wait.
+- **The benchmark history records whether Infinity Fabric Link was on**, so a shared result can be told apart from one measured with the bridge off.
+
+### Fixed
+- **Video no longer comes out as noise on AMD cards.** The 3D convolution the video decoder needs had no Metal implementation, so it fell back to a version slow enough that the card gave up mid-frame and returned whatever was in memory. Decoding a clip went from about three minutes to nineteen seconds in the process.
+- **Infinity Fabric Link says when it will do nothing.** Turning it on while splitting by layers has no effect, because the transfer it accelerates only happens when splitting by tensors; the setting now says so instead of looking active.
+- **The memory estimate accounts for splitting by tensors**, which reserves a working buffer per card and per reduction step that was not being counted.
+
+### Improved
+- **The chat redraws less while an answer streams in**, and file edits in tool results no longer re-split their text on every token.
+
 ## [0.83.23] - 2026-08-13
 
 ### Fixed
