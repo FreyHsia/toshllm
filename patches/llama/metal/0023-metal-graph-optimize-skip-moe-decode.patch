@@ -1,0 +1,53 @@
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -1339,17 +1339,49 @@
+             ctx->capture_started = false;
+         }
+     }
+ 
+     return GGML_STATUS_SUCCESS;
++}
++
++// the reorder gains on dense decode but disturbs the expert chain on MoE, so this stays
++// narrow on purpose
++static bool ggml_metal_graph_is_moe_decode(const struct ggml_cgraph * gf, int max_tokens) {
++    bool has_experts = false;
++
++    for (int i = 0; i < gf->n_nodes; i++) {
++        const struct ggml_tensor * node = gf->nodes[i];
++
++        // mul_mat_id carries the experts in ne[1] and the tokens in ne[2]
++        const int dim = node->op == GGML_OP_MUL_MAT ? 1 : (node->op == GGML_OP_MUL_MAT_ID ? 2 : -1);
++        if (dim < 0) {
++            continue;
++        }
++
++        if (node->src[1] && node->src[1]->ne[dim] > max_tokens) {
++            return false;
++        }
++
++        has_experts |= node->op == GGML_OP_MUL_MAT_ID;
++    }
++
++    return has_experts;
+ }
+ 
+ void ggml_metal_graph_optimize(ggml_metal_t ctx, struct ggml_cgraph * gf) {
+     //const int64_t t_start = ggml_time_us();
+ 
+     if (ctx->use_graph_optimize) {
+-        ggml_graph_optimize(gf);
++        static int max_tokens = -1;
++        if (max_tokens < 0) {
++            const char * s = getenv("GGML_METAL_GRAPH_OPTIMIZE_MIN_BATCH");
++            max_tokens = s ? atoi(s) - 1 : 7;
++        }
++
++        if (max_tokens < 0 || !ggml_metal_graph_is_moe_decode(gf, max_tokens)) {
++            ggml_graph_optimize(gf);
++        }
+     }
+ 
+     //printf("%s: graph optimize took %.3f ms\n", __func__, (ggml_time_us() - t_start) / 1000.0);
+ }
+ 
