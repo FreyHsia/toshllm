@@ -1,0 +1,68 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -13044,26 +13044,51 @@
+                 }
+                 lsma += 8*64;
+                 lsmb += 8*64;
+ 
+                 for (short ik = 1; ik < NK/8; ik++) {
+-                    FOR_UNROLL (short k = 0; k < 8; k += 2) {
+-                        vec<S0,2> av[NLR];
+-                        vec<S1,2> bv[4];
+-                        for (short rr = 0; rr < NLR; rr++) {
+-                            av[rr] = *(threadgroup const vec<S0,2> *)(lsma + 64*rr + 8*lr + k);
+-                        }
+-                        for (short cc = 0; cc < 4; cc++) {
+-                            const short col = lc + 4*cc;
+-                            bv[cc] = *(threadgroup const vec<S1,2> *)(lsmb + 64*(col/8) + 8*(col%8) + k);
+-                        }
+-                        for (short rr = 0; rr < NLR; rr++) {
+-                            for (short cc = 0; cc < 4; cc++) {
+-                                // mul+add: no bfloat2 fma() overload; fast math contracts it anyway
+-                                pacc[rr][cc] = vec<S0,2>(av[rr])*vec<S0,2>(bv[cc]) + pacc[rr][cc];
++                    // bv is the small side (4 against NLR), so widening only it halves its reads
++                    // for four extra registers instead of twelve. Only pays on the 8x4 tile:
++                    // on the narrow one it measures 1.3 to 1.8% worse
++                    if (NLR == 8) {
++                        FOR_UNROLL (short k = 0; k < 8; k += 4) {
++                            vec<S1,4> bv[4];
++                            for (short cc = 0; cc < 4; cc++) {
++                                const short col = lc + 4*cc;
++                                bv[cc] = *(threadgroup const vec<S1,4> *)(lsmb + 64*(col/8) + 8*(col%8) + k);
+                             }
++                            FOR_UNROLL (short h = 0; h < 2; h++) {
++                                vec<S0,2> av[NLR];
++                                for (short rr = 0; rr < NLR; rr++) {
++                                    av[rr] = *(threadgroup const vec<S0,2> *)(lsma + 64*rr + 8*lr + k + 2*h);
++                                }
++                                for (short rr = 0; rr < NLR; rr++) {
++                                    for (short cc = 0; cc < 4; cc++) {
++                                        const vec<S0,2> b2 = h == 0 ? vec<S0,2>(bv[cc].xy) : vec<S0,2>(bv[cc].zw);
++                                        pacc[rr][cc] = vec<S0,2>(av[rr])*b2 + pacc[rr][cc];
++                                    }
++                                }
++                            }
+                         }
++                    } else {
++                        FOR_UNROLL (short k = 0; k < 8; k += 2) {
++                            vec<S0,2> av[NLR];
++                            vec<S1,2> bv[4];
++                            for (short rr = 0; rr < NLR; rr++) {
++                                av[rr] = *(threadgroup const vec<S0,2> *)(lsma + 64*rr + 8*lr + k);
++                            }
++                            for (short cc = 0; cc < 4; cc++) {
++                                const short col = lc + 4*cc;
++                                bv[cc] = *(threadgroup const vec<S1,2> *)(lsmb + 64*(col/8) + 8*(col%8) + k);
++                            }
++                            for (short rr = 0; rr < NLR; rr++) {
++                                for (short cc = 0; cc < 4; cc++) {
++                                    // mul+add: no bfloat2 fma() overload; fast math contracts it anyway
++                                    pacc[rr][cc] = vec<S0,2>(av[rr])*vec<S0,2>(bv[cc]) + pacc[rr][cc];
++                                }
++                            }
++                        }
+                     }
+ 
+                     lsma += 8*64;
+                     lsmb += 8*64;
+                 }
