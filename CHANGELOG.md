@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **A model that does not fit no longer crashes the engine.** When the card refused a memory block the engine read the failed allocation anyway and died with a segmentation fault instead of reporting the problem, so the app could only say the engine had stopped. The failure is now reported, and the message tells you what to do about it. Diagnosed by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/) on an RX 570, who also traced it to the exact line.
+- **A card that refuses one large block can now split it.** Some drivers advertise room for a 4 GiB block and then turn it down; starting with `TOSH_METAL_MAX_BUFFER_MB=1024` splits the weights into smaller blocks instead, at the same speed (measured identical on an 8B, and perplexity unchanged). Also suggested by Slice.
+
 ### Improved
 - **Qwen3.5 and Qwen3.6 models write answers 7 to 13% faster.** Most of their layers copy a running state once per token, and that copy went through a kernel that rebuilds a four dimensional index for every single number it moves. A copy whose two sides are already laid out in order now skips all of that: 61.7 to 70.0 tokens/s on a 14B A3B and 43.5 to 46.6 on a dense 9B, with prompt speed unchanged. Models without that running state, such as Llama, Gemma or gpt-oss, are unaffected.
 - **Mixture-of-experts models read prompts up to 16% faster.** The wider matrix tile that dense models already used now also serves the expert matmul, and an expert that receives few tokens skips the columns it would only pad: gpt-oss-20b goes from 1113 to 1294 tokens/s reading a 512-token prompt, and a 14B A3B from 1257 to 1284. Generation speed is unchanged.

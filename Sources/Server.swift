@@ -1336,6 +1336,11 @@ final class ServerController: ObservableObject {
         if tail.contains("address already in use") || tail.contains("couldn't bind") {
             return "Puerto ocupado: cambia el puerto en Ajustes / port busy: change it in Settings"
         }
+        // a single oversized block failing is not the same as running out of memory: the driver
+        // can refuse one allocation while the total still fits
+        if tail.contains("failed to allocate buffer, size =") {
+            return "La tarjeta rechazó un bloque de memoria demasiado grande: reduce el contexto, o arranca con TOSH_METAL_MAX_BUFFER_MB=1024 para repartirlo / the card refused a single oversized memory block: reduce context, or start with TOSH_METAL_MAX_BUFFER_MB=1024 to split it"
+        }
         if tail.contains("out of memory") || tail.contains("failed to allocate")
             || tail.contains("insufficient memory") || tail.contains("kiogpucommandbuffercallbackerroroutofmemory") {
             return "Memoria insuficiente: sube 'Expertos MoE en CPU' o reduce el contexto / out of memory: raise 'MoE experts on CPU' or reduce context"
