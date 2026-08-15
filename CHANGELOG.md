@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Mixture-of-experts models read prompts up to 16% faster.** The wider matrix tile that dense models already used now also serves the expert matmul, and an expert that receives few tokens skips the columns it would only pad: gpt-oss-20b goes from 1113 to 1294 tokens/s reading a 512-token prompt, and a 14B A3B from 1257 to 1284. Generation speed is unchanged.
+
 ## [0.84.3] - 2026-08-14
 
 ### Improved
