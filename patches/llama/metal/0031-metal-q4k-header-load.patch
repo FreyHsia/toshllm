@@ -1,0 +1,59 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -764,31 +764,53 @@
+     }
+ 
+     reg = (type4x4) reg_f;
+ }
+ 
+ static inline uchar2 get_scale_min_k4_just2(int j, int k, device const uchar * q) {
+     return j < 4 ? uchar2{uchar(q[j+0+k] & 63), uchar(q[j+4+k] & 63)}
+                  : uchar2{uchar((q[j+4+k] & 0xF) | ((q[j-4+k] & 0xc0) >> 2)), uchar((q[j+4+k] >> 4) | ((q[j-0+k] & 0xc0) >> 2))};
++}
++
++// same thing over the 12 scale bytes already held in three words. Every index it reads is
++// j+k plus or minus 4, so all of them sit at the same byte position and share one shift
++static inline uchar2 get_scale_min_k4_just2_w(int j, int k, uint w0, uint w1, uint w2) {
++    const int  a  = j + k;
++    const uint sh = 8*(a & 3);
++
++    const uint lo = (a < 4 ? w0 : w1) >> sh; // byte a
++    const uint hi = (a < 4 ? w1 : w2) >> sh; // byte a+4
++
++    if (j < 4) {
++        return uchar2{uchar(lo & 63), uchar(hi & 63)};
++    }
++
++    const uint pv = w0 >> sh;                // byte a-4, only reached when j >= 4
++    return uchar2{uchar((hi & 0xF) | ((pv & 0xc0) >> 2)), uchar(((hi & 0xFF) >> 4) | ((lo & 0xc0) >> 2))};
+ }
+ 
+ template <typename type4x4>
+ void dequantize_q4_K(device const block_q4_K * xb, short il, thread type4x4 & reg) {
+     // high nibble picked by a shifted mask and folded into the scale (as in dequantize_q4_0).
+     // int offsets: AMD miscompiles short device address math.
+     // 128-bit load: the block is 144 bytes (9*16) so the window lands 16-byte aligned
+     const int qoff = (int) (il/4) * 32 + 16 * ((int) il & 1);
+     const uint4 qsv = *(device const uint4 *)(xb->qs + qoff);
+ 
++    // d, dmin and the 12 scale bytes are the block's first 16 bytes, and the block is 16-byte
++    // aligned, so one load replaces the two halves and the three separate scale bytes
++    const uint4 hdr = *(device const uint4 *) xb;
++    const half2 dm  = as_type<half2>(hdr.x);
++
+     short is = (il/4) * 2;
+     il = il & 3;
+-    const uchar2 sc = get_scale_min_k4_just2(is, il/2, xb->scales);
+-    const float d   = il < 2 ? xb->d : xb->d / 16.h;
+-    const float min = xb->dmin;
++    const uchar2 sc = get_scale_min_k4_just2_w(is, il/2, hdr.y, hdr.z, hdr.w);
++    const float d   = il < 2 ? (float) dm[0] : (float) (dm[0] / 16.h);
++    const float min = dm[1];
+     const float dl = d * sc[0];
+     const float ml = min * sc[1];
+ 
+     const ushort mask0 = il < 2 ? 0x000F : 0x00F0;
+     const ushort mask1 = mask0 << 8;
+     const float dl2 = dl / 256.f;
+ 
+     // write straight into reg, the float4x4 staging was redundant
