@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Cards with 64-wide compute units can now try the mixture-of-experts speedup.** It was locked to the other width by analogy with a dense-model result, never measured on such a card and with no way to turn it on; starting the engine with `TOSH_MMID_WIDE_W64_ENABLE=1` enables it there. Nothing changes on cards that already had it.
+
 ## [0.84.4] - 2026-08-15
 
 ### Fixed
