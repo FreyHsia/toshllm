@@ -7,14 +7,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **A model that does not fit no longer crashes the engine.** When the card refused a memory block the engine read the failed allocation anyway and died with a segmentation fault instead of reporting the problem, so the app could only say the engine had stopped. The failure is now reported, and the message tells you what to do about it. Diagnosed by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/) on an RX 570, who also traced it to the exact line.
-- **A card that refuses one large block can now split it.** Some drivers advertise room for a 4 GiB block and then turn it down; starting with `TOSH_METAL_MAX_BUFFER_MB=1024` splits the weights into smaller blocks instead, at the same speed (measured identical on an 8B, and perplexity unchanged). Also suggested by Slice.
+- **A card that refuses one large block can now split it.** Some drivers advertise room for a 4 GiB block and then turn it down; starting with `TOSH_METAL_MAX_BUFFER_MB=1024` splits the weights into smaller blocks instead, at the same speed. Also suggested by Slice.
 
 ### Improved
-- **Q4_K models answer about 1% faster.** The same sixteen aligned bytes are now read in one go while writing, not only while reading the prompt: 60.8 to 61.3 tokens/s on a dense 8B and 70.2 to 71.1 on a 14B A3B.
-- **Prompts on Q4_K models are read about 2.3% faster.** Reading a block's scales took five separate small memory reads; the sixteen bytes they live in are one aligned read, and the block layout already guaranteed it. Measured on a dense 8B (839 to 860 tokens/s) and a 14B A3B (1288 to 1318).
-- **Models with Q6_K tensors answer a little faster.** That quantisation was the only one still read a byte at a time, because its block size left the compiler unable to assume anything about alignment; where the rows do line up it is now read a word at a time. The matrix-vector step drops about 20%, which is 0.4 to 0.9% on a whole model.
-- **Qwen3.5 and Qwen3.6 models write answers 7 to 13% faster.** Most of their layers copy a running state once per token, and that copy went through a kernel that rebuilds a four dimensional index for every single number it moves. A copy whose two sides are already laid out in order now skips all of that: 61.7 to 70.0 tokens/s on a 14B A3B and 43.5 to 46.6 on a dense 9B, with prompt speed unchanged. Models without that running state, such as Llama, Gemma or gpt-oss, are unaffected.
-- **Mixture-of-experts models read prompts up to 16% faster.** The wider matrix tile that dense models already used now also serves the expert matmul, and an expert that receives few tokens skips the columns it would only pad: gpt-oss-20b goes from 1113 to 1294 tokens/s reading a 512-token prompt, and a 14B A3B from 1257 to 1284. Generation speed is unchanged.
+- **Mixture-of-experts models read prompts up to 18% faster.** The wider matrix tile that dense models already used now also serves the expert matmul, and an expert that receives few tokens skips the columns it would only pad. gpt-oss-20b goes from 1093 to 1292 tokens/s on a 512-token prompt, and a 14B A3B from 1235 to 1315.
+- **Qwen3.5 and Qwen3.6 models write answers 7 to 14% faster.** Most of their layers copy a running state once per token, and that copy went through a kernel that rebuilds a four dimensional index for every single number it moves. A copy whose two sides are already laid out in order now skips all of that: 62.2 to 70.8 tokens/s on a 14B A3B and 43.0 to 46.2 on a dense 9B.
+- **Q4_K models are faster at both ends.** The scales of a block took five separate small reads; the sixteen bytes they live in are one aligned read, and the block layout already guaranteed it. Reading a prompt gains 1.8 to 2.6% and writing an answer 1.1 to 1.5%, measured on a dense 8B and on Gemma 4 E2B.
+- **Q6_K tensors are read a word at a time.** That quantisation was the only one still read a byte at a time, because its block size left the compiler unable to assume anything about alignment. Its matrix-vector step drops about 20%.
+
+Measured on a Radeon RX 6700 XT against 0.84.3. Models without any of these traits, such as Llama 2, are unchanged.
 
 ## [0.84.3] - 2026-08-14
 
