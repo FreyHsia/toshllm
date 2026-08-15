@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.84.4] - 2026-08-15
 
 ### Fixed
 - **A model that does not fit no longer crashes the engine.** When the card refused a memory block the engine read the failed allocation anyway and died with a segmentation fault instead of reporting the problem, so the app could only say the engine had stopped. The failure is now reported, and the message tells you what to do about it. Diagnosed by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/) on an RX 570, who also traced it to the exact line.
