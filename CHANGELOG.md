@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Improved
+- **Qwen3.6 models that fit in video memory write answers about 13% faster.** Most of their layers copy a running state once per token, and that copy went through a kernel that rebuilds a four dimensional index for every single number it moves. A copy whose two sides are already laid out in order now skips all of that: 61.7 to 70.0 tokens/s on a 14B A3B, and about 1% on a dense model, with prompt speed unchanged.
 - **Mixture-of-experts models read prompts up to 16% faster.** The wider matrix tile that dense models already used now also serves the expert matmul, and an expert that receives few tokens skips the columns it would only pad: gpt-oss-20b goes from 1113 to 1294 tokens/s reading a 512-token prompt, and a 14B A3B from 1257 to 1284. Generation speed is unchanged.
 
 ## [0.84.3] - 2026-08-14
