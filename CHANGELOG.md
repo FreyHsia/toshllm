@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **Gemma 4 no longer stops the engine when part of it runs on the processor.** With some layers left in system memory and the key-value cache set to q8_0 or q4_0, any prompt past about forty tokens ended in a fatal error. Its wide attention layers take a faster prompt path that unpacks the cache on the card, and a layer in system memory has no way to do that. Those layers now use the ordinary path while the ones on the card keep the faster one, so nothing gets slower. A cache left at f16, or a model that fits entirely in video memory, was never affected. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+
 ### Improved
 - **Serving two or three conversations at once is up to a third faster.** Each of them re-read the whole model for every reply, because the shared path only started at four conversations. On a 9B at Q5_K_M the two together go from 56.4 to 70.8 tokens/s, and the three from 60.5 to 81.0, which is 25 to 34% more for each person waiting. A single conversation and four or more are unchanged.
 - **The smallest quantisations write answers about 49% faster.** Their unpacking table was read from the slowest memory the card has, one byte at a time; it is now kept next to the compute units and read in full words. A 1.5B at IQ2_M goes from 92.1 to 140.8 tokens/s, and a 7B that uses the same type for part of its weights from 50.4 to 58.3. Output is identical, down to the fourth decimal of perplexity.

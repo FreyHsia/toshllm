@@ -3229,7 +3229,7 @@ index 55d858024..6acbec3a0 100644
      std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
  
      t_sampled.clear();
-@@ -2518,11 +2519,47 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2518,11 +2519,57 @@ ggml_tensor * llm_graph_context::build_attn_mha(
      k = ggml_permute(ctx0, k, 0, 2, 1, 3);
      v = ggml_permute(ctx0, v, 0, 2, 1, 3);
  
@@ -3262,8 +3262,18 @@ index 55d858024..6acbec3a0 100644
 +    const bool decomposed_kv_ok =
 +        (k->type == GGML_TYPE_F16 && v->type == GGML_TYPE_F16) ||
 +        (getenv("TOSH_QK_PREFILL_DISABLE") == nullptr && decomposed_k_ok && decomposed_v_ok);
++    // the dequantization of a quantized V below only exists on the device, so layers a
++    // partial offload leaves in host memory keep flash attention
++    const ggml_tensor * v_alloc = v;
++    while (v_alloc != nullptr && v_alloc->buffer == nullptr) {
++        v_alloc = v_alloc->view_src;
++    }
++    const bool decomposed_v_on_device =
++        !ggml_is_quantized(v->type) ||
++        (v_alloc != nullptr && !ggml_backend_buft_is_host(ggml_backend_buffer_get_type(v_alloc->buffer)));
 +    const bool amd_prefill_decomposed =
 +        getenv("TOSH_FA_AMD") != nullptr &&
++        decomposed_v_on_device &&
 +        getenv("TOSH_FA_AMD_PREFILL_DECOMPOSED_DISABLE") == nullptr &&
 +        getenv("TOSH_FA_AMD_HEAD64_PREFILL_DISABLE") == nullptr &&
 +        metal_simd_width != nullptr &&
@@ -3278,7 +3288,7 @@ index 55d858024..6acbec3a0 100644
  
          if (v_trans) {
              v = ggml_transpose(ctx0, v);
-@@ -2561,10 +2598,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2561,10 +2608,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
  #endif
          }
  
@@ -3294,7 +3304,7 @@ index 55d858024..6acbec3a0 100644
  
          // note: this op tends to require high floating point range
          //       while for some models F16 is enough, for others it is not, so we default to F32 here
-@@ -2601,10 +2643,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2601,10 +2653,15 @@ ggml_tensor * llm_graph_context::build_attn_mha(
          ggml_soft_max_add_sinks(kq, sinks);
          cb(kq, "kq_soft_max", il);
  
@@ -3310,7 +3320,7 @@ index 55d858024..6acbec3a0 100644
          }
  
          ggml_tensor * kqv = ggml_mul_mat(ctx0, v, kq);
-@@ -3638,11 +3685,21 @@ void llm_graph_context::build_pooling(
+@@ -3638,11 +3695,21 @@ void llm_graph_context::build_pooling(
  
      ggml_build_forward_expand(gf, cur);
  }
