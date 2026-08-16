@@ -1,0 +1,48 @@
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -2530,16 +2530,26 @@
+     ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(k->src[0]), 3);
+     ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(q->src[1]), 4);
+     ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(q),         5);
+     ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(v),         6);
+     ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(k),         7);
+     ggml_metal_encoder_dispatch_threadgroups(ctx->enc, args.nwg_q + args.nwg_v + nwg_k, 1, 1, nw, pattern.nsg, 1);
+ 
+     return 3;
++}
++
++// K-quants asked for four columns while every other type batches from two, so at two or three
++// sequences each column paid its own full pass over the weights
++static int kquant_ext_floor() {
++    static const int v = []() {
++        const char * s = getenv("TOSH_EXT_KQ_FLOOR");
++        return s ? atoi(s) : 2;
++    }();
++    return v;
+ }
+ 
+ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+     ggml_metal_library_t lib = ctx->lib;
+     ggml_metal_encoder_t enc = ctx->enc;
+ 
+@@ -2607,17 +2617,17 @@
+          ) ||
+          (
+           (
+            op->src[0]->type == GGML_TYPE_Q4_K ||
+            op->src[0]->type == GGML_TYPE_Q5_K ||
+            op->src[0]->type == GGML_TYPE_Q6_K ||
+            op->src[0]->type == GGML_TYPE_Q2_K ||
+            op->src[0]->type == GGML_TYPE_Q3_K ||
+-           false) && (ne11 >= 4 && ne11 <= 8)
++           false) && (ne11 >= kquant_ext_floor() && ne11 <= 8)
+          )
+         )
+        ) {
+         // TODO: determine the optimal parameters based on grid utilization
+         //       I still don't know why we should not always use the maximum available threads:
+         //
+         //       nsg = pipeline.maxTotalThreadsPerThreadgroup / 32
+         //
