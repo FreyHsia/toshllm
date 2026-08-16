@@ -1,6 +1,6 @@
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -9058,39 +9058,40 @@
+@@ -9057,39 +9057,40 @@
  
  // Prefill attention for AMD: BQ queries stay resident while the cache streams in
  // blocks of BK, so the score matrix never reaches device memory.
@@ -44,7 +44,7 @@
      const short kg = tiitg % 16;
      const short qg = tiitg / 16;
  
-@@ -9243,19 +9244,19 @@
+@@ -9242,19 +9243,19 @@
                  acc[rr][dd] *= corr;
              }
          }
@@ -67,7 +67,7 @@
              for (short i = 0; i < 4; ++i) {
                  skv[(4*ch + i)*SVS + jj] = (half) tv[i];
              }
-@@ -9275,17 +9276,17 @@
+@@ -9274,17 +9275,17 @@
              }
              FOR_UNROLL (short jj = 0; jj < BK; jj += 2) {
                  half2 pv[NQR];
@@ -86,7 +86,7 @@
                      }
                  }
              }
-@@ -9314,30 +9315,34 @@
+@@ -9313,30 +9314,34 @@
      for (short rr = 0; rr < NQR; ++rr) {
          const int iq = iq1 + qg + NQG*rr;
          if (iq >= args.ne01) {
@@ -125,7 +125,7 @@
  FA_AMD_PF_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1, dequantize_f16_t4)
  FA_AMD_PF_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
  FA_AMD_PF_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -9372,16 +9377,27 @@
+@@ -9371,16 +9376,27 @@
  FA_AMD_PF_TURBO("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_PF_TURBO("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
  FA_AMD_PF_TURBO("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
@@ -153,7 +153,61 @@
  //
  #define FA_TYPES \
             half4,  \
-@@ -11403,16 +11419,18 @@
+@@ -10953,20 +10969,24 @@
+         for (short row = 0; row < nr0; row++) {
+             const float db = dh[0];
+             device const uint8_t * aux8 = (device const uint8_t *)q2;
+             const uint32_t aux32 = q2[2] | (q2[3] << 16);
+             const float d = db * (0.5f + (aux32 >> 28));
+ 
+             float sum = 0;
+             for (short l = 0; l < 4; ++l) {
+-                const threadgroup uint8_t * grid = (const threadgroup uint8_t *)(svalues + aux8[l]);
++                // one 32-bit read per half instead of eight byte reads; RDNA2 has no
++                // native 64-bit shift, so two uint32 beat one uint64 here
++                const threadgroup uint32_t * gp = (const threadgroup uint32_t *)(svalues + aux8[l]);
++                const uint32_t ga = gp[0], gb = gp[1];
+                 const uint8_t signs = ssigns[(aux32 >> 7*l) & 127];
+                 for (short j = 0; j < 8; ++j) {
+-                    sum += yl[8*l + j] * grid[j] * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
++                    const uint32_t gw = j < 4 ? ga : gb;
++                    sum += yl[8*l + j] * (float)((gw >> (8*(j & 3))) & 0xFF) * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
+                 }
+             }
+             sumf[row] += d * sum;
+ 
+             dh += args.nb01/2;
+             q2 += args.nb01/2;
+         }
+ 
+@@ -11061,20 +11081,24 @@
+             const float db = dh[0];
+             const uint8_t ls1 = sc[0] & 0xf;
+             const uint8_t ls2 = sc[0] >>  4;
+             const float d1 = db * (0.5f + ls1);
+             const float d2 = db * (0.5f + ls2);
+ 
+             float sum1 = 0, sum2 = 0;
+             for (short l = 0; l < 2; ++l) {
+-                const threadgroup uint8_t * grid = (const threadgroup uint8_t *)(svalues + (q2[l] & 511));
++                // one 32-bit read per half instead of eight byte reads; RDNA2 has no
++                // native 64-bit shift, so two uint32 beat one uint64 here
++                const threadgroup uint32_t * gp = (const threadgroup uint32_t *)(svalues + (q2[l] & 511));
++                const uint32_t ga = gp[0], gb = gp[1];
+                 const uint8_t signs = ssigns[(q2[l] >> 9)];
+                 for (short j = 0; j < 8; ++j) {
+-                    sum1 += yl[8*l + j] * grid[j] * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
++                    const uint32_t gw = j < 4 ? ga : gb;
++                    sum1 += yl[8*l + j] * (float)((gw >> (8*(j & 3))) & 0xFF) * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
+                 }
+             }
+             for (short l = 2; l < 4; ++l) {
+                 const threadgroup uint8_t * grid = (const threadgroup uint8_t *)(svalues + (q2[l] & 511));
+                 const uint8_t signs = ssigns[(q2[l] >> 9)];
+                 for (short j = 0; j < 8; ++j) {
+                     sum2 += yl[8*l + j] * grid[j] * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
+                 }
+@@ -11402,16 +11426,18 @@
              const float db = dh[0];
              const float d1 = db * (0.5f + (sc[0] & 0xf));
              const float d2 = db * (0.5f + (sc[0] >>  4));

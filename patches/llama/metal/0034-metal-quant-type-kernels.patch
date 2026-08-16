@@ -1,6 +1,43 @@
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -571,38 +571,44 @@
+@@ -523,27 +523,27 @@
+ 
+     const int x_mv = il ? 4 : 0;
+ 
+     const int gh_mv = il ? 12 : 0;
+     const int gh_bk = il ?  0 : 4;
+ 
+     float4x4 reg_f;
+ 
+-    for (int i = 0; i < 8; i++) {
+-        // extract the 5-th bits for x0 and x1
+-        const uint8_t xh_0 = ((qh >> (gh_mv + 2*i  )) << gh_bk) & 0x10;
+-        const uint8_t xh_1 = ((qh >> (gh_mv + 2*i+1)) << gh_bk) & 0x10;
++    // the fifth bit is a conditional add of a precomputed constant, the way q5_K does it:
++    // building the 5-bit integer first costs a shift, a mask and an or per element
++    const float dqh = d * 16.0f;
++    const uint32_t qhs = qh >> (gh_mv + 4 - gh_bk);
+ 
+-        // combine the 4-bits from qs with the 5th bit
+-        const int32_t x0 = ((((qs[i]     ) & mask) >> x_mv) | xh_0);
+-        const int32_t x1 = ((((qs[i] >> 8) & mask) >> x_mv) | xh_1);
++    for (int i = 0; i < 8; i++) {
++        const int32_t x0 = ((qs[i]     ) & mask) >> x_mv;
++        const int32_t x1 = ((qs[i] >> 8) & mask) >> x_mv;
+ 
+-        reg_f[i/2][2*(i%2) + 0] = d * x0 + md;
+-        reg_f[i/2][2*(i%2) + 1] = d * x1 + md;
++        reg_f[i/2][2*(i%2) + 0] = d * x0 + md + ((qhs >> (2*i    )) & 1 ? dqh : 0.0f);
++        reg_f[i/2][2*(i%2) + 1] = d * x1 + md + ((qhs >> (2*i + 1)) & 1 ? dqh : 0.0f);
+     }
+ 
+     reg = (type4x4) reg_f;
+ }
+ 
+ template <typename type4>
+ void dequantize_q5_0_t4(device const block_q5_0 * xb, short il, thread type4 & reg) {
+     device const uint16_t * qs = ((device const uint16_t *)xb + 3);
+@@ -571,41 +571,46 @@
  
          reg[2*ii + 0] = d * x0 + md;
          reg[2*ii + 1] = d * x1 + md;
@@ -23,32 +60,41 @@
  
      const int gh_mv = il ? 12 : 0;
      const int gh_bk = il ?  0 : 4;
-+
+ 
 +    const ushort4 q0 = ushort4(qs[0]);
 +    const ushort4 q1 = ushort4(qs[1]);
- 
++
      float4x4 reg_f;
  
++    // fifth bit as a conditional add of a precomputed constant, like q5_K
++    const float dqh = d * 16.0f;
++    const uint32_t qhs = qh >> (gh_mv + 4 - gh_bk);
++
      for (int i = 0; i < 8; i++) {
+-        // extract the 5-th bits for x0 and x1
+-        const uint8_t xh_0 = ((qh >> (gh_mv + 2*i  )) << gh_bk) & 0x10;
+-        const uint8_t xh_1 = ((qh >> (gh_mv + 2*i+1)) << gh_bk) & 0x10;
 +        const ushort qsi = i < 4 ? q0[i] : q1[i - 4];
-         // extract the 5-th bits for x0 and x1
-         const uint8_t xh_0 = ((qh >> (gh_mv + 2*i  )) << gh_bk) & 0x10;
-         const uint8_t xh_1 = ((qh >> (gh_mv + 2*i+1)) << gh_bk) & 0x10;
++        const int32_t x0 = ((qsi     ) & mask) >> x_mv;
++        const int32_t x1 = ((qsi >> 8) & mask) >> x_mv;
  
-         // combine the 4-bits from qs with the 5th bit
+-        // combine the 4-bits from qs with the 5th bit
 -        const int32_t x0 = ((((qs[i]     ) & mask) >> x_mv) | xh_0);
 -        const int32_t x1 = ((((qs[i] >> 8) & mask) >> x_mv) | xh_1);
-+        const int32_t x0 = ((((qsi     ) & mask) >> x_mv) | xh_0);
-+        const int32_t x1 = ((((qsi >> 8) & mask) >> x_mv) | xh_1);
- 
-         reg_f[i/2][2*(i%2) + 0] = d * x0 + m;
-         reg_f[i/2][2*(i%2) + 1] = d * x1 + m;
+-
+-        reg_f[i/2][2*(i%2) + 0] = d * x0 + m;
+-        reg_f[i/2][2*(i%2) + 1] = d * x1 + m;
++        reg_f[i/2][2*(i%2) + 0] = d * x0 + m + ((qhs >> (2*i    )) & 1 ? dqh : 0.0f);
++        reg_f[i/2][2*(i%2) + 1] = d * x1 + m + ((qhs >> (2*i + 1)) & 1 ? dqh : 0.0f);
      }
  
      reg = (type4x4) reg_f;
  }
  
-@@ -11359,23 +11365,25 @@
+ template <typename type4>
+ void dequantize_q5_1_t4(device const block_q5_1 * xb, short il, thread type4 & reg) {
+     device const uint16_t * qs = ((device const uint16_t *)xb + 4);
+@@ -11359,23 +11364,25 @@
      device const block_iq2_s * x = (device const block_iq2_s *) (src0 + offset0);
      device const float       * y = (device const float       *) (src1 + offset1);
  
@@ -81,7 +127,7 @@
      for (int ib32 = ix; ib32 < nb32; ib32 += FC_mul_mv_nw) {
          for (short i = 0; i < 32; ++i) {
              yl[i] = y4[i];
-@@ -11395,21 +11403,30 @@
+@@ -11395,21 +11402,30 @@
              const float db = dh[0];
              const float d1 = db * (0.5f + (sc[0] & 0xf));
              const float d2 = db * (0.5f + (sc[0] >>  4));
@@ -116,7 +162,7 @@
              qs    += args.nb01;
              qh    += args.nb01;
              sc    += args.nb01;
-@@ -13836,16 +13853,20 @@
+@@ -13836,16 +13852,20 @@
  template [[host_name("kernel_mul_mm_q6_K_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q6_K,    QK_NL, dequantize_q6_K,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_q4_0_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_0,    2,     dequantize_q4_0,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_q4_1_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_1,    2,     dequantize_q4_1,    float,  float4x4,  float, float2x4, 8>;
@@ -137,7 +183,7 @@
  #if defined(GGML_METAL_HAS_BF16)
  template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
  #endif
-@@ -13941,16 +13962,20 @@
+@@ -13941,16 +13961,20 @@
  template [[host_name("kernel_mul_mm_id_mxfp4_f32_w")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_id_q2_K_f32_w")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_id_q3_K_f32_w")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  float, float2x4, 8>;
