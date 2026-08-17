@@ -15,10 +15,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Models with q5_0 or q5_1 weights read prompts about 15% faster.** A 9B vision model with 13% of its weights in q5_0 goes from 739.4 to 758.2 tokens/s on a 512-token prompt.
 - **The experimental turbo key-value cache is no longer the slowest option.** At 4096 tokens of context turbo3 goes from 55.8 to 59.8 tokens/s and turbo4 from 56.8 to 60.5, against 58.1 for q8_0. Perplexity is unchanged.
 - **Models quantised with the IQ family read prompts faster.** A dense 7B at IQ3_XXS goes from 801.6 to 859.7 tokens/s on a 512-token prompt.
-- **Cards with 64-wide compute units read long prompts 3 to 4% faster.** The wider matrix tile now serves them from about 450 tokens onwards; below that nothing changes. On a Radeon RX Vega 64 llama-2-7B goes from 509 to 528 tokens/s at 512, with identical perplexity. `TOSH_MM_WIDE_W64_DISABLE=1` restores the old path.
-- **The mixture-of-experts tile is available on those cards too**, having been locked to the other width without ever being measured on one. On gpt-oss-20b it wins at twelve of fifteen prompt lengths, by up to 23%, but loses about 17% in a narrow band around 470 tokens, so it stays opt-in with `TOSH_MMID_WIDE_W64_ENABLE=1`.
+#### Radeon Vega, Radeon VII, RX 400/500 and Radeon Pro Vega/WX
 
-Measured on a Radeon RX 6700 XT and, where stated, a Radeon RX Vega 64.
+- **Q5_K, Q6_K and Q3_K models write answers 8 to 24% faster.** How much work each thread takes was tuned on the other cards, and these want considerably more of it. A 9B at Q5_K_M goes from 31.2 to 38.8 tokens/s, an 8B at Q6_K from 35.5 to 41.4, and a 4B at Q3_K_M from 48.5 to 52.5. Q4_K_M models gain 4% from the tensors they keep at Q6_K. Perplexity is identical and `TOSH_MV_R8_DISABLE=1` restores the old split.
+- **Long prompts are read 3 to 4% faster.** The wider matrix tile now serves these cards from about 450 tokens onwards; below that nothing changes. On a Radeon RX Vega 64, llama-2-7B goes from 509 to 528 tokens/s at 512 tokens, with identical perplexity. `TOSH_MM_WIDE_W64_DISABLE=1` restores the old path.
+- **The mixture-of-experts tile is now available here**, having been locked to the other cards without ever being measured on these. On gpt-oss-20b it wins at twelve of fifteen prompt lengths, by up to 23%, but loses about 17% in a narrow band around 470 tokens, so it stays opt-in with `TOSH_MMID_WIDE_W64_ENABLE=1`.
+
+Measured on a Radeon RX 6700 XT, and on a Radeon RX Vega 64 for the section above.
 
 ## [0.84.4] - 2026-08-15
 
