@@ -1,0 +1,69 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -14263,16 +14263,17 @@
+ template [[host_name("kernel_mul_mv_id_q5_1_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<mul_vec_q_n_f32_impl<block_q5_1, N_R0_Q5_1>>>;
+ 
+ template [[host_name("kernel_mul_mv_id_mxfp4_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4>>>;
+ 
+ template [[host_name("kernel_mul_mv_id_q2_K_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q2_K_f32_impl   <N_R0_Q2_K>>>;
+ template [[host_name("kernel_mul_mv_id_q3_K_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q3_K_f32_impl   <N_R0_Q3_K>>>;
+ template [[host_name("kernel_mul_mv_id_q4_K_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q4_K_f32_impl   <N_R0_Q4_K>>>;
+ template [[host_name("kernel_mul_mv_id_q5_K_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q5_K_f32_impl   <N_R0_Q5_K>>>;
++template [[host_name("kernel_mul_mv_id_q5_K_f32_r8")]] kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q5_K_f32_impl   <8>>>;
+ template [[host_name("kernel_mul_mv_id_q6_K_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q6_K_f32_impl   <N_R0_Q6_K>>>;
+ template [[host_name("kernel_mul_mv_id_iq1_s_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq1_s_f32_impl  <N_R0_IQ1_S>>>;
+ template [[host_name("kernel_mul_mv_id_iq1_m_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq1_m_f32_impl  <N_R0_IQ1_M>>>;
+ template [[host_name("kernel_mul_mv_id_iq2_xxs_f32")]] kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_xxs_f32_impl<N_R0_IQ2_XXS>>>;
+ template [[host_name("kernel_mul_mv_id_iq2_xs_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_xs_f32_impl <N_R0_IQ2_XS>>>;
+ template [[host_name("kernel_mul_mv_id_iq3_xxs_f32")]] kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq3_xxs_f32_impl<N_R0_IQ3_XXS>>>;
+ template [[host_name("kernel_mul_mv_id_iq3_s_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq3_s_f32_impl  <N_R0_IQ3_S>>>;
+ template [[host_name("kernel_mul_mv_id_iq2_s_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_s_f32_impl  <N_R0_IQ2_S>>>;
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1340,16 +1340,18 @@
+     int nsg = 0; // number of simdgroups
+     int nr0 = 0; // number of src0 rows per simdgroup
+     int nr1 = 1; // number of src1 rows per threadgroup
+ 
+     size_t smem = 0; // shared memory
+ 
+     const ggml_type tsrc0 = op->src[0]->type;
+     const ggml_type tsrc1 = op->src[1]->type;
++
++    const int simd_width = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
+ 
+     const char * suffix = "";
+ 
+         // use custom matrix x vector kernel
+     switch (tsrc0) {
+         case GGML_TYPE_F32:
+         case GGML_TYPE_F16:
+         case GGML_TYPE_BF16:
+@@ -1414,18 +1416,25 @@
+             } break;
+         case GGML_TYPE_Q4_K:
+             {
+                 nsg = N_SG_Q4_K;
+                 nr0 = N_R0_Q4_K;
+             } break;
+         case GGML_TYPE_Q5_K:
+             {
+-                nsg = N_SG_Q5_K;
+-                nr0 = N_R0_Q5_K;
++                // the expert mat-vec was short too: 8 rows measure +12.1% of tg on a 64-wide card
++                if ((simd_width == 64 || getenv("TOSH_MV_R8") != nullptr) && getenv("TOSH_MV_R8_DISABLE") == nullptr) {
++                    nsg = 1;
++                    nr0 = 8;
++                    suffix = "_r8";
++                } else {
++                    nsg = N_SG_Q5_K;
++                    nr0 = N_R0_Q5_K;
++                }
+             } break;
+         case GGML_TYPE_Q6_K:
+             {
+                 nsg = N_SG_Q6_K;
+                 nr0 = N_R0_Q6_K;
+             } break;
+         case GGML_TYPE_IQ2_XXS:
+             {
