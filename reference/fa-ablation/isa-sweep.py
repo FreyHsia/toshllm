@@ -8,6 +8,10 @@ LIB = sys.argv[1]
 NAMES = sys.argv[2]
 OUT = sys.argv[3]
 OBJ = "/usr/local/opt/llvm/bin/llvm-objdump"
+# the card decides how the compiler allocates, so a dump is only valid for the arch it names
+MCPU = os.environ.get("ISA_MCPU", "gfx1032")
+MACH = os.environ.get("ISA_ELF_MACH", "0x03a")
+NW = int(os.environ.get("ISA_NW", "32"))
 
 MV, MM = 600, 700
 MV_MAP = {"nsg": MV+0, "nxpsg": MV+1, "ne12": MV+2, "r2": MV+3, "r3": MV+4, "nw": MV+5}
@@ -49,7 +53,7 @@ def parse(name):
 def rank(name):
     f = dict(re.findall(r"([a-z0-9]+)=(-?\d+)", name))
     # prefer the plain case: no broadcast, single batch
-    return (int(f.get("a4", 1)) != 1, int(f.get("nw", 32)) != 32,
+    return (int(f.get("a4", 1)) != 1, int(f.get("nw", NW)) != NW,
             int(f.get("ne12", 1)) != 1, int(f.get("ne13", 1)) != 1,
             int(f.get("r2", 1)) != 1, int(f.get("r3", 1)) != 1, name)
 
@@ -82,8 +86,8 @@ for base, (name, cv) in sorted(best.items()):
         rows.append((base, None))
         continue
     subprocess.run(["python3", os.path.join(HERE, "mkelf.py"), "/tmp/isa_sweep.compute",
-                    "/tmp/isa_sweep.elf", "468"], check=True)
-    d = subprocess.run([OBJ, "-d", "--mcpu=gfx1032", "/tmp/isa_sweep.elf"],
+                    "/tmp/isa_sweep.elf", "468", MACH], check=True)
+    d = subprocess.run([OBJ, "-d", "--mcpu=" + MCPU, "/tmp/isa_sweep.elf"],
                        capture_output=True, text=True)
     lines = d.stdout.splitlines()[6:]
     # objdump sprinkles "\t\t..." elision markers through the listing; a real instruction
