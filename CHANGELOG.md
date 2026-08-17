@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.0] - 2026-08-17
 
 ### Fixed
 - **Gemma 4 no longer stops the engine when part of it runs on the processor.** When the model did not fit entirely in video memory and the key-value cache was quantised, any prompt past about forty tokens ended in a fatal error. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
