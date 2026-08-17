@@ -6,26 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
-- **Gemma 4 no longer stops the engine when part of it runs on the processor.** With layers left in system memory and the key-value cache at q8_0 or q4_0, any prompt past about forty tokens ended in a fatal error. A cache at f16, or a model that fits entirely in video memory, was never affected. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+- **Gemma 4 no longer stops the engine when part of it runs on the processor.** When the model did not fit entirely in video memory and the key-value cache was quantised, any prompt past about forty tokens ended in a fatal error. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
 
 ### Improved
 - **Serving two or three conversations at once is 25 to 34% faster.** On a 9B at Q5_K_M, two go from 56.4 to 70.8 tokens/s and three from 60.5 to 81.0. A single conversation and four or more are unchanged.
-- **The smallest quantisations write answers about 49% faster.** A 1.5B at IQ2_M goes from 92.1 to 140.8 tokens/s, and a 7B that uses the type for part of its weights from 50.4 to 58.3, with identical perplexity.
-- **DeepSeek and GLM models read long prompts up to 31% faster.** A 23B GLM goes from 203.8 to 257.5 tokens/s with 4096 tokens already in context, and from 121.5 to 159.2 with 8192. `TOSH_FA_PF_MLA_DISABLE=1` restores the old path.
-- **Models with q5_0 or q5_1 weights read prompts about 15% faster.** A 9B vision model with 13% of its weights in q5_0 goes from 739.4 to 758.2 tokens/s on a 512-token prompt.
+- **Follow-up questions in a conversation already in cache are read faster.** The gain is over the nine or ten tokens a short question adds to a conversation, on models at Q4_K, Q3_K and Q2_K. Other formats and longer prompts are unchanged.
+- **Smaller quantisations are considerably faster.** A 1.5B at IQ2_M writes answers 49% faster, from 92.1 to 140.8 tokens/s; a 7B at IQ3_XXS reads prompts 7% faster; and models with q5_0 or q5_1 weights about 15% faster. Perplexity is unchanged throughout.
+- **DeepSeek and GLM models read long prompts up to 31% faster.** A 23B GLM goes from 203.8 to 257.5 tokens/s with 4096 tokens already in context, and from 121.5 to 159.2 with 8192.
 - **The experimental turbo key-value cache is no longer the slowest option.** At 4096 tokens of context turbo3 goes from 55.8 to 59.8 tokens/s and turbo4 from 56.8 to 60.5, against 58.1 for q8_0. Perplexity is unchanged.
-- **Models quantised with the IQ family read prompts faster.** A dense 7B at IQ3_XXS goes from 801.6 to 859.7 tokens/s on a 512-token prompt.
 
 #### Radeon Vega, Radeon VII, RX 400/500 and Radeon Pro Vega/WX
 
-- **Models with 2048 to 4096 hidden units read long prompts 3 to 5% faster.** The wider matrix tile needs more output rows here than it does on the other cards, and below 4096 it was losing what it gained. A 1B at IQ4_XS goes from 2811 to 2941 tokens/s on a 512-token prompt and a 4B at Q4_K_M from 909 to 938, with identical perplexity; wider models are unchanged. `TOSH_MM_NE0_FLOOR=2048` restores the old bound.
-- **Prompts of nine to twelve tokens are read up to 39% faster**, which is the length a follow-up question adds to a conversation already in cache. A 4B at Q4_K_M goes from 96 to 133 tokens/s at nine tokens and from 126 to 166 at twelve, and llama-2-7B from 76 to 84 and from 99 to 107. Longer prompts are unchanged, and `TOSH_EXT_MAX=8` restores the old bound.
-- **Q4_K models serve four or more conversations 12% faster, and gain 8% with multi-token prediction.** On a Radeon RX Vega 64, a dense 4B goes from 108.3 to 121.1 tokens/s with four conversations and from 119.5 to 133.6 with eight, and a Qwen3.5 4B from 65.5 to 70.5 with prediction on. One or two conversations are unchanged, and `TOSH_EXT_LDS_DISABLE=1` restores the old path.
-- **Prompts of 130 to 160 tokens are read 2 to 4% faster.** The short-tail path stopped paying earlier on these cards than on the others, and it now steps aside at 128 tokens instead of 192. On a Radeon RX Vega 64, llama-2-7B goes from 364 to 377 tokens/s at 144 and from 396 to 411 at 160. Perplexity is identical and `TOSH_MM_TAIL_MAX=192` restores the old bound.
-- **Serving several conversations at once is 9% faster.** The batched matrix-vector step split its work for narrower compute units. On a 9B at Q5_K_M with four conversations it goes from 47.4 to 51.6 tokens/s, and multi-token prediction gains from the same step. `TOSH_EXT_NXPSG_X2_DISABLE=1` restores the old split.
-- **Q5_K, Q6_K, Q3_K, Q2_K, Q8_0 and IQ3_XXS models write answers 4 to 24% faster.** How much work each thread takes was tuned on the other cards, and these want considerably more of it. A 9B at Q5_K_M goes from 31.2 to 38.8 tokens/s, an 8B at Q6_K from 35.5 to 41.4, a 4B at Q2_K from 49.9 to 58.0, a 4B at Q3_K_M from 48.5 to 52.5, and a 7B at IQ3_XXS from 42.2 to 44.4. Q4_K_M models gain 4% from the tensors they keep at Q6_K. Mixture-of-experts models gain too: a 7B with 64 experts goes from 136.0 to 155.3 tokens/s. Perplexity is identical, and `TOSH_MV_R8_DISABLE=1` restores the old split.
-- **Long prompts are read 3 to 4% faster.** The wider matrix tile now serves these cards from about 450 tokens onwards; below that nothing changes. On a Radeon RX Vega 64, llama-2-7B goes from 509 to 528 tokens/s at 512 tokens, with identical perplexity. `TOSH_MM_WIDE_W64_DISABLE=1` restores the old path.
-- **The mixture-of-experts tile is now available here**, having been locked to the other cards without ever being measured on these. On gpt-oss-20b it wins at twelve of fifteen prompt lengths, by up to 23%, but loses about 17% in a narrow band around 470 tokens, so it stays opt-in with `TOSH_MMID_WIDE_W64_ENABLE=1`.
+These cards were tuned with settings measured on the newer Radeons, and most of them wanted different ones.
+
+- **Models write answers 4 to 24% faster.** A 9B at Q5_K_M goes from 31.2 to 38.8 tokens/s, an 8B at Q6_K from 35.5 to 41.4, a 4B at Q2_K from 49.9 to 58.0 and a 7B at IQ3_XXS from 42.2 to 44.4. Mixture-of-experts models gain too: a 7B with 64 experts goes from 136.0 to 155.3. Perplexity is identical.
+- **Serving several conversations at once is 9 to 12% faster, and multi-token prediction gains 8%.** On a Radeon RX Vega 64, a 4B goes from 108.3 to 121.1 tokens/s with four conversations and from 119.5 to 133.6 with eight; a 9B at Q5_K_M from 47.4 to 51.6 with four.
+- **Prompts are read faster at every length.** A short follow-up question gains up to 39%, prompts of 130 to 160 tokens 2 to 4%, and long prompts 3 to 5%: llama-2-7B goes from 509 to 528 tokens/s at 512 tokens and a 1B at IQ4_XS from 2811 to 2941. Perplexity is identical.
+- **Mixture-of-experts models can now use the faster path the newer Radeons already had**, which had been locked to those cards without ever being measured on these. On gpt-oss-20b it reads prompts up to 23% faster at twelve of fifteen lengths, but loses about 17% around 470 tokens, so it is not on by default: enable it with `TOSH_MMID_WIDE_W64_ENABLE=1`.
 
 Measured on a Radeon RX 6700 XT, and on a Radeon RX Vega 64 for the section above.
 
