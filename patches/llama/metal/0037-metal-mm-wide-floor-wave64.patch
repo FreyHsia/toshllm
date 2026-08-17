@@ -1,0 +1,49 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -830,19 +830,19 @@
+     GGML_ASSERT(op->src[1]->ne[2] <= INT16_MAX && op->src[1]->ne[3] <= INT16_MAX);
+     const int16_t ne12 = (int16_t) op->src[1]->ne[2];
+     const int16_t ne13 = (int16_t) op->src[1]->ne[3];
+     const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
+     const int16_t r3   = (int16_t) (ne13 / op->src[0]->ne[3]);
+ 
+     // The 8x4 tile halves the simdgroups per threadgroup, so it needs enough tokens to keep
+     // the GPU in threadgroups; below ~192 it loses (measured 8.7% at 64 tokens on q8_0).
+-    static const int wide_floor = []() {
++    static const int wide_floor_env = []() {
+         const char * s = getenv("TOSH_MM_WIDE_FLOOR");
+-        return s ? atoi(s) : 112;
++        return s ? atoi(s) : 0;
+     }();
+ 
+     // the 64-token tile rounds the batch up, so a tail of 32 or fewer pays for a half-empty
+     // group that this one covers exactly. Past 128 the padding is a smaller share and the
+     // grid-lookup quants lose more re-dequantizing than they save.
+     // the tail keeps its own bound: it beats the 8x4 tile on a 32-token remainder at any size,
+     // so it must not follow the wide floor down
+     bool tail_32 = op->ne[1] < 192 && (op->ne[1] % 64) >= 1 && (op->ne[1] % 64) <= 32 &&
+@@ -856,20 +856,21 @@
+             case GGML_TYPE_IQ2_S:
+                 tail_32 = false; break;
+             default: break;
+         }
+     }
+     const bool narrow = use_mm_manual && !has_tensor && tsrc1 == GGML_TYPE_F32 &&
+                         (op->ne[1] <= 32 || tail_32);
+ 
+-    // on wave64 the 8x4 tile measures 3-5% slower from 256 tokens up on both q4_K and
+-    // q4_0, so it stays a wave32 tile; the narrow tail below still applies to both
++    // wave64 wants a far higher floor: between 288 and 384 the tile loses on two models,
++    // and from 448 up it wins 4 to 6%
+     const int simd_width = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
+-    const bool wide_width_ok = simd_width != 64 || getenv("TOSH_MM_WIDE_W64_ENABLE") != nullptr;
++    const bool wide_width_ok = simd_width != 64 || getenv("TOSH_MM_WIDE_W64_DISABLE") == nullptr;
++    const int wide_floor = wide_floor_env ? wide_floor_env : (simd_width == 64 ? 448 : 112);
+ 
+     // the tile also needs enough output rows, not just enough tokens
+     bool wide = use_mm_manual && !has_tensor && !narrow && tsrc1 == GGML_TYPE_F32 && wide_width_ok &&
+                 op->ne[1] >= wide_floor && (op->ne[0] >= 2048 || getenv("TOSH_MM_NE0_FLOOR_DISABLE") != nullptr) &&
+                 getenv("TOSH_MM_WIDE_DISABLE") == nullptr;
+     if (wide) {
+         // it needs 64 accumulators, so only where the dequant leaves the registers
+         switch (tsrc0) {
