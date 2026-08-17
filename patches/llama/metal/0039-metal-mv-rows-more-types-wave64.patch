@@ -1,0 +1,175 @@
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -4328,16 +4328,31 @@
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+         threadgroup  char * shmem [[threadgroup(0)]],
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+     kernel_mul_mv_q8_0_f32_impl<N_R0_Q8_0, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
++}
++
++// 64-wide simdgroups want four rows in one group: +4.2% of tg there
++[[host_name("kernel_mul_mv_q8_0_f32_r4")]]
++kernel void kernel_mul_mv_q8_0_f32_r4(
++        constant ggml_metal_kargs_mul_mv & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        threadgroup  char * shmem [[threadgroup(0)]],
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++
++    kernel_mul_mv_q8_0_f32_impl<4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
+ // mat-vec kernel processing in chunks of float4
+ // chpb - chunks per quantization block
+ template<short r1ptg, typename q_t, short chpb, void (*deq_t4)(device const q_t *, short, thread float4 &) >
+ void kernel_mul_mv_ext_q4_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
+         device const char * src0,
+@@ -10222,16 +10237,30 @@
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+ 
+     kernel_mul_mv_q2_K_f32_impl<N_R0_Q2_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
++}
++
++// 64-wide simdgroups want eight rows in one group: +17.2% of tg there
++[[host_name("kernel_mul_mv_q2_K_f32_r8")]]
++kernel void kernel_mul_mv_q2_K_f32_r8(
++        constant ggml_metal_kargs_mul_mv & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++
++    kernel_mul_mv_q2_K_f32_impl<8, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
+ }
+ 
+ template<int nr0, typename args_t>
+ void kernel_mul_mv_q3_K_f32_impl(
+         args_t args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+@@ -11295,16 +11324,31 @@
+         threadgroup  char * shmem [[threadgroup(0)]],
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+ 
+     kernel_mul_mv_iq3_xxs_f32_impl<N_R0_IQ3_XXS, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
++// 64-wide simdgroups want eight rows in one group: +4.4% of tg there
++[[host_name("kernel_mul_mv_iq3_xxs_f32_r8")]]
++kernel void kernel_mul_mv_iq3_xxs_f32_r8(
++        constant ggml_metal_kargs_mul_mv & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        threadgroup  char * shmem [[threadgroup(0)]],
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++
++    kernel_mul_mv_iq3_xxs_f32_impl<8, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
++}
++
+ template<int nr0, typename args_t>
+ void kernel_mul_mv_iq3_s_f32_impl(
+         args_t args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+         threadgroup  char * shmem,
+         uint3  tgpig,
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1016,30 +1016,43 @@
+             } break;
+         case GGML_TYPE_Q5_1:
+             {
+                 nsg = N_SG_Q5_1;
+                 nr0 = N_R0_Q5_1;
+             } break;
+         case GGML_TYPE_Q8_0:
+             {
+-                nsg = N_SG_Q8_0;
+-                nr0 = N_R0_Q8_0;
+-                smem = 32*sizeof(float)*N_R0_Q8_0;
++                if ((simd_width == 64 || getenv("TOSH_MV_R8") != nullptr) && getenv("TOSH_MV_R8_DISABLE") == nullptr) {
++                    nsg = 1;
++                    nr0 = 4;
++                    suffix = "_r4";
++                } else {
++                    nsg = N_SG_Q8_0;
++                    nr0 = N_R0_Q8_0;
++                }
++                // the reduction buffer scales with the rows, so it follows the effective nr0
++                smem = 32*sizeof(float)*nr0;
+             } break;
+         case GGML_TYPE_MXFP4:
+             {
+                 nsg = N_SG_MXFP4;
+                 nr0 = N_R0_MXFP4;
+                 smem = 32*sizeof(float);
+             } break;
+         case GGML_TYPE_Q2_K:
+             {
+-                nsg = N_SG_Q2_K;
+-                nr0 = N_R0_Q2_K;
++                if ((simd_width == 64 || getenv("TOSH_MV_R8") != nullptr) && getenv("TOSH_MV_R8_DISABLE") == nullptr) {
++                    nsg = 1;
++                    nr0 = 8;
++                    suffix = "_r8";
++                } else {
++                    nsg = N_SG_Q2_K;
++                    nr0 = N_R0_Q2_K;
++                }
+             } break;
+         case GGML_TYPE_Q3_K:
+             {
+                 // 64 lanes want eight rows in one group (+7.2% tg); two groups there costs 30%
+                 if ((simd_width == 64 || getenv("TOSH_MV_R8") != nullptr) && getenv("TOSH_MV_R8_DISABLE") == nullptr) {
+                     nsg = 1;
+                     nr0 = 8;
+                     suffix = "_r8";
+@@ -1095,18 +1108,24 @@
+         case GGML_TYPE_IQ2_XS:
+             {
+                 nsg = N_SG_IQ2_XS;
+                 nr0 = N_R0_IQ2_XS;
+                 smem = 512*8+128;
+             } break;
+         case GGML_TYPE_IQ3_XXS:
+             {
+-                nsg = N_SG_IQ3_XXS;
+-                nr0 = N_R0_IQ3_XXS;
++                if ((simd_width == 64 || getenv("TOSH_MV_R8") != nullptr) && getenv("TOSH_MV_R8_DISABLE") == nullptr) {
++                    nsg = 1;
++                    nr0 = 8;
++                    suffix = "_r8";
++                } else {
++                    nsg = N_SG_IQ3_XXS;
++                    nr0 = N_R0_IQ3_XXS;
++                }
+                 smem = 256*4+128;
+             } break;
+         case GGML_TYPE_IQ3_S:
+             {
+                 nsg = N_SG_IQ3_S;
+                 nr0 = N_R0_IQ3_S;
+                 smem = 512*4;
+             } break;
