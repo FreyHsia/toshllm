@@ -16,7 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **The experimental turbo key-value cache is no longer the slowest option.** At 4096 tokens of context turbo3 goes from 55.8 to 59.8 tokens/s and turbo4 from 56.8 to 60.5, against 58.1 for q8_0. Perplexity is unchanged.
 - **Models quantised with the IQ family read prompts faster.** A dense 7B at IQ3_XXS goes from 801.6 to 859.7 tokens/s on a 512-token prompt.
 - **Cards with 64-wide compute units read long prompts 3 to 4% faster.** The wider matrix tile now serves them from about 450 tokens onwards; below that nothing changes. On a Radeon RX Vega 64 llama-2-7B goes from 509 to 528 tokens/s at 512, with identical perplexity. `TOSH_MM_WIDE_W64_DISABLE=1` restores the old path.
-- **The mixture-of-experts tile is available on those cards too**, having been locked to the other width without ever being measured on one. It is worth about 2.6% on gpt-oss-20b and nothing on a smaller Gemma 4, so it stays opt-in with `TOSH_MMID_WIDE_W64_ENABLE=1`.
+- **The mixture-of-experts tile is available on those cards too**, having been locked to the other width without ever being measured on one. On gpt-oss-20b it wins at twelve of fifteen prompt lengths, by up to 23%, but loses about 17% in a narrow band around 470 tokens, so it stays opt-in with `TOSH_MMID_WIDE_W64_ENABLE=1`.
 
 Measured on a Radeon RX 6700 XT and, where stated, a Radeon RX Vega 64.
 
