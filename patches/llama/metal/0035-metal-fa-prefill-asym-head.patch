@@ -1,6 +1,6 @@
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -9057,39 +9057,40 @@
+@@ -9057,39 +9057,41 @@
  
  // Prefill attention for AMD: BQ queries stay resident while the cache streams in
  // blocks of BK, so the score matrix never reaches device memory.
@@ -30,8 +30,10 @@
      constexpr short NQR = BQ/NQG;
      constexpr short NKC = BK/16;
 -    constexpr short NDC = (DK + 15)/16;  // DK 72 (vision) leaves the top lanes idle
+-    constexpr short DKF = DK > 128 ? 128 : DK;  // cap the half2 run before flushing to float
 +    constexpr short NDC = (DV + 15)/16;  // DK 72 (vision) leaves the top lanes idle
-     constexpr short DKF = DK > 128 ? 128 : DK;  // cap the half2 run before flushing to float
++    // half2 run before flushing to float; it has to divide DK, and 576 (MLA) is not a multiple of 128
++    constexpr short DKF = DK % 128 == 0 ? 128 : (DK % 64 == 0 ? 64 : DK);
      constexpr short SQS = DK + 4;
      constexpr short SVS = BK + 4;
 -    constexpr short SKV = BK*SQS > DK*SVS ? BK*SQS : DK*SVS;
@@ -44,7 +46,7 @@
      const short kg = tiitg % 16;
      const short qg = tiitg / 16;
  
-@@ -9242,19 +9243,19 @@
+@@ -9242,19 +9244,19 @@
                  acc[rr][dd] *= corr;
              }
          }
@@ -67,7 +69,7 @@
              for (short i = 0; i < 4; ++i) {
                  skv[(4*ch + i)*SVS + jj] = (half) tv[i];
              }
-@@ -9274,17 +9275,17 @@
+@@ -9274,17 +9276,17 @@
              }
              FOR_UNROLL (short jj = 0; jj < BK; jj += 2) {
                  half2 pv[NQR];
@@ -86,7 +88,7 @@
                      }
                  }
              }
-@@ -9313,30 +9314,34 @@
+@@ -9313,30 +9315,34 @@
      for (short rr = 0; rr < NQR; ++rr) {
          const int iq = iq1 + qg + NQG*rr;
          if (iq >= args.ne01) {
@@ -125,7 +127,7 @@
  FA_AMD_PF_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1, dequantize_f16_t4)
  FA_AMD_PF_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
  FA_AMD_PF_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -9371,16 +9376,27 @@
+@@ -9371,16 +9377,27 @@
  FA_AMD_PF_TURBO("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_PF_TURBO("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
  FA_AMD_PF_TURBO("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
@@ -153,7 +155,7 @@
  //
  #define FA_TYPES \
             half4,  \
-@@ -10953,20 +10969,24 @@
+@@ -10953,20 +10970,24 @@
          for (short row = 0; row < nr0; row++) {
              const float db = dh[0];
              device const uint8_t * aux8 = (device const uint8_t *)q2;
@@ -180,7 +182,7 @@
              q2 += args.nb01/2;
          }
  
-@@ -11061,20 +11081,24 @@
+@@ -11061,20 +11082,24 @@
              const float db = dh[0];
              const uint8_t ls1 = sc[0] & 0xf;
              const uint8_t ls2 = sc[0] >>  4;
@@ -207,7 +209,7 @@
                  for (short j = 0; j < 8; ++j) {
                      sum2 += yl[8*l + j] * grid[j] * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
                  }
-@@ -11402,16 +11426,18 @@
+@@ -11402,16 +11427,18 @@
              const float db = dh[0];
              const float d1 = db * (0.5f + (sc[0] & 0xf));
              const float d2 = db * (0.5f + (sc[0] >>  4));
