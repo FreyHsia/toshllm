@@ -18,6 +18,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 #### Radeon Vega, Radeon VII, RX 400/500 and Radeon Pro Vega/WX
 
+- **Prompts of nine to twelve tokens are read up to 39% faster**, which is the length a follow-up question adds to a conversation already in cache. A 4B at Q4_K_M goes from 96 to 133 tokens/s at nine tokens and from 126 to 166 at twelve, and llama-2-7B from 76 to 84 and from 99 to 107. Longer prompts are unchanged, and `TOSH_EXT_MAX=8` restores the old bound.
 - **Q4_K models serve four or more conversations 12% faster, and gain 8% with multi-token prediction.** On a Radeon RX Vega 64, a dense 4B goes from 108.3 to 121.1 tokens/s with four conversations and from 119.5 to 133.6 with eight, and a Qwen3.5 4B from 65.5 to 70.5 with prediction on. One or two conversations are unchanged, and `TOSH_EXT_LDS_DISABLE=1` restores the old path.
 - **Prompts of 130 to 160 tokens are read 2 to 4% faster.** The short-tail path stopped paying earlier on these cards than on the others, and it now steps aside at 128 tokens instead of 192. On a Radeon RX Vega 64, llama-2-7B goes from 364 to 377 tokens/s at 144 and from 396 to 411 at 160. Perplexity is identical and `TOSH_MM_TAIL_MAX=192` restores the old bound.
 - **Serving several conversations at once is 9% faster.** The batched matrix-vector step split its work for narrower compute units. On a 9B at Q5_K_M with four conversations it goes from 47.4 to 51.6 tokens/s, and multi-token prediction gains from the same step. `TOSH_EXT_NXPSG_X2_DISABLE=1` restores the old split.

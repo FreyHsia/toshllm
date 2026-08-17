@@ -1,0 +1,83 @@
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -2541,17 +2541,32 @@
+ // sequences each column paid its own full pass over the weights
+ static int kquant_ext_floor() {
+     static const int v = []() {
+         const char * s = getenv("TOSH_EXT_KQ_FLOOR");
+         return s ? atoi(s) : 2;
+     }();
+     return v;
+ }
++
++// above eight columns the matmul tile takes over, but on 64 lanes it costs the same from nine
++// columns to thirty-two, so three column groups of the batched kernel are still cheaper
++static int ext_ceil(int simd_width) {
++    static const int v = []() {
++        const char * s = getenv("TOSH_EXT_MAX");
++        return s ? atoi(s) : 0;
++    }();
+ 
++    if (v) {
++        return v;
++    }
++
++    return simd_width == 64 ? 12 : 8;
++}
++
+ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+     ggml_metal_library_t lib = ctx->lib;
+     ggml_metal_encoder_t enc = ctx->enc;
+ 
+     const int32_t hint = ggml_get_op_params_i32(op, 1);
+ 
+@@ -2608,26 +2623,26 @@
+            op->src[0]->type == GGML_TYPE_Q2_0 ||
+            op->src[0]->type == GGML_TYPE_Q4_0 ||
+            op->src[0]->type == GGML_TYPE_Q4_1 ||
+            op->src[0]->type == GGML_TYPE_Q5_0 ||
+            op->src[0]->type == GGML_TYPE_Q5_1 ||
+            op->src[0]->type == GGML_TYPE_Q8_0 ||
+            op->src[0]->type == GGML_TYPE_MXFP4 ||
+            op->src[0]->type == GGML_TYPE_IQ4_NL ||
+-           false) && (ne11 >= 2 && ne11 <= 8)
++           false) && (ne11 >= 2 && ne11 <= ext_ceil(props_dev->simd_width))
+          ) ||
+          (
+           (
+            op->src[0]->type == GGML_TYPE_Q4_K ||
+            op->src[0]->type == GGML_TYPE_Q5_K ||
+            op->src[0]->type == GGML_TYPE_Q6_K ||
+            op->src[0]->type == GGML_TYPE_Q2_K ||
+            op->src[0]->type == GGML_TYPE_Q3_K ||
+-           false) && (ne11 >= kquant_ext_floor() && ne11 <= 8)
++           false) && (ne11 >= kquant_ext_floor() && ne11 <= ext_ceil(props_dev->simd_width))
+          )
+         )
+        ) {
+         // TODO: determine the optimal parameters based on grid utilization
+         //       I still don't know why we should not always use the maximum available threads:
+         //
+         //       nsg = pipeline.maxTotalThreadsPerThreadgroup / 32
+         //
+@@ -2678,17 +2693,17 @@
+                 r1ptg = 3; break;
+             case 4:
+             case 7:
+             case 8:
+                 r1ptg = 4; break;
+             case 5:
+                 r1ptg = 5; break;
+             default:
+-                GGML_ABORT("unsupported ne11");
++                r1ptg = 4; break;
+         };
+ 
+         // 2 rows per thread: the activation chunk is loaded once and reused across them
+         const bool nr0_2 = op->src[0]->type == GGML_TYPE_Q4_K ||
+                            op->src[0]->type == GGML_TYPE_Q5_K ||
+                            op->src[0]->type == GGML_TYPE_Q6_K ||
+                            op->src[0]->type == GGML_TYPE_Q2_K ||
+                            op->src[0]->type == GGML_TYPE_Q3_K;
