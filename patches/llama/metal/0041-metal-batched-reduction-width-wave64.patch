@@ -71,33 +71,3 @@
              /*.ne00  =*/ ne00,
              /*.ne01  =*/ ne01,
              /*.ne02  =*/ ne02,
---- a/common/speculative.cpp
-+++ b/common/speculative.cpp
-@@ -1430,16 +1430,27 @@
-         pending_h.assign(n_seq, std::vector<float>(n_embd, 0.0f));
- 
-         cold_rows.assign(n_seq, {});
-         cold_h.assign(n_seq, {});
- 
-         cold_defer = getenv("TOSH_MTP_COLD_DEFER_DISABLE") == nullptr;
-         // 0.65 sat above the acceptance real content reaches, so it backed off where drafting
-         // still paid; 0.60 keeps the win and still catches the unpredictable case.
-+        //
-+        // On a 64-lane card the autoregressive baseline is far faster (the mat-vec carries more
-+        // rows per thread there), so the draft's fixed cost only pays from a much higher
-+        // acceptance: measured +8.1% at 0.96, -0.4% at 0.87 and -1.2% at 0.84. Below the
-+        // threshold the backoff falls back to AR, so drafting never costs.
-+        {
-+            const char * sw = getenv("TOSH_METAL_SIMD_WIDTH");
-+            if (sw && atoi(sw) == 64) {
-+                acc_min = 0.90f;
-+            }
-+        }
-         acc_min    = getenv("TOSH_MTP_ACC_MIN")   ? (float) atof(getenv("TOSH_MTP_ACC_MIN"))   : acc_min;
-         probe_base = getenv("TOSH_MTP_PROBE")     ?         atoi(getenv("TOSH_MTP_PROBE"))     : probe_base;
-         probe_cap  = getenv("TOSH_MTP_PROBE_CAP") ?         atoi(getenv("TOSH_MTP_PROBE_CAP")) : probe_cap;
- 
-         i_last.assign(n_seq, -1);
-         i_batch_beg.assign(n_seq, -1);
-         i_batch_end.assign(n_seq, -1);
- 
