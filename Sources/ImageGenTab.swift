@@ -749,13 +749,24 @@ struct ImageInstanceForm: View {
     /// Past the size the model itself was trained at, where it starts repeating the
     /// composition. Nothing to do with the card, so the note says whose limit it is.
     private var pastNativeSize: Bool {
-        !cfg.isCustom && model.nativeLongEdge > 0 && cfg.dimensions.0 > model.nativeLongEdge
+        guard !cfg.isCustom, model.nativeLongEdge > 0 else { return false }
+        let (w, h) = cfg.dimensions
+        // a square-trained model is off its shape as soon as the frame is not square,
+        // which the long edge alone does not catch (512x288 has a long edge of 512)
+        return w > model.nativeLongEdge || (model.trainedSquareOnly && w != h)
+    }
+
+    private var nativeSizeMessage: String {
+        if model.trainedSquareOnly && cfg.dimensions.0 != cfg.dimensions.1 {
+            return loc.t("Este modelo se entrenó solo en cuadrado (\(model.nativeLongEdge)x\(model.nativeLongEdge)): en otros formatos saca manchas de color por muchos pasos que le des. Es límite del modelo, no de la app.",
+                         "This model was trained on square frames only (\(model.nativeLongEdge)x\(model.nativeLongEdge)): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.")
+        }
+        return loc.t("Por encima de los \(model.nativeLongEdge) px con los que se entrenó este modelo: puede repetir la composición (dos horizontes, sujetos duplicados). Es límite del modelo, no de la app.",
+                     "Above the \(model.nativeLongEdge) px this model was trained at: it may repeat the composition (two horizons, duplicated subjects). That is the model's limit, not the app's.")
     }
 
     private var nativeSizeNote: some View {
-        Label(loc.t("Por encima de los \(model.nativeLongEdge) px con los que se entrenó este modelo: puede repetir la composición (dos horizontes, sujetos duplicados). Es límite del modelo, no de la app.",
-                    "Above the \(model.nativeLongEdge) px this model was trained at: it may repeat the composition (two horizons, duplicated subjects). That is the model's limit, not the app's."),
-              systemImage: "info.circle")
+        Label(nativeSizeMessage, systemImage: "info.circle")
             .font(.caption2).foregroundStyle(.secondary)
     }
 

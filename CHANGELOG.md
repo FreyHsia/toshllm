@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **SD 1.5 says when the frame is not the shape it knows.** That model was trained on square frames only, and any other shape comes back with colour blotches in the background however many steps it takes; the studio now says so, instead of leaving it looking like a fault of the app. The newer models saw many aspect ratios and are unaffected.
+
 ## [0.85.2] - 2026-08-19
 
 ### Fixed

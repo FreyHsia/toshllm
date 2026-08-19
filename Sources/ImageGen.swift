@@ -81,6 +81,9 @@ struct ImageGenModel: Identifiable {
     /// guessing. 0 means no note: only set it where there is a published figure or
     /// a measurement, never a guess, or the warning cries wolf.
     var nativeLongEdge: Int = 0
+    /// Trained on square frames only, so any other shape comes out with colour blotches
+    /// however many steps it takes. The newer models saw many aspect ratios and are fine.
+    var trainedSquareOnly: Bool = false
     /// Extra VRAM (GB) per pixel² from self-attention built in full, which grows
     /// quadratically with resolution (issue #25: SD1.5 OOMs far below the linear
     /// budget). Only for models the AMD attention kernels do not cover: they take
@@ -135,8 +138,10 @@ enum ImageGenCatalog {
         components: [ImageGenComponent(kind: .checkpoint,
             urlString: "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF/resolve/main/stable-diffusion-v1-5-pruned-emaonly-Q8_0.gguf",
             fileName: "sd-v1-5-Q8_0.gguf", sizeGB: 1.68)],
+        // square only: measured 08-19, 512x288 and 768x432 come back with magenta blotches
+        // in the background at the same steps that give a clean 512x512
         defaultSteps: 20, cfgScale: 7.0, minVRAMGB: 3, maxLongEdge: 768,
-        nativeLongEdge: 512, attnVRAMSq: 3.4e-12)
+        nativeLongEdge: 512, trainedSquareOnly: true, attnVRAMSq: 3.4e-12)
 
     /// SDXL Turbo (3.5B, single checkpoint). Few steps, opens the LoRA/style world.
     static let sdxlTurbo = ImageGenModel(
