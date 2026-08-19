@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.2] - 2026-08-19
 
 ### Fixed
 - **Video no longer comes back as a flat colour.** Its attention was built in full instead of going through the card's kernels, and past a certain clip length it stopped fitting in a single allocation. A 33-frame clip at 704x400 is the case that showed it; 832x464 with 33 frames now renders too.
