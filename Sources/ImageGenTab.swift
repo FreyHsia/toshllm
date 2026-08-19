@@ -829,12 +829,20 @@ struct ImageInstanceForm: View {
             .labelsHidden()
             .onChange(of: cfg.modelID) {
                 if !cfg.isCustom { cfg.steps = model.defaultSteps }
+                // a square-trained model renders any other shape with colour blotches, so
+                // land on the one it knows instead of keeping the previous model's framing
+                if model.trainedSquareOnly { cfg.aspect = ImageAspect.square.rawValue }
                 clampBaseSize()
             }
             .onChange(of: cfg.gpuIndex) { clampBaseSize() }
             .onAppear {
                 if ImageGenCatalog.model(id: cfg.modelID) == nil && !cfg.isCustom {
                     cfg.modelID = model.id
+                }
+                // a framing saved under another model can be one this one no longer offers,
+                // which would leave the picker showing nothing at all
+                if !offeredAspects.contains(where: { $0.rawValue == cfg.aspect }) {
+                    cfg.aspect = (offeredAspects.first ?? .square).rawValue
                 }
                 clampBaseSize()
             }
@@ -974,13 +982,20 @@ struct ImageInstanceForm: View {
         return abs(target - pw / ph) / target > 0.08
     }
 
+    /// Framings this model is worth offering: a square-trained one gets only the square,
+    /// since the rest come back blotchy no matter the step count.
+    private var offeredAspects: [ImageAspect] {
+        guard !cfg.isCustom, model.trainedSquareOnly else { return ImageAspect.allCases }
+        return [.square]
+    }
+
     private var settingsGrid: some View {
         VStack(spacing: 12) {
             row(loc.t("Proporción", "Aspect ratio"),
                 loc.t("Marco de la imagen. Se ajusta a múltiplos de 64 px.",
                       "Image framing. Snapped to multiples of 64 px.")) {
                 Picker("", selection: $cfg.aspect) {
-                    ForEach(ImageAspect.allCases) { a in
+                    ForEach(offeredAspects) { a in
                         Text(a == .custom ? loc.t("Personalizado", "Custom") : a.rawValue).tag(a.rawValue)
                     }
                 }.labelsHidden().frame(width: 96)
