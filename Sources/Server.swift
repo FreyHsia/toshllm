@@ -107,6 +107,10 @@ struct ServerSettings {
     /// Load the multimodal projector (mmproj) for vision-capable models. Off skips it
     /// so a vision model runs text-only and frees the VRAM the image encoder would use.
     var loadVision: Bool = true
+    /// Cap on the tokens one image may take. 0 keeps the model's own limit; lowering it
+    /// shrinks the vision encoder's attention quadratically, which is what rescues a
+    /// card that cannot allocate that buffer.
+    var imageMaxTokens: Int = 0
     /// llama-bench workload sizes: prompt tokens (-p → ppN), generated tokens
     /// (-n → tgN) and context depth (-d, tokens already in the KV cache before
     /// measuring). Benchmark-only; llama-server ignores them.
@@ -200,7 +204,10 @@ struct ServerSettings {
         if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { args += ["--load-mode", mode] }
         // A sibling projector lets the model read images, and needs --jinja.
         let mmproj = loadVision ? Self.mmprojPath(forModel: modelPath) : nil
-        if let mmproj { args += ["--mmproj", mmproj] }
+        if let mmproj {
+            args += ["--mmproj", mmproj]
+            if imageMaxTokens > 0 { args += ["--image-max-tokens", String(imageMaxTokens)] }
+        }
         if jinja || mmproj != nil { args.append("--jinja") }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
@@ -241,6 +248,27 @@ struct ServerSettings {
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
         return args
+    }
+
+    /// Router writes one entry per model with the same context, but a multi-head model
+    /// caches several times more per token than a GQA one and can overflow VRAM on
+    /// load, which hangs the driver. Shrink the context for the models that don't fit.
+    nonisolated static func routerCtx(forModel path: String, requested: Int, ncmoe: Int,
+                                      kvScale: Double, reserveMB: Int) -> Int {
+        let kvPerToken = ModelSpec.kvBytesPerToken(atPath: path) * kvScale
+        guard kvPerToken > 0, requested > 2048 else { return requested }
+        let vramGB = Double(ServerController.availableGPUs().map(\.vramMB).max() ?? 0) / 1024
+        guard vramGB > 0 else { return requested }
+        let budget = vramGB - Double(reserveMB) / 1024
+        let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64) ?? 0
+        let weightsGB = Double(size) / 1_073_741_824 * (ncmoe > 0 ? 0.45 : 1.0)
+        let computeGB = 0.9
+        var value = requested
+        while value > 2048,
+              weightsGB + computeGB + kvPerToken * Double(value) / 1_073_741_824 > budget {
+            value /= 2
+        }
+        return value
     }
 
     /// Router-mode CLI args: no `-m`, the preset file lists every model. Per-model
@@ -300,12 +328,18 @@ struct ServerSettings {
             if seenAliases.contains(alias) { alias += "-\(abs(path.hashValue) % 1000)" }
             seenAliases.insert(alias)
 
+            let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ncmoe: ncmoeByPath[path] ?? 0,
+                                          kvScale: Estimator.kvTypeScale(cacheTypeK),
+                                          reserveMB: vramReserveMB)
             var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
-                         "ctx-size = \(ctx)", "threads = \(threads)", "flash-attn = \(faValue)"]
+                         "ctx-size = \(modelCtx)", "threads = \(threads)", "flash-attn = \(faValue)"]
             if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
             if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
-            if let mmproj { lines.append("mmproj = \(mmproj)") }
+            if let mmproj {
+                lines.append("mmproj = \(mmproj)")
+                if imageMaxTokens > 0 { lines.append("image-max-tokens = \(imageMaxTokens)") }
+            }
             if jinja || mmproj != nil { lines.append("jinja = true") }
             if cacheTypeK != "f16" { lines.append("cache-type-k = \(cacheTypeK)") }
             if cacheTypeV != "f16" { lines.append("cache-type-v = \(cacheTypeV)") }
@@ -315,7 +349,10 @@ struct ServerSettings {
             if parallelSlots > 1 { lines.append("kv-unified = true") }
             if isSplitting { lines.append("split-mode = \(effectiveSplitMode)") }
             if persistCache && effectiveFaAmd {
-                lines.append("slot-save-path = \(Self.slotCacheDir(port: port).appendingPathComponent(alias).path)")
+                // the engine rejects a slot path that isn't an existing directory
+                let slotDir = Self.slotCacheDir(port: port).appendingPathComponent(alias)
+                try? FileManager.default.createDirectory(at: slotDir, withIntermediateDirectories: true)
+                lines.append("slot-save-path = \(slotDir.path)")
             }
             if reasoningInline { lines.append("reasoning-format = none") }
             if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
@@ -396,11 +433,15 @@ struct ServerSettings {
         return MTLCreateSystemDefaultDevice()?.name ?? "default"
     }
 
-    /// Web chat UI bundled with the app (served via llama-server --path).
+    /// Web chat UI bundled with the app (served via llama-server --path). The rebranded
+    /// llama.cpp UI wins; the basic console stays as fallback.
     static var chatUIPath: String? {
-        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("test-ui").path,
-              FileManager.default.fileExists(atPath: bundled + "/index.html") else { return nil }
-        return bundled
+        guard let res = Bundle.main.resourceURL else { return nil }
+        for name in ["web-ui", "test-ui"] {
+            let dir = res.appendingPathComponent(name).path
+            if FileManager.default.fileExists(atPath: dir + "/index.html") { return dir }
+        }
+        return nil
     }
 
     var environment: [String: String] {
@@ -556,6 +597,7 @@ struct ServerSettings {
             forcePrivateBuffers: bool(SettingsKeys.forcePrivateBuffers, false),
             cacheReuse: bool(SettingsKeys.cacheReuse, true),
             loadVision: bool(SettingsKeys.loadVision, true),
+            imageMaxTokens: int(SettingsKeys.imageMaxTokens, 0),
             benchPP: int(SettingsKeys.benchPP, 512),
             benchTG: int(SettingsKeys.benchTG, 128),
             benchDepth: int(SettingsKeys.benchDepth, 0))
@@ -1366,6 +1408,27 @@ final class ServerController: ObservableObject {
         return "El motor terminó con código \(exitCode) — revisa el registro en Ajustes / engine exited with code \(exitCode) — see the log in Settings"
     }
 
+    /// Router mode spawns one child engine per loaded model. They hold the weights
+    /// (mlock'd), so a survivor keeps the RAM until it is killed by hand.
+    nonisolated static func reapChildren(of parent: pid_t) {
+        let pgrep = Process()
+        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pgrep.arguments = ["-P", String(parent)]
+        let pipe = Pipe()
+        pgrep.standardOutput = pipe
+        pgrep.standardError = FileHandle.nullDevice
+        guard (try? pgrep.run()) != nil else { return }
+        let out = pipe.fileHandleForReading.readDataToEndOfFile()
+        pgrep.waitUntilExit()
+        let kids = String(decoding: out, as: UTF8.self)
+            .split(whereSeparator: \.isNewline).compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+        guard !kids.isEmpty else { return }
+        for kid in kids { kill(kid, SIGTERM) }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
+            for kid in kids where kill(kid, 0) == 0 { kill(kid, SIGKILL) }
+        }
+    }
+
     func stop() {
         healthTask?.cancel()
         dflashMemoryTask?.cancel()
@@ -1373,6 +1436,7 @@ final class ServerController: ObservableObject {
         dflashAcceptance = nil
         stopDiscovery()
         if let p = process {
+            Self.reapChildren(of: p.processIdentifier)
             let pid = p.processIdentifier
             lastStoppedPID = pid
             // Drop this engine's PID now: once process is niled below, the termination
@@ -1419,6 +1483,7 @@ final class ServerController: ObservableObject {
         }
         let pid = p.processIdentifier
         lastStoppedPID = pid
+        Self.reapChildren(of: pid)
         EngineLock.remove(pid: pid)
         if prewarmActive {
             Self.slotSaveBlocking(port: currentPort,

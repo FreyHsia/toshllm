@@ -44,6 +44,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.cacheTypeV) private var cacheTypeV = "f16"
     @AppStorage(SettingsKeys.mlock) private var mlock = false
     @AppStorage(SettingsKeys.cacheRAM) private var cacheRAM = 2048
+    @AppStorage(SettingsKeys.imageMaxTokens) private var imageMaxTokens = 0
     @AppStorage(SettingsKeys.parallelSlots) private var parallelSlots = 1
     @AppStorage(SettingsKeys.reasoningInline) private var reasoningInline = false
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
@@ -466,6 +467,15 @@ struct SettingsView: View {
                 }
                 .infoTip(loc.t("RAM extra donde el motor recuerda conversaciones recientes para no reprocesarlas al cambiar de chat o cliente. Sin límite el motor usa hasta 8 GB: junto a un modelo grande lleva al equipo a swap y la velocidad se degrada con el uso. 2 GB es un buen equilibrio.",
                             "Extra RAM where the engine remembers recent conversations to avoid reprocessing them when switching chats or clients. Unlimited, the engine uses up to 8 GB: next to a large model that pushes the machine into swap and speed degrades over time. 2 GB is a good balance."))
+
+                Picker(loc.t("Tope de tokens por imagen", "Image token cap"), selection: $imageMaxTokens) {
+                    Text(loc.t("Del modelo", "Model's")).tag(0)
+                    Text("4096").tag(4096)
+                    Text("2048").tag(2048)
+                    Text("1024").tag(1024)
+                }
+                .infoTip(loc.t("Cuántos tokens puede ocupar una imagen en los modelos con visión. Por defecto manda el modelo. La memoria del codificador de visión crece con el cuadrado de este número, así que bajarlo la recorta mucho, a costa de detalle: es lo que permite cargar un modelo con visión en tarjetas donde ese buffer no cabe.",
+                            "How many tokens one image may take on vision models. The model decides by default. The vision encoder's memory grows with the square of this number, so lowering it cuts memory a lot at the cost of detail: it is what makes a vision model load on cards where that buffer does not fit."))
             }
 
             Section(loc.t("Inferencia y contexto", "Inference & context")) {

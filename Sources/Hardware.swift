@@ -91,15 +91,38 @@ struct ModelSpec {
     let isMoE: Bool
     /// MoE active parameters (billions); 0 = derive from total.
     var activeParamsB: Double = 0
+    /// Exact f16 KV bytes per token from the GGUF geometry; 0 = fall back to the heuristic.
+    var kvBytesPerToken: Double = 0
+
+    /// Reads the real KV geometry: multi-head models (llama-2, OLMo) cache eight times
+    /// what the by-size heuristic assumes, enough to overflow VRAM and hang the driver.
+    static func kvBytesPerToken(atPath path: String) -> Double {
+        guard let md = GGUFMetadataCache.metadata(at: path) else { return 0 }
+        func u(_ suffix: String) -> Int? { md.uint32(forSuffix: suffix).map(Int.init) }
+        guard let layers = u("block_count"), layers > 0,
+              let headsKV = u("attention.head_count_kv"), headsKV > 0 else { return 0 }
+        let keyLen = u("attention.key_length") ?? {
+            guard let embd = u("embedding_length"), let heads = u("attention.head_count"), heads > 0
+            else { return nil }
+            return embd / heads
+        }()
+        guard let keyLen, keyLen > 0 else { return 0 }
+        let valueLen = u("attention.value_length") ?? keyLen
+        // hybrid architectures put full attention on one layer in N; the rest are recurrent
+        let interval = u("full_attention_interval") ?? 1
+        let attnLayers = interval > 1 ? (layers + interval - 1) / interval : layers
+        return Double(attnLayers * headsKV * (keyLen + valueLen) * 2)
+    }
 
     /// For local models without catalog metadata
-    static func estimated(fileBytes: Int64, isMoE: Bool, name: String = "") -> ModelSpec {
+    static func estimated(fileBytes: Int64, isMoE: Bool, name: String = "", path: String = "") -> ModelSpec {
         let gb = Double(fileBytes) / 1_073_741_824
         // Q4 is roughly 0.57 GB per billion parameters
         let params = gb / 0.57
         let active = isMoE ? (ModelName.activeParamsB(name) ?? params * 0.11) : 0
         return ModelSpec(fileGB: gb, paramsB: params, layers: isMoE ? 48 : 40,
-                         isMoE: isMoE, activeParamsB: active)
+                         isMoE: isMoE, activeParamsB: active,
+                         kvBytesPerToken: path.isEmpty ? 0 : kvBytesPerToken(atPath: path))
     }
 }
 
@@ -325,7 +348,10 @@ enum Estimator {
     }
 
     private static func kvCache(spec: ModelSpec, ctx: Int) -> Double {
-        // GQA f16 heuristic: grows with model size and context length
+        if spec.kvBytesPerToken > 0 {
+            return spec.kvBytesPerToken * Double(ctx) / 1_073_741_824
+        }
+        // GQA f16 heuristic when the geometry is unreadable
         let perK = spec.paramsB >= 25 ? 0.10 : spec.paramsB >= 12 ? 0.08 : 0.05
         return perK * Double(ctx) / 1024
     }

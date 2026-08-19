@@ -61,9 +61,16 @@ else
     echo "WARNING: engines not built; run ./scripts/build-engines.sh first"
 fi
 
-# Web chat UI (served via llama-server --path)
+# Web chat UI (served via llama-server --path). web-ui is the rebranded llama.cpp UI
+# built by scripts/rebrand-webui.sh; test-ui is the fallback console.
 mkdir -p "$APP/Contents/Resources/test-ui"
 cp Assets/test-ui/index.html "$APP/Contents/Resources/test-ui/"
+if [ -f Assets/web-ui/index.html ]; then
+    mkdir -p "$APP/Contents/Resources/web-ui"
+    (cd Assets/web-ui && tar cf - .) | (cd "$APP/Contents/Resources/web-ui" && tar xf -)
+else
+    echo "WARNING: Assets/web-ui missing; falling back to the basic console"
+fi
 
 mkdir -p "$APP/Contents/Resources/rich-content/mermaid/dist" \
          "$APP/Contents/Resources/rich-content/katex/dist/fonts" \

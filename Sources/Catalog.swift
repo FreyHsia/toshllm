@@ -112,8 +112,14 @@ enum Catalog {
 
     /// Spec for a local file: reuses catalog metadata when the filename matches.
     static func spec(forLocal model: LocalModel) -> ModelSpec {
-        if let match = models.first(where: { $0.fileName == model.name }) { return match.spec }
-        return ModelSpec.estimated(fileBytes: model.sizeBytes, isMoE: model.isMoE, name: model.name)
+        let kv = ModelSpec.kvBytesPerToken(atPath: model.url.path)
+        if let match = models.first(where: { $0.fileName == model.name }) {
+            var spec = match.spec
+            spec.kvBytesPerToken = kv
+            return spec
+        }
+        return ModelSpec.estimated(fileBytes: model.sizeBytes, isMoE: model.isMoE,
+                                   name: model.name, path: model.url.path)
     }
 
     /// A recommended model tailored to a use case.

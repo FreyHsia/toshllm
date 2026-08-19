@@ -135,6 +135,8 @@ struct Conversation: Identifiable, Codable {
     var branches: [ChatBranch]? = nil
     var activeBranchID: UUID? = nil
     var enabledToolNames: [String]? = nil
+    /// Working directory the server tools run in. Empty/nil falls back to the project's.
+    var workingDirectory: String? = nil
     /// Last exchange's context tokens, per chat so the bar follows the open
     /// conversation and persists with the KV cache. Optional for old JSON.
     var contextUsed: Int? = nil
@@ -185,6 +187,7 @@ struct ChatProject: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
     var systemPrompt: String = ""
+    var workingDirectory: String? = nil
     var pinned: Bool? = nil
     /// Sidebar disclosure state, persisted so folders keep their fold.
     var collapsed: Bool? = nil
@@ -343,6 +346,7 @@ private struct AgentRunContext {
     let modalities: ModelModalities?
     var remainingTurns: Int
     var tools: [BuiltinToolInfo]
+    var workingDirectory: String?
 }
 
 @MainActor
@@ -617,6 +621,29 @@ final class ChatStore: ObservableObject {
         save()
     }
 
+    func setConversationWorkingDirectory(_ c: Conversation, _ path: String?) {
+        guard let i = conversations.firstIndex(where: { $0.id == c.id }) else { return }
+        conversations[i].workingDirectory = (path?.isEmpty ?? true) ? nil : path
+        save()
+    }
+
+    /// Folder picker for a project, so the menu entry is one line at each call site.
+    func pickProjectWorkingDirectory(_ p: ChatProject) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let path = panel.url?.path {
+            setProjectWorkingDirectory(p, path)
+        }
+    }
+
+    func setProjectWorkingDirectory(_ p: ChatProject, _ path: String?) {
+        guard let i = projects.firstIndex(where: { $0.id == p.id }) else { return }
+        projects[i].workingDirectory = (path?.isEmpty ?? true) ? nil : path
+        save()
+    }
+
     /// System prompt actually sent: the chat's own, else its project's, else
     /// the global one. First non-empty wins.
     func effectiveSystemPrompt(global: String) -> String {
@@ -624,6 +651,16 @@ final class ChatStore: ObservableObject {
         return Self.resolvePrompt(chat: c.systemPrompt,
                                   project: project(id: c.projectID)?.systemPrompt,
                                   global: global)
+    }
+
+    /// Working directory sent with tool calls: the chat's own, else its project's.
+    func effectiveWorkingDirectory(for id: UUID?) -> String? {
+        guard let c = conversations.first(where: { $0.id == (id ?? current?.id) }) else { return nil }
+        func meaningful(_ s: String?) -> String? {
+            guard let s, !s.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            return s
+        }
+        return meaningful(c.workingDirectory) ?? meaningful(project(id: c.projectID)?.workingDirectory)
     }
 
     nonisolated static func resolvePrompt(chat: String?, project: String?, global: String) -> String {
@@ -693,12 +730,17 @@ final class ChatStore: ObservableObject {
         // The user can switch or delete conversations mid-stream; the result
         // must land in the one this request started from, found by id.
         let convID = conversations[i].id
+        let toolCwd = effectiveWorkingDirectory(for: convID)
+        let systemWithCwd = toolCwd.map {
+            (system.isEmpty ? "" : system + "\n\n")
+            + "File tools work inside \($0). Use paths relative to it, and never call them for text that only exists in this conversation."
+        } ?? system
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
         let agentTurnLimit = Self.configuredAgentTurnLimit
         let enabledToolNames = conversations[i].enabledToolNames
 
-        var history = Self.requestHistory(system: system,
+        var history = Self.requestHistory(system: systemWithCwd,
                                           summary: conversations[i].summary,
                                           messages: conversations[i].messages,
                                           from: conversations[i].summarizedCount ?? 0,
@@ -760,6 +802,7 @@ final class ChatStore: ObservableObject {
         // measured t/s drops even though the server keeps generating.
         task = Task.detached(priority: .userInitiated) { [weak self, buffer, pump] in
             var nTokens = 0
+            let tSent = Date()
             var tFirst: Date?
             // Token arrival times within the last seconds; drives the live
             // t/s as an instantaneous reading instead of a cumulative average.
@@ -829,7 +872,14 @@ final class ChatStore: ObservableObject {
                 await self?.prepareSlot(convID: convID, port: port)
 
                 if availableTools.isEmpty {
-                    if toolsEnabled { availableTools = try await ChatToolsService.list(port: port) }
+                    if toolsEnabled {
+                        availableTools = try await ChatToolsService.list(port: port)
+                        // without a folder these write wherever the engine happens to run,
+                        // and the model invents paths for text that is not a file at all
+                        if toolCwd == nil {
+                            availableTools.removeAll { $0.usesCwd && $0.writesData }
+                        }
+                    }
                     if javaScriptEnabled { availableTools.append(JavaScriptSandboxService.tool) }
                     availableTools += await ToshMCPService.shared.discoverTools()
                     if let enabledToolNames {
@@ -989,6 +1039,7 @@ final class ChatStore: ObservableObject {
                 let dt = Date().timeIntervalSince(start)
                 return dt > 0.4 && nTokens > 1 ? Double(nTokens) / dt : nil
             }
+            let ttft: Double? = tFirst.map { $0.timeIntervalSince(tSent) * 1000 }
             // A reasoning-only turn is not a usable assistant response. Drop
             // it instead of persisting an apparently duplicated empty bubble
             // and sending an empty assistant message in the next request.
@@ -996,7 +1047,11 @@ final class ChatStore: ObservableObject {
             let finalText = hasVisibleAnswer ? composed() : ""
             let finalUsage = accumulator.usage
             let finalAccept = accumulator.mtpAccept
-            let finalTimings = accumulator.timings
+            let finalTimings: ChatTimings? = {
+                var t = accumulator.timings
+                t?.timeToFirstTokenMilliseconds = ttft
+                return t
+            }()
             let finalFinishReason = accumulator.finishReason
             let wasCancelled = cancelled
             let didReportError = reportedError
@@ -1007,7 +1062,7 @@ final class ChatStore: ObservableObject {
                 system: system, thinking: thinking, sampling: sampling,
                 modalities: modalities,
                 remainingTurns: agentRun?.remainingTurns ?? agentTurnLimit,
-                tools: availableTools)
+                tools: availableTools, workingDirectory: toolCwd)
             let store = self
             let shouldDeliverQueued: Bool = await MainActor.run {
                 if !wasCancelled && !didReportError && hadReasoning && !hasVisibleAnswer
@@ -1233,13 +1288,15 @@ final class ChatStore: ObservableObject {
                     result = await JavaScriptSandboxService.execute(arguments: arguments)
                 } else if request.name == "exec_shell_command" {
                     result = try await ChatToolsService.executeStreaming(
-                        name: request.name, arguments: arguments, port: context.port
+                        name: request.name, arguments: arguments, port: context.port,
+                        workingDirectory: context.workingDirectory
                     ) { [weak self] partial in
                         await MainActor.run { self?.updateToolCallResult(request, result: partial) }
                     }
                 } else {
                     result = try await ChatToolsService.execute(
-                        name: request.name, arguments: arguments, port: context.port)
+                        name: request.name, arguments: arguments, port: context.port,
+                        workingDirectory: context.workingDirectory)
                 }
                 guard !Task.isCancelled else { return }
                 self?.completeToolCall(request, result: result.content,
@@ -1886,6 +1943,7 @@ struct NativeChatView: View {
     @State private var promptProject: ChatProject?
     @State private var headerTitle = ""
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
+    @AppStorage(SettingsKeys.agentToolsEnabled) private var agentToolsEnabled = false
     // True while the conversation's end is on screen (inverted scroll rests here).
     @State private var atBottom = true
     // Set when the reader scrolls away mid-answer; the bubble renders it until
@@ -2051,6 +2109,82 @@ struct NativeChatView: View {
     }
 
     /// Compact bar over the transcript: project chip + in-place editable title.
+    /// A pinned folder can be moved or deleted behind our back; the tools would only
+    /// fail at call time, so flag it where the folder is shown.
+    private func directoryIsMissing(_ path: String?) -> Bool {
+        guard let path, !path.isEmpty else { return false }
+        var isDir: ObjCBool = false
+        return !(FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue)
+    }
+
+    /// Shows the folder the tools are actually using, own or inherited, so it is
+    /// readable without opening the chat parameters. Clicking it changes the chat's.
+    @ViewBuilder private var workingDirectoryChip: some View {
+        let own = chat.current?.workingDirectory
+        let inherited = chat.current.flatMap { chat.project(id: $0.projectID)?.workingDirectory }
+        let active = own ?? inherited
+        let missing = directoryIsMissing(active)
+        if agentToolsEnabled || active != nil {
+            Menu {
+                if let active {
+                    Text(active)
+                    if missing {
+                        Text(loc.t("La carpeta ya no existe", "That folder no longer exists"))
+                    }
+                    Divider()
+                }
+                Button(loc.t("Elegir carpeta de este chat…", "Pick this chat's folder…")) {
+                    guard let c = chat.current else { return }
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let path = panel.url?.path {
+                        chat.setConversationWorkingDirectory(c, path)
+                    }
+                }
+                if own != nil {
+                    Button(inherited == nil
+                           ? loc.t("Quitar carpeta", "Clear folder")
+                           : loc.t("Heredar la del proyecto", "Inherit the project's")) {
+                        if let c = chat.current { chat.setConversationWorkingDirectory(c, nil) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: missing ? "folder.badge.questionmark"
+                          : active == nil ? "folder.badge.questionmark" : "folder.fill")
+                        .font(.system(size: 10, weight: .medium))
+                    Text(active.map { URL(fileURLWithPath: $0).lastPathComponent }
+                         ?? loc.t("Sin carpeta", "No folder"))
+                        .lineLimit(1)
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(missing ? AnyShapeStyle(.red)
+                                 : own == nil && active != nil ? AnyShapeStyle(.tertiary)
+                                 : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .glassSurface(in: Capsule(), interactive: true)
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.07)))
+                .contentShape(Capsule())
+            }
+            .menuStyle(.button).buttonStyle(.plain)
+            .menuIndicator(.hidden).fixedSize()
+            .tint(.secondary)
+            .help(missing
+                  ? loc.t("La carpeta ya no existe: las herramientas fallarán hasta que elijas otra.",
+                          "That folder no longer exists: the tools will fail until you pick another.")
+                  : own != nil
+                  ? loc.t("Carpeta de esta conversación para las herramientas.",
+                          "This conversation's folder for the tools.")
+                  : active != nil
+                    ? loc.t("Carpeta heredada del proyecto. Haz clic para fijar una propia.",
+                            "Folder inherited from the project. Click to pin its own.")
+                    : loc.t("Sin carpeta para las herramientas. Haz clic para elegir una.",
+                            "No folder for the tools. Click to pick one."))
+        }
+    }
+
     private var conversationHeader: some View {
         HStack(spacing: 8) {
             if let p = chat.project(id: chat.current?.projectID) {
@@ -2059,6 +2193,16 @@ struct NativeChatView: View {
                         if let c = chat.current { chat.move(c, toProject: nil) }
                     }
                     Button(loc.t("Prompt del proyecto…", "Project prompt…")) { promptProject = p }
+                    Button(p.workingDirectory == nil
+                           ? loc.t("Carpeta del proyecto…", "Project folder…")
+                           : loc.t("Cambiar carpeta del proyecto…", "Change project folder…")) {
+                        chat.pickProjectWorkingDirectory(p)
+                    }
+                    if p.workingDirectory != nil {
+                        Button(loc.t("Quitar carpeta del proyecto", "Clear project folder")) {
+                            chat.setProjectWorkingDirectory(p, nil)
+                        }
+                    }
                 } label: {
                     // Chrome lives inside the label so the menu's hit area is the whole chip.
                     HStack(spacing: 5) {
@@ -2092,6 +2236,7 @@ struct NativeChatView: View {
                 .help(loc.t("Haz clic para renombrar la conversación (Enter guarda).",
                             "Click to rename the conversation (Enter saves)."))
             Spacer()
+            workingDirectoryChip
             if let branches = chat.current?.branches, branches.count > 1,
                let position = chat.currentBranchPosition {
                 Menu {
@@ -2543,6 +2688,52 @@ struct NativeChatView: View {
                     "Chat parameters: reasoning, creativity, response length and system prompt."))
     }
 
+    /// Folder the server tools run in. Shown here because it is per chat and the
+    /// user has to see which one is active before sending.
+    @ViewBuilder private var workingDirectoryRow: some View {
+        let own = chat.current?.workingDirectory
+        let inherited = chat.current.flatMap { chat.project(id: $0.projectID)?.workingDirectory }
+        VStack(alignment: .leading, spacing: 6) {
+            Label(loc.t("Directorio de trabajo", "Working directory"), systemImage: "folder")
+                .font(.subheadline.weight(.medium))
+                .infoTip(loc.t("Carpeta en la que se ejecutan las herramientas del servidor en esta conversación. Si no fijas una, hereda la del proyecto.",
+                               "Folder the server tools run in for this conversation. With none set, it inherits the project's."))
+            HStack(spacing: 8) {
+                if directoryIsMissing(own ?? inherited) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10)).foregroundStyle(.red)
+                        .help(loc.t("La carpeta ya no existe.", "That folder no longer exists."))
+                }
+                Text(own ?? inherited ?? loc.t("Sin carpeta", "None"))
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(1).truncationMode(.head)
+                    .foregroundStyle(directoryIsMissing(own ?? inherited) ? AnyShapeStyle(.red)
+                                     : own == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                Spacer()
+                if own == nil, inherited != nil {
+                    Text(loc.t("del proyecto", "from project"))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                Button(loc.t("Elegir…", "Choose…")) {
+                    guard let c = chat.current else { return }
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let path = panel.url?.path {
+                        chat.setConversationWorkingDirectory(c, path)
+                    }
+                }
+                .help(loc.t("Elegir la carpeta de esta conversación.", "Pick this conversation's folder."))
+                Button(loc.t("Quitar", "Clear")) {
+                    if let c = chat.current { chat.setConversationWorkingDirectory(c, nil) }
+                }
+                .disabled(own == nil)
+                .help(loc.t("Vuelve a heredar la carpeta del proyecto.", "Go back to inheriting the project's folder."))
+            }
+        }
+    }
+
     private var paramsPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(loc.t("Parámetros del chat", "Chat parameters")).font(.headline)
@@ -2570,6 +2761,10 @@ struct NativeChatView: View {
             }
 
             modalityBadges
+
+            Divider()
+
+            workingDirectoryRow
 
             Divider()
 
@@ -3876,6 +4071,16 @@ struct ConversationListView: View {
                 chat.newConversation(in: p.id)
             }
             Button(loc.t("Prompt del proyecto…", "Project prompt…")) { promptProject = p }
+            Button(p.workingDirectory == nil
+                   ? loc.t("Carpeta del proyecto…", "Project folder…")
+                   : loc.t("Cambiar carpeta del proyecto…", "Change project folder…")) {
+                chat.pickProjectWorkingDirectory(p)
+            }
+            if p.workingDirectory != nil {
+                Button(loc.t("Quitar carpeta del proyecto", "Clear project folder")) {
+                    chat.setProjectWorkingDirectory(p, nil)
+                }
+            }
             Button(loc.t("Renombrar…", "Rename…")) {
                 projectRenameText = p.name
                 renamingProject = p

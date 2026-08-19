@@ -10,7 +10,7 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-LLAMA_COMMIT="${LLAMA_COMMIT:-84e908c62}"   # llama.cpp commit validated against the patches
+LLAMA_COMMIT="${LLAMA_COMMIT:-3dc7285b4}"   # llama.cpp commit validated against the patches
 SD_COMMIT="${SD_COMMIT:-de298c2}"         # stable-diffusion.cpp commit validated for image gen
 ARCH="${ARCH:-$(uname -m)}"
 DEPLOYMENT_TARGET="14.0"        # same floor as the app (Package.swift)
@@ -181,7 +181,23 @@ build_image_engine() {
     # impl.h needs -C2: this engine's decode N_R0/N_SG block differs from llama.cpp's, so a -U5
     # hunk finds no match. Safe only because every define it edits is unique, asserted below.
     # the 0001-* series is the shared Metal backend; this engine takes only its ggml-metal hunks
+    # this engine's ggml is pinned older than llama.cpp's, so a shared hunk the bumped
+    # tree moved past it is frozen under patches/image/shared and wins here. The recorded
+    # sha is the llama version at freeze time: if that patch gains anything later, this
+    # stops the build instead of letting the image engine drift behind in silence.
     for shared in "$ROOT"/patches/llama/metal/0001-*.patch; do
+        frozen="$ROOT/patches/image/shared/$(basename "$shared")"
+        if [ -f "$frozen" ]; then
+            recorded=$(cat "$frozen.sha256" 2>/dev/null)
+            now=$("$ROOT/scripts/shared-hunks-sha.py" "$shared")
+            if [ "$recorded" != "$now" ]; then
+                echo "ERROR: $(basename "$shared") changed since it was frozen for the image engine."
+                echo "  port the change into patches/image/shared/ (or delete it if this engine's"
+                echo "  ggml caught up), then refresh its .sha256 with scripts/shared-hunks-sha.py"
+                exit 1
+            fi
+            shared="$frozen"
+        fi
         git apply --exclude='ggml/src/ggml-metal/ggml-metal-impl.h' \
                   --include='ggml/src/ggml-metal/*' -p1 "$shared"
     done

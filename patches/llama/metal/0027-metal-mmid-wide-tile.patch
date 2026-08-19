@@ -1,6 +1,110 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1206,33 +1206,77 @@
+ 
+     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
+ 
+     const bool use_mm_manual = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->use_mm_manual;
+ 
+     const bool acc_f32 = use_mm_manual && (!ggml_is_contiguous(op->src[0]) || tsrc0 == GGML_TYPE_BF16) &&
+                          getenv("TOSH_MM_ACC_F32_DISABLE") == nullptr;
+ 
+-    snprintf(base, 256, "kernel_mul_mm_id_%s_%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1));
++    // one grid per expert already keeps the GPU in threadgroups, so the 8x4 tile does not need
++    // the dense token floor. What it needs is an average expert that fills the narrow tile:
++    // below that its 64 columns are mostly padding and it loses (measured -5% at 14 tokens
++    // per expert, +2.3% at 45)
++    static const int wide_floor = []() {
++        const char * s = getenv("TOSH_MMID_WIDE_FLOOR");
++        return s ? atoi(s) : 32;
++    }();
++
++    // wave64 is off by the dense tile's result, not by one measured here: the expert path splits
++    // its work per expert, so the opt-in exists for a GCN card to settle it
++    const int simd_width = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
++    const bool wide_width_ok = simd_width != 64 || getenv("TOSH_MMID_WIDE_W64_ENABLE") != nullptr;
++
++    const int64_t tpe = op->src[0]->ne[2] > 0 ? op->src[2]->ne[0]*op->src[2]->ne[1] / op->src[0]->ne[2] : 0;
++
++    bool wide = use_mm_manual && tsrc1 == GGML_TYPE_F32 && wide_width_ok &&
++                tpe >= wide_floor && getenv("TOSH_MMID_WIDE_DISABLE") == nullptr;
++    if (wide) {
++        // it needs 64 accumulators, so only where the dequant leaves the registers
++        switch (tsrc0) {
++            case GGML_TYPE_F16:
++            case GGML_TYPE_Q4_0:
++            case GGML_TYPE_Q4_1:
++            case GGML_TYPE_Q5_0:
++            case GGML_TYPE_Q5_1:
++            case GGML_TYPE_Q8_0:
++            case GGML_TYPE_MXFP4:
++            case GGML_TYPE_Q2_K:
++            case GGML_TYPE_Q3_K:
++            case GGML_TYPE_Q4_K:
++            case GGML_TYPE_Q5_K:
++            case GGML_TYPE_Q6_K:
++            case GGML_TYPE_IQ3_S:
++            case GGML_TYPE_IQ2_S:
++            case GGML_TYPE_IQ1_S:
++            case GGML_TYPE_IQ4_NL:
++            case GGML_TYPE_IQ4_XS: break;
++            default: wide = false; break;
++        }
++    }
++
++    snprintf(base, 256, "kernel_mul_mm_id_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), wide ? "_w" : "");
+     snprintf(name, 256, "%s_bci=%d_mm=%d_af=%d", base, bc_inp, use_mm_manual, acc_f32);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         ggml_metal_cv_t cv = ggml_metal_cv_init();
+ 
+         ggml_metal_cv_set_bool(cv, bc_inp,        FC_MUL_MM + 0);
+         ggml_metal_cv_set_bool(cv, use_mm_manual, FC_MUL_MM + 6);
+         ggml_metal_cv_set_bool(cv, acc_f32,       FC_MUL_MM + 9);
+ 
+         res = ggml_metal_library_compile_pipeline(lib, base, name, cv);
+ 
+         ggml_metal_cv_free(cv);
+     }
+ 
+     res.smem = 8192;
++    res.nr0  = 64;
++    res.nr1  = wide ? 64 : 32;
+ 
+     return res;
+ }
+ 
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_metal_library_t lib, const ggml_tensor * op) {
+     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
+ 
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -2953,17 +2953,19 @@
+             ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
+             ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
+             ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
+ 
+             const size_t smem = pipeline.smem;
+ 
+             ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+ 
+-            ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + 31)/32, (ne01 + 63)/64, ne02, 128, 1, 1);
++            const int nr1 = pipeline.nr1;
++
++            ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + nr1 - 1)/nr1, (ne01 + 63)/64, ne02, 128, 1, 1);
+         }
+     } else {
+         auto pipeline = ggml_metal_library_get_pipeline_mul_mv_id(lib, op);
+ 
+         const int nr0 = pipeline.nr0;
+         const int nr1 = pipeline.nr1;
+         const int nsg = pipeline.nsg;
+ 
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -13326,17 +13326,17 @@
+@@ -13458,17 +13458,17 @@
  template [[host_name("kernel_mul_mm_id_map0_ne20_4" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<4>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_5" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<5>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_6" )]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<6>;
@@ -19,7 +123,7 @@
          device const char * hids,
          device       char * dst,
          threadgroup  char * shmem [[threadgroup(0)]],
-@@ -13349,17 +13349,17 @@
+@@ -13481,17 +13481,17 @@
      threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
      threadgroup float * sc = (threadgroup float *)(shmem);
  #else
@@ -38,7 +142,7 @@
      const int im = tgpig.z; // expert
      const int r0 = tgpig.y*NR0;
      const int r1 = tgpig.x*NR1;
-@@ -13373,65 +13373,80 @@
+@@ -13505,65 +13505,80 @@
          return;
      }
  
@@ -126,7 +230,7 @@
  #else
      auto tA = tensor<threadgroup S0, dextents<int32_t, 2>, tensor_inline>(sa, dextents<int32_t, 2>(NK,  NR0));
      auto tB = tensor<threadgroup S1, dextents<int32_t, 2>, tensor_inline>(sb, dextents<int32_t, 2>(NR1, NK ));
-@@ -13490,42 +13505,42 @@
+@@ -13622,42 +13637,42 @@
                      const short ly = i%8;
                      const short ib = 8*sx + sy;
  
@@ -189,7 +293,7 @@
  
              // no need for dequantization
              for (short i = 0; i < 16; i++) {
-@@ -13581,96 +13596,142 @@
+@@ -13713,96 +13728,142 @@
  
              *(threadgroup S1_2x4 *)(sb + NK*(8*sy + ly) + 8*sx) = (S1_2x4)(*((device T1_2x4 *) y));
          }
@@ -359,7 +463,7 @@
                  }
  
                  simdgroup_barrier(mem_flags::mem_none);
-@@ -13692,63 +13753,73 @@
+@@ -13824,63 +13885,73 @@
  #else
          auto sA = tA.slice(0, 0);
          auto sB = tB.slice(0, 0);
@@ -465,7 +569,7 @@
  // matrix-matrix multiplication
  //
  
-@@ -13855,16 +13926,35 @@
+@@ -13989,16 +14060,35 @@
  template [[host_name("kernel_mul_mm_id_iq3_xxs_f32")]] kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq3_xxs, QK_NL, dequantize_iq3_xxs, float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_iq3_s_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq3_s,   QK_NL, dequantize_iq3_s,   float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_iq2_s_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq2_s,   QK_NL, dequantize_iq2_s,   float,  float4x4,  float, float2x4>;
@@ -473,7 +577,7 @@
  template [[host_name("kernel_mul_mm_id_iq1_m_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m,   float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_iq4_nl_f32")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_iq4_xs_f32")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  float, float2x4>;
- 
+ template [[host_name("kernel_mul_mm_id_tq2_0_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq2_0,   QK_NL, dequantize_tq2_0,   float,  float4x4,  float, float2x4>;
 +// 8x4 lane tile over 4 simdgroups
 +template [[host_name("kernel_mul_mm_id_f16_f32_w")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   float, float2x4, 8>;
 +template [[host_name("kernel_mul_mm_id_q4_0_f32_w")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_0,    2,     dequantize_q4_0,    float,  float4x4,  float, float2x4, 8>;
@@ -493,6 +597,7 @@
 +template [[host_name("kernel_mul_mm_id_iq4_nl_f32_w")]] kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  float, float2x4, 8>;
 +template [[host_name("kernel_mul_mm_id_iq4_xs_f32_w")]] kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  float, float2x4, 8>;
 +
+ 
  template [[host_name("kernel_mul_mm_id_f32_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_f16_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q1_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q1_0,    8,     dequantize_q1_0,    float,  float4x4,  half, half2x4>;
@@ -500,108 +605,3 @@
  template [[host_name("kernel_mul_mm_id_q4_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_0,    2,     dequantize_q4_0,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q4_1_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_1,    2,     dequantize_q4_1,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q5_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  half, half2x4>;
- template [[host_name("kernel_mul_mm_id_q5_1_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  half, half2x4>;
---- a/ggml/src/ggml-metal/ggml-metal-device.cpp
-+++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1207,33 +1207,77 @@
- 
-     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
- 
-     const bool use_mm_manual = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->use_mm_manual;
- 
-     const bool acc_f32 = use_mm_manual && (!ggml_is_contiguous(op->src[0]) || tsrc0 == GGML_TYPE_BF16) &&
-                          getenv("TOSH_MM_ACC_F32_DISABLE") == nullptr;
- 
--    snprintf(base, 256, "kernel_mul_mm_id_%s_%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1));
-+    // one grid per expert already keeps the GPU in threadgroups, so the 8x4 tile does not need
-+    // the dense token floor. What it needs is an average expert that fills the narrow tile:
-+    // below that its 64 columns are mostly padding and it loses (measured -5% at 14 tokens
-+    // per expert, +2.3% at 45)
-+    static const int wide_floor = []() {
-+        const char * s = getenv("TOSH_MMID_WIDE_FLOOR");
-+        return s ? atoi(s) : 32;
-+    }();
-+
-+    // wave64 is off by the dense tile's result, not by one measured here: the expert path splits
-+    // its work per expert, so the opt-in exists for a GCN card to settle it
-+    const int simd_width = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
-+    const bool wide_width_ok = simd_width != 64 || getenv("TOSH_MMID_WIDE_W64_ENABLE") != nullptr;
-+
-+    const int64_t tpe = op->src[0]->ne[2] > 0 ? op->src[2]->ne[0]*op->src[2]->ne[1] / op->src[0]->ne[2] : 0;
-+
-+    bool wide = use_mm_manual && tsrc1 == GGML_TYPE_F32 && wide_width_ok &&
-+                tpe >= wide_floor && getenv("TOSH_MMID_WIDE_DISABLE") == nullptr;
-+    if (wide) {
-+        // it needs 64 accumulators, so only where the dequant leaves the registers
-+        switch (tsrc0) {
-+            case GGML_TYPE_F16:
-+            case GGML_TYPE_Q4_0:
-+            case GGML_TYPE_Q4_1:
-+            case GGML_TYPE_Q5_0:
-+            case GGML_TYPE_Q5_1:
-+            case GGML_TYPE_Q8_0:
-+            case GGML_TYPE_MXFP4:
-+            case GGML_TYPE_Q2_K:
-+            case GGML_TYPE_Q3_K:
-+            case GGML_TYPE_Q4_K:
-+            case GGML_TYPE_Q5_K:
-+            case GGML_TYPE_Q6_K:
-+            case GGML_TYPE_IQ3_S:
-+            case GGML_TYPE_IQ2_S:
-+            case GGML_TYPE_IQ1_S:
-+            case GGML_TYPE_IQ4_NL:
-+            case GGML_TYPE_IQ4_XS: break;
-+            default: wide = false; break;
-+        }
-+    }
-+
-+    snprintf(base, 256, "kernel_mul_mm_id_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), wide ? "_w" : "");
-     snprintf(name, 256, "%s_bci=%d_mm=%d_af=%d", base, bc_inp, use_mm_manual, acc_f32);
- 
-     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
-     if (!res.pipeline) {
-         ggml_metal_cv_t cv = ggml_metal_cv_init();
- 
-         ggml_metal_cv_set_bool(cv, bc_inp,        FC_MUL_MM + 0);
-         ggml_metal_cv_set_bool(cv, use_mm_manual, FC_MUL_MM + 6);
-         ggml_metal_cv_set_bool(cv, acc_f32,       FC_MUL_MM + 9);
- 
-         res = ggml_metal_library_compile_pipeline(lib, base, name, cv);
- 
-         ggml_metal_cv_free(cv);
-     }
- 
-     res.smem = 8192;
-+    res.nr0  = 64;
-+    res.nr1  = wide ? 64 : 32;
- 
-     return res;
- }
- 
- ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_metal_library_t lib, const ggml_tensor * op) {
-     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
-     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
- 
---- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
-+++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -2977,17 +2977,19 @@
-             ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
-             ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
-             ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
- 
-             const size_t smem = pipeline.smem;
- 
-             ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
- 
--            ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + 31)/32, (ne01 + 63)/64, ne02, 128, 1, 1);
-+            const int nr1 = pipeline.nr1;
-+
-+            ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + nr1 - 1)/nr1, (ne01 + 63)/64, ne02, 128, 1, 1);
-         }
-     } else {
-         auto pipeline = ggml_metal_library_get_pipeline_mul_mv_id(lib, op);
- 
-         const int nr0 = pipeline.nr0;
-         const int nr1 = pipeline.nr1;
-         const int nsg = pipeline.nsg;
- 

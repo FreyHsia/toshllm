@@ -35,6 +35,9 @@ struct ChatTimings: Codable, Equatable {
     var promptMilliseconds: Double?
     var generatedTokens: Int?
     var generationMilliseconds: Double?
+    /// Wall time from sending the request to the first visible token, measured here:
+    /// the server's prompt time leaves out queueing and the first decode.
+    var timeToFirstTokenMilliseconds: Double?
 
     var promptTokensPerSecond: Double? {
         rate(tokens: promptTokens, milliseconds: promptMilliseconds)

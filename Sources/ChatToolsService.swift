@@ -8,6 +8,8 @@ struct BuiltinToolInfo: Identifiable, Sendable {
     let displayName: String
     let name: String
     let writesData: Bool
+    /// Server tools work relative to the working directory carried in `x-tool-cwd`.
+    let usesCwd: Bool
     let definitionData: Data
     let mcpServerID: UUID?
     let remoteName: String?
@@ -30,6 +32,7 @@ struct BuiltinToolInfo: Identifiable, Sendable {
         self.displayName = displayName
         self.name = name
         self.writesData = writesData
+        self.usesCwd = json["uses_cwd"] as? Bool ?? false
         self.definitionData = definitionData
         mcpServerID = nil
         remoteName = nil
@@ -40,6 +43,7 @@ struct BuiltinToolInfo: Identifiable, Sendable {
         self.displayName = displayName
         self.name = name
         writesData = true
+        usesCwd = false
         definitionData = try JSONSerialization.data(withJSONObject: definition)
         self.mcpServerID = mcpServerID
         self.remoteName = remoteName
@@ -50,6 +54,7 @@ struct BuiltinToolInfo: Identifiable, Sendable {
         self.displayName = displayName
         self.name = name
         self.writesData = writesData
+        usesCwd = false
         definitionData = try JSONSerialization.data(withJSONObject: definition)
         mcpServerID = nil
         remoteName = nil
@@ -107,10 +112,15 @@ enum ChatToolsService {
         return rows.compactMap(BuiltinToolInfo.init(json:))
     }
 
-    static func execute(name: String, arguments: [String: Any], port: Int) async throws -> ToolExecutionResult {
+    static func execute(name: String, arguments: [String: Any], port: Int,
+                        workingDirectory: String? = nil) async throws -> ToolExecutionResult {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // the model can't override this one: the server takes the directory from the header
+        if let workingDirectory, !workingDirectory.isEmpty {
+            request.setValue(workingDirectory, forHTTPHeaderField: "x-tool-cwd")
+        }
         authorize(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: ["tool": name, "params": arguments])
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -125,10 +135,14 @@ enum ChatToolsService {
     }
 
     static func executeStreaming(name: String, arguments: [String: Any], port: Int,
+                                 workingDirectory: String? = nil,
                                  onUpdate: @escaping (String) async -> Void) async throws -> ToolExecutionResult {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let workingDirectory, !workingDirectory.isEmpty {
+            request.setValue(workingDirectory, forHTTPHeaderField: "x-tool-cwd")
+        }
         authorize(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "tool": name, "params": arguments, "stream": true

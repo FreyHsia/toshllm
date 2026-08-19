@@ -3,6 +3,24 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **A working directory per conversation and per project.** With agent tools on, the model's file tools stay inside the folder you pick, shown next to the conversation's title.
+- **A cap on how many tokens an image may take.** The model's limit is kept by default; lowering it in Settings is what lets a vision model load on an 8 GB card. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+- **Time to first token** in each answer's metrics.
+
+### Fixed
+- **File tools are no longer offered when the chat has no working directory**, so the model stops trying to edit files that do not exist.
+- **Router mode no longer fills video memory with models that use older attention.** Llama 2 and similar asked for 8 GB of key-value cache at 16k context, enough to freeze the machine; each model now gets a context that fits.
+- **Stopping the server no longer leaves a model in memory** in router mode.
+
+### Improved
+- **Updated inference engine**, with the fixes and new model support released upstream since the last version.
+- **New web chat in the browser**: the llama.cpp interface, rebranded for ToshLLM, with a model picker that works in router mode. Requested by [urfin78](https://github.com/engeldlgado/toshllm/issues/59).
+- **Memory estimates read each model's real attention layout.** On a 7B with older attention at 16k context the old guess was 0.8 GB against a real 8 GB.
+- **The speculative decoding readout follows the answer as it is written.**
+
 ## [0.85.0] - 2026-08-17
 
 ### Fixed

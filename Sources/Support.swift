@@ -81,6 +81,7 @@ enum SettingsKeys {
     static let forcePrivateBuffers = "forcePrivateBuffers"
     static let cacheReuse = "cacheReuse"
     static let loadVision = "loadVision"
+    static let imageMaxTokens = "imageMaxTokens"
     static let apiKeyEnabled = "apiKeyEnabled"
     static let localNetworkDiscovery = "localNetworkDiscovery"
     static let menuBarIcon = "menuBarIcon"

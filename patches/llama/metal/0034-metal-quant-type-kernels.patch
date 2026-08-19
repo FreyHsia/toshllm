@@ -1,6 +1,88 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -888,16 +888,20 @@
+             case GGML_TYPE_Q4_0:
+             case GGML_TYPE_Q4_1:
+             case GGML_TYPE_MXFP4:
+             case GGML_TYPE_IQ4_NL:
+             case GGML_TYPE_IQ4_XS:
+             case GGML_TYPE_IQ3_S:
+             case GGML_TYPE_IQ2_S:
+             case GGML_TYPE_IQ1_S:
++            case GGML_TYPE_IQ1_M:
++            case GGML_TYPE_IQ2_XXS:
++            case GGML_TYPE_IQ2_XS:
++            case GGML_TYPE_IQ3_XXS:
+                 wide = op->ne[0] >= 2048 && getenv("TOSH_MM_WIDE_EXT_DISABLE") == nullptr; break;
+             default: wide = false; break;
+         }
+     }
+ 
+     // attention matmuls read a permuted KV cache view and can exceed half range in the packed
+     // accumulator; bfloat has no native arithmetic here, so float is faster for it too
+     const bool acc_f32 = use_mm_manual && (!ggml_is_contiguous(op->src[0]) || tsrc0 == GGML_TYPE_BF16) &&
+@@ -1080,16 +1084,17 @@
+                 nsg = N_SG_IQ3_S;
+                 nr0 = N_R0_IQ3_S;
+                 smem = 512*4;
+             } break;
+         case GGML_TYPE_IQ2_S:
+             {
+                 nsg = N_SG_IQ2_S;
+                 nr0 = N_R0_IQ2_S;
++                smem = 1024*8;
+             } break;
+         case GGML_TYPE_IQ1_S:
+             {
+                 nsg = N_SG_IQ1_S;
+                 nr0 = N_R0_IQ1_S;
+             } break;
+         case GGML_TYPE_IQ1_M:
+             {
+@@ -1249,17 +1254,21 @@
+             case GGML_TYPE_Q3_K:
+             case GGML_TYPE_Q4_K:
+             case GGML_TYPE_Q5_K:
+             case GGML_TYPE_Q6_K:
+             case GGML_TYPE_IQ3_S:
+             case GGML_TYPE_IQ2_S:
+             case GGML_TYPE_IQ1_S:
+             case GGML_TYPE_IQ4_NL:
+-            case GGML_TYPE_IQ4_XS: break;
++            case GGML_TYPE_IQ4_XS:
++            case GGML_TYPE_IQ1_M:
++            case GGML_TYPE_IQ2_XXS:
++            case GGML_TYPE_IQ2_XS:
++            case GGML_TYPE_IQ3_XXS: break;
+             default: wide = false; break;
+         }
+     }
+ 
+     snprintf(base, 256, "kernel_mul_mm_id_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), wide ? "_w" : "");
+     snprintf(name, 256, "%s_bci=%d_mm=%d_af=%d", base, bc_inp, use_mm_manual, acc_f32);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+@@ -1402,16 +1411,17 @@
+                 nsg = N_SG_IQ3_S;
+                 nr0 = N_R0_IQ3_S;
+                 smem = 512*4;
+             } break;
+         case GGML_TYPE_IQ2_S:
+             {
+                 nsg = N_SG_IQ2_S;
+                 nr0 = N_R0_IQ2_S;
++                smem = 1024*8;
+             } break;
+         case GGML_TYPE_IQ1_S:
+             {
+                 nsg = N_SG_IQ1_S;
+                 nr0 = N_R0_IQ1_S;
+             } break;
+         case GGML_TYPE_IQ1_M:
+             {
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -523,27 +523,27 @@
+@@ -551,27 +551,27 @@
  
      const int x_mv = il ? 4 : 0;
  
@@ -37,7 +119,7 @@
  template <typename type4>
  void dequantize_q5_0_t4(device const block_q5_0 * xb, short il, thread type4 & reg) {
      device const uint16_t * qs = ((device const uint16_t *)xb + 3);
-@@ -571,41 +571,46 @@
+@@ -599,41 +599,46 @@
  
          reg[2*ii + 0] = d * x0 + md;
          reg[2*ii + 1] = d * x1 + md;
@@ -94,7 +176,7 @@
  template <typename type4>
  void dequantize_q5_1_t4(device const block_q5_1 * xb, short il, thread type4 & reg) {
      device const uint16_t * qs = ((device const uint16_t *)xb + 4);
-@@ -11359,23 +11364,25 @@
+@@ -11420,23 +11425,25 @@
      device const block_iq2_s * x = (device const block_iq2_s *) (src0 + offset0);
      device const float       * y = (device const float       *) (src1 + offset1);
  
@@ -127,7 +209,7 @@
      for (int ib32 = ix; ib32 < nb32; ib32 += FC_mul_mv_nw) {
          for (short i = 0; i < 32; ++i) {
              yl[i] = y4[i];
-@@ -11395,21 +11402,30 @@
+@@ -11456,21 +11463,30 @@
              const float db = dh[0];
              const float d1 = db * (0.5f + (sc[0] & 0xf));
              const float d2 = db * (0.5f + (sc[0] >>  4));
@@ -162,7 +244,7 @@
              qs    += args.nb01;
              qh    += args.nb01;
              sc    += args.nb01;
-@@ -13836,16 +13852,20 @@
+@@ -14050,16 +14066,20 @@
  template [[host_name("kernel_mul_mm_q6_K_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q6_K,    QK_NL, dequantize_q6_K,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_q4_0_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_0,    2,     dequantize_q4_0,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_q4_1_f32_w")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_1,    2,     dequantize_q4_1,    float,  float4x4,  float, float2x4, 8>;
@@ -183,7 +265,7 @@
  #if defined(GGML_METAL_HAS_BF16)
  template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
  #endif
-@@ -13941,16 +13961,20 @@
+@@ -14157,16 +14177,20 @@
  template [[host_name("kernel_mul_mm_id_mxfp4_f32_w")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_id_q2_K_f32_w")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_id_q3_K_f32_w")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  float, float2x4, 8>;
@@ -200,89 +282,7 @@
  template [[host_name("kernel_mul_mm_id_iq4_nl_f32_w")]] kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  float, float2x4, 8>;
  template [[host_name("kernel_mul_mm_id_iq4_xs_f32_w")]] kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  float, float2x4, 8>;
  
+ 
  template [[host_name("kernel_mul_mm_id_f32_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_f16_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q1_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q1_0,    8,     dequantize_q1_0,    float,  float4x4,  half, half2x4>;
- template [[host_name("kernel_mul_mm_id_q2_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_0,    4,     dequantize_q2_0,    float,  float4x4,  half, half2x4>;
---- a/ggml/src/ggml-metal/ggml-metal-device.cpp
-+++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -888,16 +888,20 @@
-             case GGML_TYPE_Q4_0:
-             case GGML_TYPE_Q4_1:
-             case GGML_TYPE_MXFP4:
-             case GGML_TYPE_IQ4_NL:
-             case GGML_TYPE_IQ4_XS:
-             case GGML_TYPE_IQ3_S:
-             case GGML_TYPE_IQ2_S:
-             case GGML_TYPE_IQ1_S:
-+            case GGML_TYPE_IQ1_M:
-+            case GGML_TYPE_IQ2_XXS:
-+            case GGML_TYPE_IQ2_XS:
-+            case GGML_TYPE_IQ3_XXS:
-                 wide = op->ne[0] >= 2048 && getenv("TOSH_MM_WIDE_EXT_DISABLE") == nullptr; break;
-             default: wide = false; break;
-         }
-     }
- 
-     // attention matmuls read a permuted KV cache view and can exceed half range in the packed
-     // accumulator; bfloat has no native arithmetic here, so float is faster for it too
-     const bool acc_f32 = use_mm_manual && (!ggml_is_contiguous(op->src[0]) || tsrc0 == GGML_TYPE_BF16) &&
-@@ -1080,16 +1084,17 @@
-                 nsg = N_SG_IQ3_S;
-                 nr0 = N_R0_IQ3_S;
-                 smem = 512*4;
-             } break;
-         case GGML_TYPE_IQ2_S:
-             {
-                 nsg = N_SG_IQ2_S;
-                 nr0 = N_R0_IQ2_S;
-+                smem = 1024*8;
-             } break;
-         case GGML_TYPE_IQ1_S:
-             {
-                 nsg = N_SG_IQ1_S;
-                 nr0 = N_R0_IQ1_S;
-             } break;
-         case GGML_TYPE_IQ1_M:
-             {
-@@ -1244,17 +1249,21 @@
-             case GGML_TYPE_Q3_K:
-             case GGML_TYPE_Q4_K:
-             case GGML_TYPE_Q5_K:
-             case GGML_TYPE_Q6_K:
-             case GGML_TYPE_IQ3_S:
-             case GGML_TYPE_IQ2_S:
-             case GGML_TYPE_IQ1_S:
-             case GGML_TYPE_IQ4_NL:
--            case GGML_TYPE_IQ4_XS: break;
-+            case GGML_TYPE_IQ4_XS:
-+            case GGML_TYPE_IQ1_M:
-+            case GGML_TYPE_IQ2_XXS:
-+            case GGML_TYPE_IQ2_XS:
-+            case GGML_TYPE_IQ3_XXS: break;
-             default: wide = false; break;
-         }
-     }
- 
-     snprintf(base, 256, "kernel_mul_mm_id_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), wide ? "_w" : "");
-     snprintf(name, 256, "%s_bci=%d_mm=%d_af=%d", base, bc_inp, use_mm_manual, acc_f32);
- 
-     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
-@@ -1397,16 +1406,17 @@
-                 nsg = N_SG_IQ3_S;
-                 nr0 = N_R0_IQ3_S;
-                 smem = 512*4;
-             } break;
-         case GGML_TYPE_IQ2_S:
-             {
-                 nsg = N_SG_IQ2_S;
-                 nr0 = N_R0_IQ2_S;
-+                smem = 1024*8;
-             } break;
-         case GGML_TYPE_IQ1_S:
-             {
-                 nsg = N_SG_IQ1_S;
-                 nr0 = N_R0_IQ1_S;
-             } break;
-         case GGML_TYPE_IQ1_M:
-             {

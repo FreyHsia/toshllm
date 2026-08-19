@@ -78,7 +78,9 @@ struct SpecMetricsView: View {
     private func start() {
         refresh()
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
+        // the engine now serves /metrics while it decodes, so the readout can follow
+        // a generation instead of freezing until it ends
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             Task { @MainActor in refresh() }
         }
     }

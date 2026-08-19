@@ -1,8 +1,9 @@
-diff --git a/common/arg.cpp b/common/arg.cpp
-index b2fddfe5f..cc394a317 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -309,10 +309,13 @@ const std::vector<ggml_type> kv_cache_types = {
+@@ -307,16 +307,19 @@
+     GGML_TYPE_F16,
+     GGML_TYPE_BF16,
+     GGML_TYPE_Q8_0,
      GGML_TYPE_Q4_0,
      GGML_TYPE_Q4_1,
      GGML_TYPE_IQ4_NL,
@@ -16,11 +17,15 @@ index b2fddfe5f..cc394a317 100644
  static ggml_type kv_cache_type_from_str(const std::string & s) {
      for (const auto & type : kv_cache_types) {
          if (ggml_type_name(type) == s) {
-diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index 5cb49d0ee..600b438e3 100644
+             return type;
+         }
+     }
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
-@@ -428,11 +428,16 @@ extern "C" {
+@@ -425,17 +425,22 @@
+         GGML_TYPE_TQ2_0   = 35,
+         // GGML_TYPE_IQ4_NL_4_4 = 36,
+         // GGML_TYPE_IQ4_NL_4_8 = 37,
          // GGML_TYPE_IQ4_NL_8_8 = 38,
          GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
          GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
@@ -38,7 +43,13 @@ index 5cb49d0ee..600b438e3 100644
      // precision
      enum ggml_prec {
          GGML_PREC_DEFAULT =  0, // stored as ggml_tensor.op_params, 0 by default
-@@ -572,10 +577,11 @@ extern "C" {
+         GGML_PREC_F32     = 10,
+     };
+ 
+@@ -569,16 +574,17 @@
+         GGML_OP_GATED_LINEAR_ATTN,
+         GGML_OP_RWKV_WKV7,
+         GGML_OP_SOLVE_TRI,
          GGML_OP_GATED_DELTA_NET,
          GGML_OP_LIGHTNING_INDEXER,
          GGML_OP_DSV4_HC_COMB,
@@ -50,12 +61,19 @@ index 5cb49d0ee..600b438e3 100644
  
          GGML_OP_MAP_CUSTOM1,
          GGML_OP_MAP_CUSTOM2,
-@@ -2581,10 +2587,20 @@ extern "C" {
+         GGML_OP_MAP_CUSTOM3,
+ 
+         GGML_OP_CUSTOM,
+@@ -2578,16 +2584,26 @@
+             struct ggml_context * ctx,
+             struct ggml_tensor  * q,
+             struct ggml_tensor  * k,
+             struct ggml_tensor  * v,
              struct ggml_tensor  * g,
              struct ggml_tensor  * beta,
              struct ggml_tensor  * state,
              int64_t               K);
- 
++
 +    // TurboQuant Walsh-Hadamard Transform (O(d log d) rotation for KV cache compression)
 +    // Applies WHT rotation to 128-element groups along ne[0]: sign1 -> butterfly -> sign2 -> normalize
 +    // direction: 0 = forward (signs1 -> WHT -> signs2), 1 = inverse (signs2 -> WHT -> signs1)
@@ -65,17 +83,20 @@ index 5cb49d0ee..600b438e3 100644
 +            int                   direction,
 +            int                   group_size,    // 0 = auto (64 or 128 from ne[0])
 +            struct ggml_tensor  * scale);        // NULL = no InnerQ scaling
-+
+ 
      // DSA lightning indexer
      //
      // q:       [n_embd_idx, n_head_idx, n_batch, ne3 ]
      // k:       [n_embd_idx, 1,          n_kv,    ne3 ]
      // weights: [n_head_idx, n_batch,    1,       ne3 ] !! prescaled !!
-diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 82e9480c2..516d6f0f5 100644
+     // mask:    [n_kv,       n_batch,    1,       ne33] !! f16 !!
+     // res:     [n_kv,       n_batch,    1,       ne3 ]
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -204,10 +204,11 @@ add_library(ggml-base
+@@ -201,16 +201,17 @@
+             ggml-alloc.c
+             ggml-backend.cpp
+             ggml-backend-meta.cpp
              ggml-opt.cpp
              ggml-threading.cpp
              ggml-threading.h
@@ -87,16 +108,21 @@ index 82e9480c2..516d6f0f5 100644
  set_target_properties(ggml-base PROPERTIES
      VERSION ${GGML_VERSION}
      SOVERSION ${GGML_VERSION_MAJOR}
-diff --git a/ggml/src/ggml-common.h b/ggml/src/ggml-common.h
-index 83f9118da..e79d162db 100644
+ )
+ 
+ target_include_directories(ggml-base PRIVATE .)
 --- a/ggml/src/ggml-common.h
 +++ b/ggml/src/ggml-common.h
-@@ -285,10 +285,99 @@ typedef struct {
+@@ -281,17 +281,106 @@
+ static_assert(sizeof(block_tq1_0) == sizeof(ggml_half) + QK_K / 64 + (QK_K - 4 * QK_K / 64) / 5, "wrong tq1_0 block size/padding");
+ 
+ // 2.0625 bpw
+ typedef struct {
      uint8_t qs[QK_K/4]; // 2 bits per element
      ggml_half d;
  } block_tq2_0;
  static_assert(sizeof(block_tq2_0) == sizeof(ggml_half) + QK_K / 4, "wrong tq2_0 block size/padding");
- 
++
 +// TurboQuant 3-bit MSE-only: 3-bit PolarQuant indices (no QJL).
 +// Each 128-value transform group is stored as one 50-byte block: one fp16 norm,
 +// 32 bytes of low index bits and 16 bytes of high index bits (3.125 bits/value).
@@ -119,7 +145,7 @@ index 83f9118da..e79d162db 100644
 +#ifndef TURBO4_USE_4BIT
 +#  define TURBO4_USE_4BIT 1
 +#endif
-+
+ 
 +#define QK_TURBO4 128
 +
 +#if TURBO4_USE_4BIT
@@ -191,11 +217,15 @@ index 83f9118da..e79d162db 100644
  //
  
  // 2-bit quantization
-diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 7918845cc..babbf3f17 100644
+ // weight is represented as x = a * q + b
+ // 16 blocks of 16 elements each
+ // Effectively 2.625 bits per weight
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -5,10 +5,11 @@
+@@ -2,16 +2,17 @@
+ #define _USE_MATH_DEFINES // For M_PI on MSVC
+ 
+ #include "ggml-backend-impl.h"
  #include "ggml-backend.h"
  #include "traits.h"
  #include "ggml-cpu-impl.h"
@@ -207,7 +237,13 @@ index 7918845cc..babbf3f17 100644
  #include "binary-ops.h"
  #include "vec.h"
  #include "ops.h"
-@@ -209,10 +210,26 @@ typedef pthread_t ggml_thread_t;
+ #include "ggml.h"
+ #include "common.h"
+ 
+@@ -206,16 +207,32 @@
+ #define GGML_THREADPOOL_N_THREADS_BITS (16)
+ 
+ #if defined(__APPLE__)
  #include <unistd.h>
  #include <mach/mach.h>
  #include <TargetConditionals.h>
@@ -234,7 +270,13 @@ index 7918845cc..babbf3f17 100644
          .from_float               = (ggml_from_float_t) ggml_cpu_fp32_to_fp32,
          .vec_dot                  = (ggml_vec_dot_t) ggml_vec_dot_f32,
          .vec_dot_type             = GGML_TYPE_F32,
-@@ -410,10 +427,40 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
+         .nrows                    = 1,
+     },
+     [GGML_TYPE_F16] = {
+@@ -407,16 +424,46 @@
+         .from_float               = quantize_row_tq2_0,
+         .vec_dot                  = ggml_vec_dot_tq2_0_q8_K,
+         .vec_dot_type             = GGML_TYPE_Q8_K,
          .nrows                    = 1,
      },
      [GGML_TYPE_I32] = {
@@ -275,7 +317,13 @@ index 7918845cc..babbf3f17 100644
  const struct ggml_type_traits_cpu * ggml_get_type_traits_cpu(enum ggml_type type) {
      return &type_traits_cpu[type];
  }
-@@ -2058,10 +2105,14 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+ 
+ //
+ // Threading defs
+@@ -2055,16 +2102,20 @@
+         case GGML_OP_SOLVE_TRI:
+             {
+                 ggml_compute_forward_solve_tri(params, tensor);
              } break;
          case GGML_OP_GATED_DELTA_NET:
              {
@@ -290,7 +338,13 @@ index 7918845cc..babbf3f17 100644
                  ggml_compute_forward_lightning_indexer(params, tensor);
              } break;
          case GGML_OP_DSV4_HC_COMB:
-@@ -2254,10 +2305,11 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+             {
+                 ggml_compute_forward_dsv4_hc_comb(params, tensor);
+             } break;
+@@ -2251,16 +2302,17 @@
+         case GGML_OP_MEAN:
+         case GGML_OP_ARGMAX:
+             {
                  n_tasks = 1;
              } break;
          case GGML_OP_COUNT_EQUAL:
@@ -302,27 +356,41 @@ index 7918845cc..babbf3f17 100644
          case GGML_OP_DSV4_HC_POST:
              {
                  n_tasks = n_threads;
-@@ -2986,10 +3038,14 @@ struct ggml_cplan ggml_graph_plan(
+             } break;
+         case GGML_OP_REPEAT:
+         case GGML_OP_REPEAT_BACK:
+@@ -2987,16 +3039,20 @@
+                         cur = ggml_type_size(node->type)*(n_tasks + node->src[0]->ne[0]*n_tasks);
+                     } break;
+                 case GGML_OP_GATED_DELTA_NET:
+                     {
                          const int64_t S_v = node->src[2]->ne[0];
                          const int64_t K   = ggml_get_op_params_i32(node, 0);
                          const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
                          cur = per_thread * sizeof(float) * n_tasks;
-                     } break;
++                    } break;
 +                case GGML_OP_TURBO_WHT:
 +                    {
 +                        cur = 0;
-+                    } break;
+                     } break;
                  case GGML_OP_COUNT:
                      {
                          GGML_ABORT("fatal error");
                      }
                  case GGML_OP_LIGHTNING_INDEXER:
-@@ -3430,10 +3486,88 @@ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct g
+                     {
+                         // temp buffer for dequantizing lightning indexer keys
+@@ -3430,16 +3486,94 @@
+ }
+ 
+ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+     struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
+ 
      cplan.work_data = (uint8_t *)ggml_new_buffer(ctx, cplan.work_size);
  
      return ggml_graph_compute(cgraph, &cplan);
- }
- 
++}
++
 +// TurboQuant vec_dot: dequantize the turbo block to f32, then dot with the f32 operand.
 +static void ggml_vec_dot_turbo3_0_f32(int n, float * GGML_RESTRICT s, size_t bs,
 +                                       const void * GGML_RESTRICT vx, size_t bx,
@@ -399,60 +467,75 @@ index 7918845cc..babbf3f17 100644
 +    for (int i = 0; i < n; i++) sum += tmp[i] * tmp2[i];
 +    free(tmp); free(tmp2);
 +    *s = sum;
-+}
-+
+ }
+ 
  void ggml_cpu_fp32_to_fp32(const float * x, float * y, int64_t n) {
      memcpy(y, x, n * sizeof(float));
  }
  
  void ggml_cpu_fp32_to_fp16(const float * x, ggml_fp16_t * y, int64_t n) {
-diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 42ec809ce..69287c256 100644
+     int64_t i = 0;
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -10,10 +10,14 @@
+@@ -6,16 +6,20 @@
+ #include "simd-gemm.h"
+ #include "ggml.h"
+ #include "unary-ops.h"
+ #include "vec.h"
  
  #include <algorithm>
  #include <cfloat>
  #include <cmath>
- 
++
 +extern "C" {
 +GGML_API int turbo3_cpu_wht_group_size;
 +}
-+
+ 
  // ggml_compute_forward_dup
  
  static void ggml_compute_forward_dup_same_cont(
          const ggml_compute_params * params,
          ggml_tensor * dst) {
-@@ -5120,10 +5124,15 @@ static void ggml_compute_forward_set_rows_impl(
+ 
+     const ggml_tensor * src0 = dst->src[0];
+@@ -5116,16 +5120,21 @@
+ 
+     // row range for this thread
+     const int64_t ir0 = dr*ith;
+     const int64_t ir1 = std::min(ir0 + dr, nr);
  
      const size_t rs = ggml_row_size(src0->type, nc);
  
      ggml_from_float_t const from_float = ggml_get_type_traits_cpu(dst->type)->from_float;
- 
++
 +    // Turbo quantize reads the WHT group size from a global; derive it from the row width.
 +    if (dst->type == GGML_TYPE_TURBO3_0 || dst->type == GGML_TYPE_TURBO4_0 || dst->type == GGML_TYPE_TURBO2_0) {
 +        turbo3_cpu_wht_group_size = (nc == 64 || nc == 128) ? (int) nc : 0;
 +    }
-+
+ 
      for (int64_t i03 = 0; i03 < ne03; ++i03) {
          for (int64_t i02 = 0; i02 < ne02; ++i02) {
              for (int64_t i = ir0; i < ir1; ++i) {
                  const int64_t i12 = i03%ne12;
                  const int64_t i11 = i02%ne11;
-@@ -11064,10 +11073,100 @@ static void ggml_compute_forward_dsv4_hc_comb_f32(
+                 const int64_t i10 = i;
+ 
+@@ -11070,17 +11079,107 @@
+         for (int64_t isrc = 0; isrc < hc; ++isrc) {
+             for (int64_t idst = 0; idst < hc; ++idst) {
+                 const int64_t idx = idst + hc*isrc;
+                 *(float *) ((char *) dst->data + idst*nbd0 + isrc*nbd1 + it*nbd2) = comb[idx];
              }
          }
      }
  }
- 
++
 +// ggml_compute_forward_turbo_wht
 +
 +// WHT sign arrays (must match Metal shader turbo_wht_signs1/2)
 +static const float turbo_wht_s1[128] = {-1,1,1,-1,-1,1,-1,1,-1,-1,1,1,1,1,1,1,1,-1,1,-1,1,-1,-1,1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,1,-1,1,-1,1,-1,1,1,1,1,-1,1,-1,1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1};
 +static const float turbo_wht_s2[128] = {1,1,1,1,-1,1,1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,-1,1,-1,1,-1,1,-1,-1,1,-1,1,1,1,1,1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,1,1,-1,1,-1,1,-1,-1,-1,-1,-1,1,-1};
-+
+ 
 +static void ggml_compute_forward_turbo_wht_f32(
 +        const ggml_compute_params * params,
 +        ggml_tensor * dst) {
@@ -542,11 +625,15 @@ index 42ec809ce..69287c256 100644
          ggml_tensor * dst) {
      const ggml_tensor * src0 = dst->src[0];
  
-diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
-index 4c1642a67..4f4a523af 100644
+     switch (src0->type) {
+         case GGML_TYPE_F32:
+             {
 --- a/ggml/src/ggml-cpu/ops.h
 +++ b/ggml/src/ggml-cpu/ops.h
-@@ -103,10 +103,11 @@ void ggml_compute_forward_add_rel_pos(const struct ggml_compute_params * params,
+@@ -100,16 +100,17 @@
+ void ggml_compute_forward_glu(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_get_rel_pos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_add_rel_pos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_rwkv_wkv6(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_rwkv_wkv7(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_solve_tri(const struct ggml_compute_params * params, struct ggml_tensor * dst);
@@ -558,11 +645,15 @@ index 4c1642a67..4f4a523af 100644
  void ggml_compute_forward_dsv4_hc_pre(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_dsv4_hc_post(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_map_custom1(const struct ggml_compute_params * params, struct ggml_tensor * dst);
-diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 3393e205a..d295e879b 100644
+ void ggml_compute_forward_map_custom2(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_map_custom3(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_custom(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -158,19 +158,28 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows(ggml_me
+@@ -155,25 +155,34 @@
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
      }
  
      return res;
@@ -593,7 +684,13 @@ index 3393e205a..d295e879b 100644
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
      if (!res.pipeline) {
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
-@@ -700,10 +709,24 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_gated_delta_net(
+     }
+ 
+     return res;
+@@ -697,16 +706,30 @@
+         ggml_metal_cv_free(cv);
+     }
+ 
      res.nsg = nsg;
  
      return res;
@@ -618,11 +715,15 @@ index 3393e205a..d295e879b 100644
      char name[256];
  
      // 256 threads per threadgroup regardless of the simd width (wave64: 4 groups of 64)
-diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index dac747194..f1dfceada 100644
+     const int nw  = ggml_metal_device_get_props(ggml_metal_library_get_device(lib))->simd_width;
+     const int nsg = 256/nw;
+     const int n   = op->src[1]->ne[1];
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -110,11 +110,11 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+@@ -107,17 +107,17 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline    (ggml_metal_library_t lib, const char * name);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv);
+ 
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base              (ggml_metal_library_t lib, enum ggml_op op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy               (ggml_metal_library_t lib, enum ggml_type tsrc, enum ggml_type tdst);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
@@ -635,7 +736,13 @@ index dac747194..f1dfceada 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_concat            (ggml_metal_library_t lib, enum ggml_type tsrc);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_unary             (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_silu_back         (ggml_metal_library_t lib, const struct ggml_tensor * op);
-@@ -131,10 +131,11 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_glu               (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_sum               (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_sum_rows          (ggml_metal_library_t lib, const struct ggml_tensor * op);
+@@ -128,16 +128,17 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_lightning_indexer (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_dsv4_hc           (ggml_metal_library_t lib, enum ggml_op op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv          (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_decode   (ggml_metal_library_t lib, const struct ggml_tensor * op, bool silu);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_batched  (ggml_metal_library_t lib, const struct ggml_tensor * op, int ssm_conv_bs);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan          (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -647,11 +754,15 @@ index dac747194..f1dfceada 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
-diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index ead19c579..d95362417 100644
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax            (ggml_metal_library_t lib, const struct ggml_tensor * op);
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1606,12 +1606,14 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1603,18 +1603,20 @@
+                 op->src[0]->ne[0] != 72 &&
+                 op->src[0]->ne[0] != 80 &&
+                 op->src[0]->ne[0] != 96 &&
                  op->src[0]->ne[0] != 112 &&
                  op->src[0]->ne[0] != 128 &&
                  op->src[0]->ne[0] != 192 &&
@@ -667,7 +778,13 @@ index ead19c579..d95362417 100644
              // AMD dGPUs report no simdgroup_mm and miscompile the upstream vec kernel, so FA is
              // allowed only for the KV pairs our own vec kernel instantiates. This sits before
              // the K==V gate because that kernel takes K and V independently.
-@@ -1625,28 +1627,44 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             const bool fa_amd_width_ok = dev->props.simd_width == 32
+                 ? has_simdgroup_reduction
+                 : wave64_decode;
+@@ -1622,32 +1624,48 @@
+                 !has_simdgroup_mm && fa_amd_width_ok &&
+                 (op->src[0]->ne[0] % 32 == 0 || op->src[0]->ne[0] == 72)) {
+                 float max_bias = 0.0f;
                  float softcap  = 0.0f;
                  memcpy(&max_bias, ((const int32_t *) op->op_params) + 1, sizeof(float));
                  memcpy(&softcap,  ((const int32_t *) op->op_params) + 2, sizeof(float));
@@ -701,22 +818,26 @@ index ead19c579..d95362417 100644
 +                    k_std && v_std && pair_ok && turbo_dk_ok &&
                      max_bias == 0.0f && softcap == 0.0f;
                  if (simple) {
-                     return true;
-                 }
++                    return true;
++                }
 +                // MLA (deepseek2): asymmetric head, K=576 (latent+rope), V=512 (latent).
 +                const bool mla_amd =
 +                    dk == 576 && op->src[2]->ne[0] == 512 &&
 +                    (kt == GGML_TYPE_F16 || kt == GGML_TYPE_Q8_0) && kt == vt &&
 +                    max_bias == 0.0f && softcap == 0.0f;
 +                if (mla_amd) {
-+                    return true;
-+                }
+                     return true;
+                 }
              }
              if (op->src[1]->type != op->src[2]->type) {
                  return false;
              }
              switch (op->src[1]->type) {
-@@ -1742,10 +1760,13 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+                 case GGML_TYPE_F32:
+@@ -1739,16 +1757,19 @@
+             // wave64: per-thread serial dot, no simdgroup reduction needed.
+             return has_simdgroup_reduction || wave64_decode;
+         case GGML_OP_RWKV_WKV6:
          case GGML_OP_RWKV_WKV7:
              return true;
          case GGML_OP_GATED_DELTA_NET:
@@ -730,12 +851,18 @@ index ead19c579..d95362417 100644
              return has_simdgroup_reduction || wave64_decode;
          case GGML_OP_MUL_MAT: {
              if (op->src[0]->type == GGML_TYPE_NVFP4) {
-@@ -1838,10 +1859,13 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+                 return false;
+             }
+             if (has_simdgroup_reduction) {
+@@ -1836,16 +1857,19 @@
+                            case GGML_TYPE_Q1_0:
+                            case GGML_TYPE_Q2_0:
                             case GGML_TYPE_Q4_0:
                             case GGML_TYPE_Q4_1:
                             case GGML_TYPE_Q5_0:
                             case GGML_TYPE_Q5_1:
                             case GGML_TYPE_IQ4_NL:
+                            case GGML_TYPE_TQ2_0:
 +                           case GGML_TYPE_TURBO2_0:
 +                           case GGML_TYPE_TURBO3_0:
 +                           case GGML_TYPE_TURBO4_0:
@@ -744,7 +871,13 @@ index ead19c579..d95362417 100644
                             default:
                                  return false;
                          }
-@@ -1873,10 +1897,15 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+                     case GGML_TYPE_F16:
+                         switch (op->type) {
+                             case GGML_TYPE_F32:
+@@ -1872,16 +1896,21 @@
+                     case GGML_TYPE_TQ2_0:
+                         switch (op->type) {
+                             case GGML_TYPE_F32:
                              case GGML_TYPE_F16:
                                  return true;
                              default:
@@ -760,12 +893,18 @@ index ead19c579..d95362417 100644
                      default:
                          return false;
                  };
-@@ -1901,10 +1930,13 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             }
+         case GGML_OP_GET_ROWS:
+             return op->src[0]->type != GGML_TYPE_NVFP4;
+@@ -1901,16 +1930,19 @@
+                     case GGML_TYPE_BF16:
+                     case GGML_TYPE_Q8_0:
                      case GGML_TYPE_Q4_0:
                      case GGML_TYPE_Q4_1:
                      case GGML_TYPE_Q5_0:
                      case GGML_TYPE_Q5_1:
                      case GGML_TYPE_IQ4_NL:
+                     case GGML_TYPE_TQ2_0:
 +                    case GGML_TYPE_TURBO2_0:
 +                    case GGML_TYPE_TURBO3_0:
 +                    case GGML_TYPE_TURBO4_0:
@@ -774,11 +913,15 @@ index ead19c579..d95362417 100644
                          return false;
                  };
              }
-diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 4641ff9e4..2c90ed147 100644
+         case GGML_OP_DIAG:
+             return true;
+         case GGML_OP_OPT_STEP_ADAMW:
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -102,10 +102,11 @@
+@@ -102,16 +102,17 @@
+ #define FC_SSM_CONV                    900
+ #define FC_SOLVE_TRI                   1000
+ #define FC_COUNT_EQUAL                 1100
  #define FC_UNARY                       1200
  #define FC_BIN                         1300
  #define FC_SUM_ROWS                    1400
@@ -790,7 +933,13 @@ index 4641ff9e4..2c90ed147 100644
  #define OP_FLASH_ATTN_EXT_NQPSG 8
  #define OP_FLASH_ATTN_EXT_NCPSG 64
  
-@@ -482,10 +483,21 @@ typedef struct {
+ #define OP_FLASH_ATTN_EXT_VEC_NQPSG 1
+ #define OP_FLASH_ATTN_EXT_VEC_NCPSG 32
+ 
+@@ -482,17 +483,28 @@
+     uint64_t nb13;
+     int32_t  ne0;
+     int32_t  ne1;
      int32_t  nr0;
      int16_t  r2;
      int16_t  r3;
@@ -799,7 +948,7 @@ index 4641ff9e4..2c90ed147 100644
 +// Three independent decode projections sharing the same activation. The Metal
 +// backend recognizes adjacent Q/V/K MUL_MAT nodes and launches them as one grid;
 +// each segment retains its own strides because mixed GGUF quants are common.
-+typedef struct {
+ typedef struct {
 +    ggml_metal_kargs_mul_mv q;
 +    ggml_metal_kargs_mul_mv v;
 +    ggml_metal_kargs_mul_mv k;
@@ -807,32 +956,43 @@ index 4641ff9e4..2c90ed147 100644
 +    uint32_t                nwg_v;
 +} ggml_metal_kargs_mul_mv_qvk;
 +
- typedef struct {
++typedef struct {
      int32_t  ne00;
      int32_t  ne01;
      int32_t  ne02;
      uint64_t nb00;
-@@ -942,10 +954,15 @@ typedef struct {
+     uint64_t nb01;
+     uint64_t nb02;
+     uint64_t nb03;
+     int32_t  ne10;
+@@ -942,16 +954,21 @@
+     int32_t  ne1;
+     int32_t  ne2;
+     int32_t  ne3;
+     uint64_t nb0;
      uint64_t nb1;
      uint64_t nb2;
      uint64_t nb3;
  } ggml_metal_kargs_gated_delta_net;
- 
++
 +typedef struct {
 +    int64_t  n_elements;
 +    int32_t  direction;
 +} ggml_metal_kargs_turbo_wht;
-+
+ 
  typedef struct {
      int32_t  ne00;
      int32_t  ne01;
      int32_t  ne02;
      int32_t  ne03;
-diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 04da2ce44..e1466fd90 100644
+     uint64_t nb00;
+     uint64_t nb01;
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -8,10 +8,12 @@
+@@ -5,16 +5,18 @@
+ #include "ggml-backend-impl.h"
+ 
+ #include "ggml-metal-impl.h"
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
  
@@ -845,7 +1005,13 @@ index 04da2ce44..e1466fd90 100644
  
  static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
      if (!t) {
-@@ -349,10 +351,14 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+         return { nullptr, 0 };
+     }
+ 
+@@ -346,16 +348,20 @@
+         case GGML_OP_RWKV_WKV7:
+             {
+                 n_fuse = ggml_metal_op_rwkv(ctx, idx);
              } break;
          case GGML_OP_GATED_DELTA_NET:
              {
@@ -860,7 +1026,13 @@ index 04da2ce44..e1466fd90 100644
                  n_fuse = ggml_metal_op_solve_tri(ctx, idx);
              } break;
          case GGML_OP_MUL_MAT:
-@@ -1219,11 +1225,13 @@ int ggml_metal_op_set_rows(ggml_metal_op_t ctx, int idx) {
+             {
+                 n_fuse = ggml_metal_op_mul_mat(ctx, idx);
+             } break;
+@@ -1216,17 +1222,19 @@
+ 
+     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
      GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
      GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
      GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
@@ -875,7 +1047,13 @@ index 04da2ce44..e1466fd90 100644
  
      int nth = 32; // SIMD width
  
-@@ -1263,11 +1271,18 @@ int ggml_metal_op_set_rows(ggml_metal_op_t ctx, int idx) {
+     while (nth < nk0 && nth < ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
+         nth *= 2;
+     }
+@@ -1260,17 +1268,24 @@
+     };
+ 
+     ggml_metal_encoder_set_pipeline(enc, pipeline);
      ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
      ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
      ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
@@ -895,7 +1073,13 @@ index 04da2ce44..e1466fd90 100644
  }
  
  int ggml_metal_op_diag(ggml_metal_op_t ctx, int idx) {
-@@ -1905,10 +1920,41 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+     ggml_metal_library_t lib = ctx->lib;
+@@ -1907,16 +1922,47 @@
+ 
+     const int nsg = pipeline.nsg;
+ 
      ggml_metal_encoder_dispatch_threadgroups(enc, op->src[2]->ne[0]/nsg, op->src[2]->ne[1], op->src[2]->ne[3], 32, nsg, 1);
  
      return 1;
@@ -937,7 +1121,13 @@ index 04da2ce44..e1466fd90 100644
  
      ggml_metal_library_t lib = ctx->lib;
      ggml_metal_encoder_t enc = ctx->enc;
-@@ -2106,12 +2152,19 @@ int ggml_metal_op_cpy(ggml_metal_op_t ctx, int idx) {
+ 
+     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+@@ -2108,18 +2154,25 @@
+     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+     GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
+     GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
  
      auto pipeline = ggml_metal_library_get_pipeline_cpy(lib, op->src[0]->type, op->type);
  
@@ -958,12 +1148,19 @@ index 04da2ce44..e1466fd90 100644
          nk0 = ne00/ggml_blck_size(op->type);
      }
  
-@@ -2312,10 +2365,143 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
+     int nth = std::min<int>(nk0*ne01, 256);
+ 
+     // when rows are small, we can batch them together in a single threadgroup
+@@ -2313,17 +2366,150 @@
+     ggml_metal_encoder_set_bytes   (enc, &args_pool_2d, sizeof(args_pool_2d), 0);
+     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
+ 
      ggml_metal_encoder_dispatch_threadgroups(enc, ntg, 1, 1, nth, 1, 1);
  
      return 1;
  }
- 
++
 +static int ggml_metal_op_mul_mat_qvk(ggml_metal_op_t ctx, int idx) {
 +    static const bool disabled = getenv("TOSH_QKV_FUSION_DISABLE") != nullptr;
 +
@@ -973,7 +1170,7 @@ index 04da2ce44..e1466fd90 100644
 +    if (disabled || !ctx->use_fusion || !width_ok || !props_dev->use_mm_manual || idx + 2 >= ctx->n_nodes()) {
 +        return 0;
 +    }
-+
+ 
 +    ggml_tensor * q = ctx->node(idx + 0);
 +    ggml_tensor * v = ctx->node(idx + 1);
 +    ggml_tensor * k = ctx->node(idx + 2);
@@ -1102,7 +1299,13 @@ index 04da2ce44..e1466fd90 100644
  
      ggml_metal_library_t lib = ctx->lib;
      ggml_metal_encoder_t enc = ctx->enc;
-@@ -2332,10 +2518,14 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+ 
+     const int32_t hint = ggml_get_op_params_i32(op, 1);
+ 
+@@ -2334,16 +2520,20 @@
+             ggml_is_contiguous(op) &&
+             ggml_are_same_shape(op->src[1], op) &&
+             ggml_metal_fwht_supported_size(op->src[1]->ne[0])) {
              return ggml_metal_op_fwht(ctx, idx);
          }
      }
@@ -1117,7 +1320,13 @@ index 04da2ce44..e1466fd90 100644
      GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
      GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
      GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
-@@ -2353,13 +2543,15 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
+ 
+     GGML_ASSERT(ne00 == ne10);
+@@ -2355,19 +2545,21 @@
+     const int16_t r3 = ne13/ne03;
+ 
+     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
      // to the matrix-vector kernel
      const int ne11_mm_min = 8;
  
@@ -1136,7 +1345,13 @@ index 04da2ce44..e1466fd90 100644
           (
            (
             op->src[0]->type == GGML_TYPE_F32  || // TODO: helper function
-@@ -2405,11 +2597,11 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+            op->src[0]->type == GGML_TYPE_F16  ||
+            op->src[0]->type == GGML_TYPE_BF16 ||
+            op->src[0]->type == GGML_TYPE_Q1_0 ||
+@@ -2407,17 +2599,17 @@
+         if (ne00 % 256 == 0 && ne11 < 3) {
+             nxpsg = 16;
+         } else if (ne00 % 128 == 0) {
              nxpsg = 8;
          } else {
              nxpsg = 4;
@@ -1149,7 +1364,13 @@ index 04da2ce44..e1466fd90 100644
          // note: not sure how optimal are those across all different hardware. there might be something cleverer
          switch (ne11) {
              case 2:
-@@ -2469,11 +2661,11 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+                 r1ptg = 2; break;
+             case 3:
+             case 6:
+@@ -2471,17 +2663,17 @@
+         };
+ 
+         ggml_metal_encoder_set_pipeline(enc, pipeline);
          ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
          ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
          ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
@@ -1162,7 +1383,13 @@ index 04da2ce44..e1466fd90 100644
          !ggml_is_transposed(op->src[1]) &&
          // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
          // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
-@@ -2894,16 +3086,25 @@ int ggml_metal_op_add_id(ggml_metal_op_t ctx, int idx) {
+         (props_dev->has_simdgroup_mm || props_dev->use_mm_manual) && ne00 >= 64 && ne11 > ne11_mm_min) {
+         //GGML_LOG_INFO("matrix: ne00 = %6d, ne01 = %6d, ne02 = %6d, ne11 = %6d, ne12 = %6d\n", ne00, ne01, ne02, ne11, ne12);
+ 
+@@ -2896,22 +3088,31 @@
+ }
+ 
+ // Suffix for the AMD vec FA pipeline name, or nullptr for types we don't instantiate.
  static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
      switch (t) {
          case GGML_TYPE_F16:  return "f16";
@@ -1189,7 +1416,13 @@ index 04da2ce44..e1466fd90 100644
  
  bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
      assert(op->op == GGML_OP_FLASH_ATTN_EXT);
-@@ -3107,17 +3308,25 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+     const int64_t ne00 = op->src[0]->ne[0]; // head size
+     const int64_t ne01 = op->src[0]->ne[1]; // batch size
+@@ -3109,23 +3310,31 @@
+ 
+     // AMD discrete GPUs miscompile the templated vec kernel, so route attention (decode
+     // and prefill) to the dedicated AMD kernel for the standard K/V pairs it covers.
      // Keeps quantized KV on the GPU instead of the CPU fallback. Gated by TOSH_FA_AMD.
      char fa_amd_pipeline[80] = {0};
      // dk 72 is instantiated for f16 K/V only (vision towers); see the .metal side.
@@ -1216,7 +1449,13 @@ index 04da2ce44..e1466fd90 100644
      // is gated by wave64_decode (simdgroup_reduction is forced off there).
      const bool fa_amd_width_ok = props_dev->simd_width == 32
          ? props_dev->has_simdgroup_reduction
-@@ -3165,11 +3374,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         : props_dev->wave64_decode;
+     if (getenv("TOSH_FA_AMD") != NULL && fa_amd_pipeline[0] != '\0' &&
+         !props_dev->has_simdgroup_mm && fa_amd_width_ok &&
+@@ -3167,17 +3376,21 @@
+             /*.has_sinks     =*/ has_sinks ? 1 : 0,
+             /*.has_mask      =*/ has_mask ? 1 : 0,
+         };
  
          // queries per threadgroup, matching the instantiation for this head size
          const int fa_pf_bq = ne00 == 256 ? 32 : 64;
@@ -1233,7 +1472,13 @@ index 04da2ce44..e1466fd90 100644
                       ggml_metal_fa_amd_type_suffix(op->src[1]->type), ggml_metal_fa_amd_type_suffix(op->src[2]->type));
  
              auto pipeline = ggml_metal_library_get_pipeline(lib, fa_pf_pipeline);
-@@ -3199,13 +3412,19 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             if (!pipeline.pipeline) {
+                 pipeline = ggml_metal_library_compile_pipeline(lib, fa_pf_pipeline, fa_pf_pipeline, nullptr);
+             }
+@@ -3201,19 +3414,25 @@
+                 return 1;
+             }
+         }
  
          // prefill goes to the tile kernel (K/V shared across 16 queries);
          // decode keeps the per-query vec kernel
@@ -1256,7 +1501,13 @@ index 04da2ce44..e1466fd90 100644
              if (!pipeline.pipeline) {
                  pipeline = ggml_metal_library_compile_pipeline(lib, fa_tile_pipeline, fa_tile_pipeline, nullptr);
              }
-@@ -3242,12 +3461,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+             ggml_metal_encoder_set_pipeline(enc, pipeline);
+             ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+@@ -3244,18 +3463,18 @@
+         }
+         if (props_dev->simd_width == 64) {
+             fa_amd_nsg /= 2;
          }
  
          // one threadgroup per query head leaves most of the GPU idle on models with
@@ -1271,11 +1522,15 @@ index 04da2ce44..e1466fd90 100644
          char fa_amd_wg_pipeline[96];
          if (fa_amd_nwg > 1) {
              snprintf(fa_amd_wg_pipeline, sizeof(fa_amd_wg_pipeline), "%s_wg32", fa_amd_pipeline);
-diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
-index b03b59e0b..81ae7a7e0 100644
+         }
+ 
+         auto pipeline = ggml_metal_library_get_pipeline(lib, fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline);
 --- a/ggml/src/ggml-metal/ggml-metal-ops.h
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.h
-@@ -56,10 +56,11 @@ int ggml_metal_op_set_rows          (ggml_metal_op_t ctx, int idx);
+@@ -53,16 +53,17 @@
+ int ggml_metal_op_cumsum            (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_get_rows          (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_set_rows          (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_diag              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_lightning_indexer (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_dsv4_hc           (ggml_metal_op_t ctx, int idx);
@@ -1287,16 +1542,21 @@ index b03b59e0b..81ae7a7e0 100644
  int ggml_metal_op_gated_delta_net   (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_solve_tri         (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_set               (ggml_metal_op_t ctx, int idx);
-diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index ddcf9b939..d69503810 100644
+ int ggml_metal_op_cpy               (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_pool_1d           (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_pool_2d           (ggml_metal_op_t ctx, int idx);
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -3094,10 +3094,164 @@ typedef decltype(kernel_gated_delta_net_impl<float4, 4>) kernel_gated_delta_net_
+@@ -3145,17 +3145,171 @@
+ }
+ 
+ typedef decltype(kernel_gated_delta_net_impl<float4, 4>) kernel_gated_delta_net_t;
+ 
  template [[host_name("kernel_gated_delta_net_f32_1")]] kernel kernel_gated_delta_net_t kernel_gated_delta_net_impl<float,  1>;
  template [[host_name("kernel_gated_delta_net_f32_2")]] kernel kernel_gated_delta_net_t kernel_gated_delta_net_impl<float2, 2>;
  template [[host_name("kernel_gated_delta_net_f32_4")]] kernel kernel_gated_delta_net_t kernel_gated_delta_net_impl<float4, 4>;
  #endif
- 
++
 +// ===== INLINED turbo-wht.h =====
 +// TurboQuant Fast Walsh-Hadamard rotation for Metal
 +// Replaces 256KB dense matrices with 512 bytes of sign arrays + O(d log d) butterfly
@@ -1345,7 +1605,7 @@ index ddcf9b939..d69503810 100644
 +    half4(-1.0h, 1.0h, -1.0h, 1.0h), half4(1.0h, -1.0h, 1.0h, -1.0h),
 +    half4(1.0h, -1.0h, -1.0h, -1.0h), half4(-1.0h, -1.0h, 1.0h, -1.0h)
 +};
-+
+ 
 +// --- QJL sign arrays ---
 +constant float turbo_qjl_wht_signs1[128] = {
 +    1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
@@ -1456,7 +1716,13 @@ index ddcf9b939..d69503810 100644
  constant short FC_solve_tri_k   [[function_constant(FC_SOLVE_TRI + 2)]];
  constant short FC_solve_tri_nw  [[function_constant(FC_SOLVE_TRI + 3)]];
  
-@@ -4154,18 +4308,19 @@ void kernel_mul_mv_ext_q4_f32_impl(
+ kernel void kernel_solve_tri_f32(
+         constant ggml_metal_kargs_solve_tri & args,
+         device   const char * src0,
+@@ -4206,24 +4360,25 @@
+ template<short r1ptg, typename q_t, short chpb, void (*deq_t4)(device const q_t *, short, thread float4 &) >
+ void kernel_mul_mv_ext_q4_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -1479,7 +1745,13 @@ index ddcf9b939..d69503810 100644
      const short ty = tiisg/nxpsg;
  
      const int i01 = tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty;
-@@ -4258,18 +4413,18 @@ void kernel_mul_mv_ext_q4x4_f32_impl(
+     const int i11 = tgpig.y*r1ptg;
+     const int i1m = tgpig.z;
+ 
+@@ -4310,24 +4465,24 @@
+ template<short r1ptg, short nr0, typename q_t, short chpb, void (*deq_t4x4)(device const q_t *, short, thread float4x4 &) >
+ void kernel_mul_mv_ext_q4x4_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -1501,7 +1773,13 @@ index ddcf9b939..d69503810 100644
      const short ty = tiisg/nxpsg;
  
      const int i01 = (tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty)*nr0;
-@@ -4390,24 +4545,26 @@ kernel void kernel_mul_mv_ext_q4_f32_disp(
+     const int i11 = tgpig.y*r1ptg;
+     const int i1m = tgpig.z;
+ 
+@@ -4442,30 +4597,32 @@
+ template<short r1ptg, typename q_t, short epb, void (*deq_t4)(device const q_t *, short, thread float4 &)>
+ kernel void kernel_mul_mv_ext_q4_f32_disp(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -1532,7 +1810,13 @@ index ddcf9b939..d69503810 100644
  typedef decltype(kernel_mul_mv_ext_q4_f32_disp  <2, block_q8_0, 32,  dequantize_q8_0_t4>) mul_mv_ext_q4_f32_t;
  typedef decltype(kernel_mul_mv_ext_q4x4_f32_disp<2, 1, block_q4_K, 256, dequantize_q4_K>) mul_mv_ext_q4x4_f32_t;
  
-@@ -7998,16 +8155,17 @@ kernel void kernel_flash_attn_ext_vec(
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_2")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, float4,       4,  dequantize_f32_t4>;
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_3")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, float4,       4,  dequantize_f32_t4>;
+ template [[host_name("kernel_mul_mv_ext_f32_f32_r1_4")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, float4,       4,  dequantize_f32_t4>;
+@@ -8050,42 +8207,46 @@
+ #undef NWG
+ #undef NSG
+ #undef NS10
  #undef NS20
  }
  
@@ -1552,7 +1836,8 @@ index ddcf9b939..d69503810 100644
          device const char * q     [[buffer(1)]],
          device const char * k     [[buffer(2)]],
          device const char * v     [[buffer(3)]],
-@@ -8016,18 +8174,21 @@ kernel void kernel_flash_attn_ext_vec_amd(
+         device const char * mask  [[buffer(4)]],
+         device const char * sinks [[buffer(5)]],
          device const char * pad   [[buffer(6)]],
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
@@ -1576,7 +1861,13 @@ index ddcf9b939..d69503810 100644
      // NSG (simdgroups per threadgroup) is a template parameter, kept in sync with
      // the host dispatch. More simdgroups split the KV stream into shorter serial
      // loops, which is a large decode win at depth; it is chosen per head dim so
-@@ -8063,18 +8224,18 @@ kernel void kernel_flash_attn_ext_vec_amd(
+     // the sh_acc threadgroup buffer (NSG*DV4 float4) stays at 16 KiB: 32 for
+     // DK=128, 16 for DK=256.
+ 
+@@ -8115,43 +8276,43 @@
+     if (args.has_mask) {
+         pm = (device const half *) (mask + iq1*args.nb31 + (iq2%args.ne32)*args.nb32 + (iq3%args.ne33)*args.nb33);
+     }
  
      const short sub  = tiisg/SUBW;
      const short lch  = tiisg%SUBW;
@@ -1600,7 +1891,12 @@ index ddcf9b939..d69503810 100644
      float m = -FLT_MAX/2;
      float s = 0.0f;
  
-@@ -8087,13 +8248,13 @@ kernel void kernel_flash_attn_ext_vec_amd(
+     for (int j = (iwg*NSG + sgitg)*RPS + sub; j < args.ne11; j += NWG*NG) {
+         // no early-out: the sub-groups of a simdgroup sit on different rows, so the
+         // skip is not uniform and the shuffle reduction below would diverge
+         const float mv = args.has_mask ? (float) pm[j] : 0.0f;
+         const bool  msk = mv <= -1e30f;
+         if (RPS == 1 && msk) {
              continue;
          }
  
@@ -1616,7 +1912,13 @@ index ddcf9b939..d69503810 100644
                  pl += dot(myq[c], kreg);
              }
          }
-@@ -8110,11 +8271,11 @@ kernel void kernel_flash_attn_ext_vec_amd(
+         if (SUBW < NW) {
+             for (ushort o = 1; o < SUBW; o <<= 1) {
+                 pl += simd_shuffle_xor(pl, o);
+@@ -8162,30 +8323,30 @@
+         const float p = pl; // full DK-dim Q.K
+ 
+         const float pp   = p*args.scale + mv;
          const float nm   = msk ? m : max(m, pp);
          const float corr = exp(m  - nm);
          const float w    = msk ? 0.0f : exp(pp - nm);
@@ -1629,7 +1931,8 @@ index ddcf9b939..d69503810 100644
                  float4 vreg;
                  deq_v(vb + ch/NKV, ch%NKV, vreg);
                  acc[c] = acc[c]*corr + w*vreg;
-@@ -8123,11 +8284,11 @@ kernel void kernel_flash_attn_ext_vec_amd(
+             }
+         }
          s = s*corr + w;
          m = nm;
      }
@@ -1642,7 +1945,13 @@ index ddcf9b939..d69503810 100644
              sh_acc[gidx*SAS + ch] = acc[c];
          }
      }
-@@ -8210,10 +8371,196 @@ kernel void kernel_flash_attn_ext_vec_amd(
+     if (lch == 0) {
+         sh_m[gidx] = m;
+         sh_s[gidx] = s;
+@@ -8262,16 +8423,202 @@
+         }
+         if (sgitg == 0 && tiisg == 0) {
+             ss[rid*(2*NWG) + 2*iwg + 0] = den;
              ss[rid*(2*NWG) + 2*iwg + 1] = gm;
          }
      }
@@ -1839,7 +2148,13 @@ index ddcf9b939..d69503810 100644
  // narrowing subw doubles the chunks per lane; the register pressure caps the pipeline,
  // so pairs with q4_0 dequant take fewer simdgroups (see the PAIR macros below).
  #define FA_AMD_INST_S(dk, nsg, subw, nm, kt, nkk, dkf, vt, nkv, dvf) \
-@@ -8249,39 +8596,133 @@ FA_AMD_PAIR_S(32, 8,  "kq8_0_vf16",        block_q8_0,     8,  dequantize_q8_0_t
+ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm)]] kernel flash_attn_ext_vec_amd_t \
+     kernel_flash_attn_ext_vec_amd<dk, nsg, kt, nkk, dkf, vt, nkv, dvf, 32, 1, subw>;
+ #define FA_AMD_INST_WG(dk, nsg, subw, nm, kt, nkk, dkf, vt, nkv, dvf) \
+@@ -8301,75 +8648,172 @@
+ // asymmetric standard pairs (any mix of f16 / q8_0 / q4_0 for K and V), so every
+ // standard K/V combination runs on the GPU instead of falling back to the CPU.
+ FA_AMD_PAIR_S(32, 8,  "kq8_0_vf16",        block_q8_0,     8,  dequantize_q8_0_t4,     half4,          1,  dequantize_f16_t4)
  FA_AMD_PAIR_Q4("kq4_0_vf16",        block_q4_0,     8,  dequantize_q4_0_t4,     half4,          1,  dequantize_f16_t4)
  FA_AMD_PAIR_S(32, 8,  "kf16_vq8_0",        half4,          1,  dequantize_f16_t4,      block_q8_0,     8,  dequantize_q8_0_t4)
  FA_AMD_PAIR_S(24, 8,  "kf16_vq4_0",        half4,          1,  dequantize_f16_t4,      block_q4_0,     8,  dequantize_q4_0_t4)
@@ -1979,7 +2294,7 @@ index ddcf9b939..d69503810 100644
  #undef FA_AMD_INST_S
  
  // Prefill companion of the AMD vec kernel above: NQ simdgroups (one query each)
-@@ -8289,11 +8730,11 @@ FA_AMD_PAIR_W64("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8,
+ // share K/V tiles staged in threadgroup memory, so the cache is streamed from
  // device memory once per NQ queries instead of once per query.
  template<
      short DK, short NQ,
@@ -1992,7 +2307,8 @@ index ddcf9b939..d69503810 100644
          device const char * q     [[buffer(1)]],
          device const char * k     [[buffer(2)]],
          device const char * v     [[buffer(3)]],
-@@ -8302,16 +8743,19 @@ kernel void kernel_flash_attn_ext_tile_amd(
+         device const char * mask  [[buffer(4)]],
+         device const char * sinks [[buffer(5)]],
          device const char * pad   [[buffer(6)]],
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
@@ -2016,7 +2332,13 @@ index ddcf9b939..d69503810 100644
      const int iq1 = tgpig.x*NQ + sgitg; // this simdgroup's query token
      const int iq2 = tgpig.y;            // query head
      const int iq3 = tgpig.z;            // batch
-@@ -8333,18 +8777,18 @@ kernel void kernel_flash_attn_ext_tile_amd(
+ 
+     // tail simdgroups past ne01 recompute the last query and skip the store;
+     // they must stay for the cooperative loads and barriers
+@@ -8385,24 +8829,24 @@
+     device const char * vp = v + ikv2*args.nb22 + ikv3*args.nb23;
+ 
+     // Without a mask ne32/ne33 are 0, so the index math would divide by zero.
      device const half * pm = (device const half *) mask;
      if (args.has_mask) {
          pm = (device const half *) (mask + iq1c*args.nb31 + (iq2%args.ne32)*args.nb32 + (iq3%args.ne33)*args.nb33);
@@ -2039,7 +2361,13 @@ index ddcf9b939..d69503810 100644
      float m = -FLT_MAX/2;
      float s = 0.0f;
  
-@@ -8371,18 +8815,24 @@ kernel void kernel_flash_attn_ext_tile_amd(
+     const short tl = NW*sgitg + tiisg; // linear thread id for cooperative loads
+ 
+     for (int j0 = 0; j0 < args.ne11; j0 += TK) {
+@@ -8423,84 +8867,90 @@
+                 sh_any = 1;
+             }
+         }
          threadgroup_barrier(mem_flags::mem_threadgroup);
          if (sh_any == 0) {
              continue;
@@ -2065,7 +2393,9 @@ index ddcf9b939..d69503810 100644
              sv[c] = (half4) t;
          }
          threadgroup_barrier(mem_flags::mem_threadgroup);
-@@ -8392,11 +8842,11 @@ kernel void kernel_flash_attn_ext_tile_amd(
+ 
+         for (short jj = 0; jj < tn; ++jj) {
+             const float mv = args.has_mask ? (float) pm[j0 + jj] : 0.0f;
              if (mv <= -1e30f) {
                  continue;
              }
@@ -2078,7 +2408,8 @@ index ddcf9b939..d69503810 100644
                      pl += dot(myq[c], (float4) sk[jj*DK4 + ch]);
                  }
              }
-@@ -8405,14 +8855,14 @@ kernel void kernel_flash_attn_ext_tile_amd(
+             const float p = simd_sum(pl); // full DK-dim Q.K
+ 
              const float pp   = p*args.scale + mv;
              const float nm   = max(m, pp);
              const float corr = exp(m  - nm);
@@ -2096,7 +2427,9 @@ index ddcf9b939..d69503810 100644
              s = s*corr + w;
              m = nm;
          }
-@@ -8422,11 +8872,11 @@ kernel void kernel_flash_attn_ext_tile_amd(
+         // the two barriers at the top of the next tile fence sk/sv reuse
+     }
+ 
      // attention sink: one extra virtual token per head, weight only
      if (args.has_sinks) {
          const float sk_ = ((device const float *) sinks)[iq2];
@@ -2109,7 +2442,8 @@ index ddcf9b939..d69503810 100644
          s = s*corr + exp(sk_ - nm);
      }
  
-@@ -8435,14 +8885,14 @@ kernel void kernel_flash_attn_ext_tile_amd(
+     if (iq1 >= args.ne01) {
+         return;
      }
  
      const float inv = s > 0.0f ? 1.0f/s : 0.0f;
@@ -2127,7 +2461,13 @@ index ddcf9b939..d69503810 100644
  }
  
  typedef decltype(kernel_flash_attn_ext_tile_amd<128, 16, half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4>) flash_attn_ext_tile_amd_t;
-@@ -8464,10 +8914,46 @@ FA_AMD_TILE_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4, half4,      1
+ 
+ // standard K/V pairs only; turbo caches keep using the vec kernel for prefill
+ #define FA_AMD_TILE_INST(dk, nm, kt, nkk, dkf, vt, nkv, dvf) \
+@@ -8516,16 +8966,52 @@
+ FA_AMD_TILE_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_TILE_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ FA_AMD_TILE_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4, half4,      1, dequantize_f16_t4)
  FA_AMD_TILE_PAIR("kq4_0_vf16",  block_q4_0, 8, dequantize_q4_0_t4, half4,      1, dequantize_f16_t4)
  FA_AMD_TILE_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8, dequantize_q8_0_t4)
  FA_AMD_TILE_PAIR("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
@@ -2174,7 +2514,13 @@ index ddcf9b939..d69503810 100644
  template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm "_w64")]] kernel flash_attn_ext_tile_amd_t \
      kernel_flash_attn_ext_tile_amd<dk, 8, kt, nkk, dkf, vt, nkv, dvf, 64>;
  #define FA_AMD_TILE_PAIR_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
-@@ -8487,10 +8973,46 @@ FA_AMD_TILE_PAIR_W64("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_
+     FA_AMD_TILE_INST_W64( 64, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_TILE_INST_W64(128, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_TILE_INST_W64(256, nm, kt, nkk, dkf, vt, nkv, dvf) \
+@@ -8539,16 +9025,52 @@
+ FA_AMD_TILE_PAIR_W64("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
+ 
+ // DK=72 vision towers; f16 only, see the vec kernel. TK = 4096/72 = 56 keeps
  // sk+sv at 15.75 KiB.
  FA_AMD_TILE_INST    (72, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_TILE_INST_W64(72, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
@@ -2221,7 +2567,13 @@ index ddcf9b939..d69503810 100644
  #undef FA_AMD_TILE_PAIR
  #undef FA_AMD_TILE_INST
  
-@@ -8783,10 +9305,37 @@ FA_AMD_PF_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4, half4,      1,
+ // Prefill attention for AMD: BQ queries stay resident while the cache streams in
+ // blocks of BK, so the score matrix never reaches device memory.
+ //
+@@ -8835,16 +9357,43 @@
+ FA_AMD_PF_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_PF_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ FA_AMD_PF_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4, half4,      1, dequantize_f16_t4)
  FA_AMD_PF_PAIR("kq4_0_vf16",  block_q4_0, 8, dequantize_q4_0_t4, half4,      1, dequantize_f16_t4)
  FA_AMD_PF_PAIR("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_0, 8, dequantize_q8_0_t4)
  FA_AMD_PF_PAIR("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
@@ -2259,7 +2611,13 @@ index ddcf9b939..d69503810 100644
  FA_AMD_PF_INST(72, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  #undef FA_AMD_PF_PAIR
  #undef FA_AMD_PF_INST
-@@ -8932,22 +9481,28 @@ kernel void kernel_flash_attn_ext_vec_reduce(
+ 
+ // note: I think the s_t can be half instead of float, because the Q*K scaling is done before storing to shared mem
+ //       in the other (non-vec) kernel, we need s_t to also be float because we scale during the soft_max
+@@ -8984,42 +9533,49 @@
+ constant int32_t FC_flash_attn_ext_vec_reduce_NWG [[function_constant(FC_FLASH_ATTN_EXT_VEC_REDUCE + 1)]];
+ 
+ kernel void kernel_flash_attn_ext_vec_reduce(
          constant ggml_metal_kargs_flash_attn_ext_vec_reduce & args,
          device  const char * htmp,
          device        char * dst,
@@ -2291,7 +2649,8 @@ index ddcf9b939..d69503810 100644
      const float ms = exp(M - m);
  
      S = simd_sum(S*ms);
-@@ -8956,12 +9511,13 @@ kernel void kernel_flash_attn_ext_vec_reduce(
+     S = S == 0.0f ? 0.0f : 1.0f/S;
+ 
      const short DV4 = DV/4;
  
      device const float4 * htmp4 = (device const float4 *) htmp + rid*DV4*NWG;
@@ -2307,12 +2666,19 @@ index ddcf9b939..d69503810 100644
              dst4[i] = v*S;
          }
      }
-@@ -9066,10 +9622,314 @@ template [[host_name("kernel_cpy_f32_q4_0")]]   kernel cpy_f_q_t kernel_cpy_f32_
+ 
+ #undef NWG
+ #undef DV
+@@ -9118,17 +9674,322 @@
+ template [[host_name("kernel_cpy_f32_q1_0")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK1_0,  block_q1_0,   quantize_q1_0>;
+ template [[host_name("kernel_cpy_f32_q2_0")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK2_0,  block_q2_0,   quantize_q2_0>;
+ template [[host_name("kernel_cpy_f32_q4_0")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK4_0,  block_q4_0,   quantize_q4_0>;
  template [[host_name("kernel_cpy_f32_q4_1")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK4_1,  block_q4_1,   quantize_q4_1>;
  template [[host_name("kernel_cpy_f32_q5_0")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK5_0,  block_q5_0,   quantize_q5_0>;
  template [[host_name("kernel_cpy_f32_q5_1")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK5_1,  block_q5_1,   quantize_q5_1>;
  template [[host_name("kernel_cpy_f32_iq4_nl")]] kernel cpy_f_q_t kernel_cpy_f32_q<QK4_NL, block_iq4_nl, quantize_iq4_nl>;
- 
+ template [[host_name("kernel_cpy_f32_tq2_0")]]  kernel cpy_f_q_t kernel_cpy_f32_q<QK_K,   block_tq2_0,  quantize_tq2_0>;
++
 +// TurboQuant requantize (f32 -> turbo) for the KV shift: WHT-rotate + PolarQuant the
 +// full 128-element group, byte-identical to kernel_set_rows_turbo. One block per thread.
 +kernel void kernel_cpy_f32_turbo3(
@@ -2495,7 +2861,7 @@ index ddcf9b939..d69503810 100644
 +        break;
 +    }
 +}
-+
+ 
 +// TurboQuant dequantize (turbo -> f32) for the KV shift: PolarQuant decode + inverse WHT,
 +// producing the pre-turbo domain the RoPE shift expects. One 128-element group per thread
 +// (op_cpy sets nk0 = ne00/128 for a turbo source).
@@ -2617,17 +2983,26 @@ index ddcf9b939..d69503810 100644
 +    }
 +}
 +
++
  template<typename T4x4, typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread T4x4 &)>
  kernel void kernel_cpy_q_f32(
          constant ggml_metal_kargs_cpy & args,
          device  const char * src0,
          device        char * dst,
-@@ -9833,10 +10693,110 @@ kernel void kernel_mul_mv_q6_K_f32(
+         uint3   tgpig[[threadgroup_position_in_grid]],
+         ushort3 tpitg[[thread_position_in_threadgroup]],
+         ushort3   ntg[[threads_per_threadgroup]]) {
+@@ -9888,18 +10749,118 @@
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
          ushort sgitg[[simdgroup_index_in_threadgroup]]) {
  
      kernel_mul_mv_q6_K_f32_impl<N_R0_Q6_K, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
- }
- 
++}
++
 +// Q4_K_M commonly stores Q/K as q4_K and V as q6_K. The graph exposes these
 +// as three adjacent, independent decode matvecs over the same activation. A
 +// segmented grid removes two command dispatches without concatenating weights
@@ -2701,8 +3076,8 @@ index ddcf9b939..d69503810 100644
 +    local.x -= args.nwg_v;
 +    mul_vec_q_n_f32_impl<block_q4_0, N_R0_Q4_0, constant ggml_metal_kargs_mul_mv &>(
 +        args.k, wk, src, dst_k, nullptr, local, tiisg, sgitg);
-+}
-+
+ }
+ 
 +// Q2_K promotes V to Q4_K. The Q3_K/Q5_K mix was also tested, but its register
 +// pressure erased the dispatch saving on RDNA, so it deliberately stays on the
 +// three standalone kernels. Q4_K_M is handled by the specialization above.
@@ -2733,12 +3108,19 @@ index ddcf9b939..d69503810 100644
  template<int nr0, typename args_t>
  void kernel_mul_mv_iq2_xxs_f32_impl(
          args_t args,
-@@ -11109,10 +12069,568 @@ template [[host_name("kernel_set_rows_f32_i32_q5_0")]]   kernel set_rows_q32_t k
- template [[host_name("kernel_set_rows_f32_i64_q5_1")]]   kernel set_rows_q32_t kernel_set_rows_q32<float, int64_t, block_q5_1,   quantize_q5_1>;
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+@@ -11317,17 +12278,576 @@
  template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t kernel_set_rows_q32<float, int32_t, block_q5_1,   quantize_q5_1>;
  template [[host_name("kernel_set_rows_f32_i64_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int64_t, block_iq4_nl, quantize_iq4_nl>;
  template [[host_name("kernel_set_rows_f32_i32_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int32_t, block_iq4_nl, quantize_iq4_nl>;
  
+ typedef decltype(kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>) set_rows_qK_t;
+ 
+ template [[host_name("kernel_set_rows_f32_i64_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>;
+ template [[host_name("kernel_set_rows_f32_i32_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int32_t, QK_K, block_tq2_0, quantize_tq2_0>;
++
 +// Serial TurboQuant SET_ROWS reference kernels process one 128-value block at a time.
 +template<typename TI, typename block_q, int QK, void (*quantize_func)(device const float *, device block_q &)>
 +kernel void kernel_set_rows_turbo(
@@ -2807,7 +3189,7 @@ index ddcf9b939..d69503810 100644
 +
 +                blk.qs[j / 4] |= (idx & 0x3) << ((j % 4) * 2);
 +                if (idx & 0x4) blk.signs[j / 8] |= (1 << (j % 8));
-+
+ 
 +                // Accumulate centroid reconstruction norm for norm correction
 +                float c = turbo_centroids_3bit[idx];
 +                recon_norm_sq += c * c;
@@ -3297,12 +3679,19 @@ index ddcf9b939..d69503810 100644
 +template [[host_name("kernel_set_rows_turbo4_i64_w64")]] kernel set_rows_turbo4_w64_t kernel_set_rows_turbo4_coop_w64<int64_t>;
 +template [[host_name("kernel_set_rows_turbo4_i32_w64")]] kernel set_rows_turbo4_w64_t kernel_set_rows_turbo4_coop_w64<int32_t>;
 +
++
  kernel void kernel_diag_f32(
          constant ggml_metal_kargs_diag & args,
          device   const char * src0,
          device         char * dst,
          uint3  tgpig[[threadgroup_position_in_grid]],
-@@ -12674,16 +14192,17 @@ void kernel_mul_mv_ext_q4_K_raw_f32_impl(
+         ushort tiitg[[thread_index_in_threadgroup]]) {
+     constexpr short NW = N_SIMDWIDTH;
+ 
+@@ -12888,22 +14408,23 @@
+ template<short r1ptg, short nr0>
+ void kernel_mul_mv_ext_q4_K_raw_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -3322,7 +3711,13 @@ index ddcf9b939..d69503810 100644
      const short ty = tiisg/nxpsg;
  
      const int i01 = (tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty)*nr0;
-@@ -12861,12 +14380,13 @@ kernel void kernel_mul_mv_ext_q4_K_raw_f32_disp(
+     const int i11 = tgpig.y*r1ptg;
+     const int i1m = tgpig.z;
+ 
+@@ -13075,18 +14596,19 @@
+ template<short r1ptg, short nr0>
+ kernel void kernel_mul_mv_ext_q4_K_raw_f32_disp(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -3338,7 +3733,13 @@ index ddcf9b939..d69503810 100644
  template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_2")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<2, 1>;
  template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<2, 2>;
  template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_3")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<3, 1>;
-@@ -12990,16 +14510,17 @@ void kernel_mul_mv_ext_qK_hdr_f32_impl(
+ template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<3, 2>;
+ template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_4")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<4, 1>;
+ template [[host_name("kernel_mul_mv_ext_q4_K_raw_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4_K_raw_f32_disp<4, 2>;
+@@ -13204,22 +14726,23 @@
+ template<short r1ptg, short nr0, typename q_t>
+ void kernel_mul_mv_ext_qK_hdr_f32_impl(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -3358,7 +3759,13 @@ index ddcf9b939..d69503810 100644
      const short ty = tiisg/nxpsg;
  
      const int i01 = (tgpig.x*(nypsg*NSG) + nypsg*sgitg + ty)*nr0;
-@@ -13115,12 +14636,13 @@ kernel void kernel_mul_mv_ext_qK_hdr_f32_disp(
+     const int i11 = tgpig.y*r1ptg;
+     const int i1m = tgpig.z;
+ 
+@@ -13329,18 +14852,19 @@
+ template<short r1ptg, short nr0, typename q_t>
+ kernel void kernel_mul_mv_ext_qK_hdr_f32_disp(
+         constant ggml_metal_kargs_mul_mv_ext & args,
          device const char * src0,
          device const char * src1,
          device       char * dst,
@@ -3374,11 +3781,15 @@ index ddcf9b939..d69503810 100644
  template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_2")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<2, 1, block_q5_K>;
  template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_2_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<2, 2, block_q5_K>;
  template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_3")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<3, 1, block_q5_K>;
-diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
-index 1ebc50a76..14ce5688c 100644
+ template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_3_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<3, 2, block_q5_K>;
+ template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_4")]]       kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<4, 1, block_q5_K>;
+ template [[host_name("kernel_mul_mv_ext_q5_K_hdr_f32_r1_4_nr0_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_qK_hdr_f32_disp<4, 2, block_q5_K>;
 --- a/ggml/src/ggml-quants.c
 +++ b/ggml/src/ggml-quants.c
-@@ -5654,10 +5654,17 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
+@@ -5651,16 +5651,23 @@
+             } break;
+ 
+         case GGML_TYPE_I8:
          case GGML_TYPE_I16:
          case GGML_TYPE_I32:
          case GGML_TYPE_I64:
@@ -3396,11 +3807,15 @@ index 1ebc50a76..14ce5688c 100644
                  fprintf(stderr, "%s: invalid type %d\n", __func__, type);
                  return false;
              }
-diff --git a/ggml/src/ggml-quants.h b/ggml/src/ggml-quants.h
-index 75188f1af..a13385c27 100644
+     }
+ 
+     return true;
 --- a/ggml/src/ggml-quants.h
 +++ b/ggml/src/ggml-quants.h
-@@ -100,10 +100,31 @@ GGML_API size_t quantize_q4_0(const float * GGML_RESTRICT src, void * GGML_RESTR
+@@ -97,16 +97,37 @@
+ GGML_API size_t quantize_q1_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+ GGML_API size_t quantize_q2_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+ GGML_API size_t quantize_q4_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
  GGML_API size_t quantize_q4_1(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
  GGML_API size_t quantize_q5_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
  GGML_API size_t quantize_q5_1(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
@@ -3432,10 +3847,10 @@ index 75188f1af..a13385c27 100644
  
  GGML_API void iq2xs_init_impl(enum ggml_type type);
  GGML_API void iq2xs_free_impl(enum ggml_type type);
-diff --git a/ggml/src/ggml-turbo-quant.c b/ggml/src/ggml-turbo-quant.c
-new file mode 100644
-index 000000000..c10b750d1
---- /dev/null
+ GGML_API void iq3xs_init_impl(int grid_size);
+ GGML_API void iq3xs_free_impl(int grid_size);
+ 
+--- a/ggml/src/ggml-turbo-quant.c
 +++ b/ggml/src/ggml-turbo-quant.c
 @@ -0,0 +1,1030 @@
 +/*
@@ -4468,16 +4883,18 @@ index 000000000..c10b750d1
 +    }
 +    return nrows * row_size;
 +}
-diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index da7f3a5f2..bc5a6c556 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
-@@ -762,10 +762,50 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
+@@ -758,17 +758,57 @@
+     },
+     [GGML_TYPE_NVFP4] = {
+         .type_name                = "nvfp4",
+         .blck_size                = QK_NVFP4,
          .type_size                = sizeof(block_nvfp4),
          .is_quantized             = true,
          .to_float                 = (ggml_to_float_t) dequantize_row_nvfp4,
          .from_float_ref           = (ggml_from_float_t)quantize_row_nvfp4_ref,
-     },
++    },
 +    [GGML_TYPE_TURBO3_0] = {
 +        .type_name                = "turbo3",
 +        .blck_size                = QK_TURBO3,
@@ -4493,7 +4910,7 @@ index da7f3a5f2..bc5a6c556 100644
 +        .is_quantized             = true,
 +        .to_float                 = (ggml_to_float_t) dequantize_row_turbo4_0,
 +        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo4_0_ref,
-+    },
+     },
 +    [GGML_TYPE_TURBO2_0] = {
 +        .type_name                = "turbo2",
 +        .blck_size                = QK_TURBO2,
@@ -4523,7 +4940,13 @@ index da7f3a5f2..bc5a6c556 100644
          .blck_size                = QK_K,
          .type_size                = sizeof(block_q2_K),
          .is_quantized             = true,
-@@ -1081,10 +1121,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+         .to_float                 = (ggml_to_float_t) dequantize_row_q2_K,
+         .from_float_ref           = (ggml_from_float_t) quantize_row_q2_K_ref,
+     },
+@@ -1078,16 +1118,17 @@
+     "GATED_LINEAR_ATTN",
+     "RWKV_WKV7",
+     "SOLVE_TRI",
      "GATED_DELTA_NET",
      "LIGHTNING_INDEXER",
      "DSV4_HC_COMB",
@@ -4535,7 +4958,13 @@ index da7f3a5f2..bc5a6c556 100644
  
      "MAP_CUSTOM1",
      "MAP_CUSTOM2",
-@@ -1098,11 +1139,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+     "MAP_CUSTOM3",
+ 
+     "CUSTOM",
+@@ -1095,17 +1136,17 @@
+     "CROSS_ENTROPY_LOSS",
+     "CROSS_ENTROPY_LOSS_BACK",
+     "OPT_STEP_ADAMW",
      "OPT_STEP_SGD",
  
      "GLU",
@@ -4548,7 +4977,13 @@ index da7f3a5f2..bc5a6c556 100644
      "none",
  
      "x",
-@@ -1196,10 +1237,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "x+y",
+     "x[i]+y",
+     "x+y",
+@@ -1193,16 +1234,17 @@
+     "gated_linear_attn(k, v, q, gate, s)",
+     "rwkv_wkv7(r, w, k, v, a, b, s)",
+     "A X = B, A triangular, solve X",
      "gated_delta_net(q, k, v, g, beta, s)",
      "lightning_indexer(q, k, weights, mask)",
      "dsv4_hc_comb(mixes, scale, base)",
@@ -4560,7 +4995,13 @@ index da7f3a5f2..bc5a6c556 100644
  
      "map_custom(x)",
      "map_custom(x,y)",
-@@ -1213,11 +1255,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "map_custom(x,y,z)",
+ 
+     "custom(x)",
+@@ -1210,17 +1252,17 @@
+     "cross_entropy_loss(x,y)",
+     "cross_entropy_loss_back(x,y)",
+     "adamw(x)",
      "sgd(x)",
  
      "glu(x)",
@@ -4573,12 +5014,22 @@ index da7f3a5f2..bc5a6c556 100644
  
  static const char * GGML_UNARY_OP_NAME[GGML_UNARY_OP_COUNT] = {
      "ABS",
-@@ -6468,10 +6510,40 @@ struct ggml_tensor * ggml_dsv4_hc_post(
+     "SGN",
+     "NEG",
+     "STEP",
+@@ -6467,17 +6509,47 @@
+ 
+     struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, hc, n_tokens);
+ 
+     result->op     = GGML_OP_DSV4_HC_POST;
+     result->src[0] = x;
+     result->src[1] = residual;
+     result->src[2] = post;
      result->src[3] = comb;
- 
-     return result;
- }
- 
++
++    return result;
++}
++
 +// ggml_turbo_wht
 +
 +struct ggml_tensor * ggml_turbo_wht(
@@ -4596,7 +5047,7 @@ index da7f3a5f2..bc5a6c556 100644
 +    }
 +    GGML_ASSERT(group_size == 32 || group_size == 64 || group_size == 128);
 +    GGML_ASSERT(a->ne[0] % group_size == 0);
-+
+ 
 +    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, a->ne);
 +
 +    result->op = GGML_OP_TURBO_WHT;
@@ -4606,15 +5057,18 @@ index da7f3a5f2..bc5a6c556 100644
 +    memcpy(result->op_params + 0, &direction, sizeof(int));
 +    memcpy(result->op_params + sizeof(int), &group_size, sizeof(int));
 +
-+    return result;
-+}
-+
+     return result;
+ }
+ 
  ////////////////////////////////////////////////////////////////////////////////
  
  struct ggml_hash_set ggml_hash_set_new(size_t size) {
      size = ggml_hash_size(size);
      struct ggml_hash_set result;
-@@ -7964,10 +8036,15 @@ size_t ggml_quantize_chunk(
+@@ -7967,16 +8039,21 @@
+         case GGML_TYPE_IQ2_XS:  result = quantize_iq2_xs (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+         case GGML_TYPE_IQ3_XXS: result = quantize_iq3_xxs(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+         case GGML_TYPE_IQ3_S:   result = quantize_iq3_s  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_IQ2_S:   result = quantize_iq2_s  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_IQ1_S:   result = quantize_iq1_s  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_IQ1_M:   result = quantize_iq1_m  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
@@ -4630,11 +5084,15 @@ index da7f3a5f2..bc5a6c556 100644
                  size_t elemsize = sizeof(ggml_fp16_t);
                  ggml_fp32_to_fp16_row(src + start, (ggml_fp16_t *)dst + start, n);
                  result = n * elemsize;
-diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index e67814200..2150e591e 100644
+             } break;
+         case GGML_TYPE_BF16:
+             {
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -3632,23 +3632,36 @@ llama_context * llama_init_from_model(
+@@ -3634,29 +3634,42 @@
+         if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
+             LLAMA_LOG_ERROR("%s: quantized V cache requires flash_attn to be enabled\n", __func__);
+             return nullptr;
          }
      }
  
@@ -4673,11 +5131,15 @@ index e67814200..2150e591e 100644
                  return nullptr;
              }
          }
-diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 6acbec3a0..f1e8cac26 100644
+     }
+ 
+     if (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED &&
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2506,10 +2506,22 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+@@ -2520,16 +2520,28 @@
+          ggml_tensor * k,
+          ggml_tensor * v,
+          ggml_tensor * kq_b,
           ggml_tensor * kq_mask,
           ggml_tensor * sinks,
           ggml_tensor * v_mla,
@@ -4700,12 +5162,19 @@ index 6acbec3a0..f1e8cac26 100644
      // split the batch into streams if needed
      const auto n_stream = k->ne[3];
  
-@@ -2579,10 +2591,24 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+     q = ggml_view_4d(ctx0, q, q->ne[0], q->ne[1], q->ne[2]/n_stream, n_stream, q->nb[1], q->nb[2], q->nb[3]/n_stream, 0);
+ 
+     q = ggml_permute(ctx0, q, 0, 2, 1, 3);
+@@ -2602,16 +2614,30 @@
+         }
+ 
+         cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, hparams.f_max_alibi_bias,
+                                   hparams.attn_soft_cap ? hparams.f_attn_logit_softcapping : 0.0f);
          res->add_fused_node({LLM_FUSED_OP_FLASH_ATTN, cur, il});
  
          ggml_flash_attn_ext_add_sinks(cur, sinks);
          ggml_flash_attn_ext_set_prec (cur, GGML_PREC_F32);
- 
++
 +        // TurboQuant: inverse WHT on FA output when V values are WHT-rotated.
 +        if (!diag_no_wht && (v->type == GGML_TYPE_TURBO2_0 || v->type == GGML_TYPE_TURBO3_0 || v->type == GGML_TYPE_TURBO4_0)) {
 +            if (cur->ne[0] % 128 == 0) {
@@ -4719,13 +5188,18 @@ index 6acbec3a0..f1e8cac26 100644
 +            cur = ggml_view_4d(ctx0, cur, orig_head_v, cur->ne[1], cur->ne[2], cur->ne[3], cur->nb[1], cur->nb[2], cur->nb[3], 0);
 +            cur = ggml_cont(ctx0, cur);
 +        }
-+
+ 
          if (v_mla) {
  #if 0
              // v_mla can be applied as a matrix-vector multiplication with broadcasting across dimension 3 == n_tokens.
              // However, the code is optimized for dimensions 0 and 1 being large, so this is inefficient.
              cur = ggml_reshape_4d(ctx0, cur, v_mla->ne[0], 1, n_head, n_tokens);
-@@ -2655,10 +2681,24 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+             cur = ggml_mul_mat(ctx0, v_mla, cur);
+ #else
+@@ -2679,16 +2705,30 @@
+             }
+             v = ggml_cont(ctx0, ggml_transpose(ctx0, v));
+             cb(v, "v_cont", il);
          }
  
          ggml_tensor * kqv = ggml_mul_mat(ctx0, v, kq);
@@ -4750,7 +5224,13 @@ index 6acbec3a0..f1e8cac26 100644
              kqv = ggml_mul_mat(ctx0, v_mla, kqv);
              cb(kqv, "kqv_mla", il);
          }
-@@ -2924,11 +2964,13 @@ ggml_tensor * llm_graph_context::build_attn(
+ 
+         cur = ggml_permute(ctx0, kqv, 0, 2, 1, 3);
+ 
+@@ -2948,17 +2988,19 @@
+ 
+         ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+     }
  
      const auto & kq_mask = inp->get_kq_mask();
  
@@ -4765,7 +5245,13 @@ index 6acbec3a0..f1e8cac26 100644
      cb(cur, "kqv_out", il);
  
      if (wo) {
-@@ -3009,11 +3051,13 @@ ggml_tensor * llm_graph_context::build_attn(
+         if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE) {
+             // GLM4 and GLM4_MOE seem to have numerical issues with half-precision accumulators
+             cur = build_lora_mm(wo, cur);
+@@ -3033,17 +3075,19 @@
+     // [1, n_kv, n_batch, n_stream] -> [n_kv, n_batch, 1, n_stream]
+     kq_mask_top_k = ggml_view_4d(ctx0, kq_mask_top_k, kq_mask_top_k->ne[1], kq_mask_top_k->ne[2], 1, kq_mask_top_k->ne[3], kq_mask_top_k->nb[2], kq_mask_top_k->nb[3], kq_mask_top_k->nb[3], 0);
+ 
      // combine with the original kq mask
      kq_mask_top_k = ggml_add(ctx0, kq_mask_top_k, kq_mask);
  
@@ -4780,11 +5266,15 @@ index 6acbec3a0..f1e8cac26 100644
      cb(cur, "kqv_out", il);
  
      if (wo) {
-diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 8cf2e5e90..de9212851 100644
+         cur = build_lora_mm(wo, cur, wo_s);
+     }
+ 
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -15,10 +15,19 @@
+@@ -12,16 +12,25 @@
+ #include <limits>
+ #include <map>
+ #include <stdexcept>
  
  static bool ggml_is_power_of_2(int n) {
      return (n & (n - 1)) == 0;
@@ -4804,7 +5294,13 @@ index 8cf2e5e90..de9212851 100644
  static void ggml_gen_hadamard(ggml_tensor * tensor) {
      assert(tensor->type == GGML_TYPE_F32);
  
-@@ -157,10 +166,16 @@ llama_kv_cache::llama_kv_cache(
+     const int n = tensor->ne[0];
+ 
+     assert(ggml_is_power_of_2(n));
+@@ -154,28 +163,39 @@
+ 
+     // [TAG_V_CACHE_VARIABLE]
+     if (v_trans && hparams.is_n_embd_v_gqa_variable()) {
          LLAMA_LOG_WARN("%s: the V embeddings have different sizes across layers and FA is not enabled - padding V cache to %d\n",
                  __func__, hparams.n_embd_v_gqa_max());
      }
@@ -4812,16 +5308,17 @@ index 8cf2e5e90..de9212851 100644
      const bool is_mla = hparams.is_mla();
 +    const bool turbo_k = llama_kv_type_is_turbo(type_k);
 +    const bool turbo_v = llama_kv_type_is_turbo(type_v);
-+
+ 
 +    if (is_mla && turbo_v && !turbo_k) {
 +        throw std::runtime_error("MLA models require TurboQuant keys when TurboQuant values are selected");
 +    }
- 
++
      for (uint32_t il = 0; il < n_layer; il++) {
          if (!hparams.has_kv(il)) {
              LLAMA_LOG_DEBUG("%s: layer %3d: does not have KV cache\n", __func__, il);
              continue;
-@@ -169,10 +184,15 @@ llama_kv_cache::llama_kv_cache(
+         }
+ 
          if (filter && !filter(il)) {
              LLAMA_LOG_DEBUG("%s: layer %3d: filtered\n", __func__, il);
              continue;
@@ -4837,7 +5334,13 @@ index 8cf2e5e90..de9212851 100644
  
              if (il_share >= 0) {
                  const auto & layer_share = other->layers[other->map_layer_ids[il_share]];
-@@ -205,10 +225,24 @@ llama_kv_cache::llama_kv_cache(
+ 
+                 LLAMA_LOG_WARN("%s: layer %3d: sharing with layer %d. k = %p, v = %p\n", __func__, il, il_share,
+                         layer_share.k->data, layer_share.v->data);
+@@ -202,16 +222,30 @@
+                 n_embd_head_v_all = -1;
+             }
+         }
  
          // [TAG_V_CACHE_VARIABLE]
          const uint32_t n_embd_k_gqa =            hparams.n_embd_k_gqa(il);
@@ -4862,7 +5365,13 @@ index 8cf2e5e90..de9212851 100644
          ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
  
          if (offload) {
-@@ -226,22 +260,22 @@ llama_kv_cache::llama_kv_cache(
+             auto * dev = model.dev_layer(il);
+             buft = ggml_backend_dev_buffer_type(dev);
+ 
+@@ -223,28 +257,28 @@
+         ggml_context * ctx = ctx_for_buft(buft);
+         if (!ctx) {
+             throw std::runtime_error("failed to create ggml context for kv cache");
          }
  
          const bool has_k = true;
@@ -4889,7 +5398,13 @@ index 8cf2e5e90..de9212851 100644
          map_layer_ids[il] = layers.size();
  
          layers.push_back({ il, k, v, k_stream, v_stream, });
-@@ -318,10 +352,11 @@ llama_kv_cache::llama_kv_cache(
+     }
+ 
+     if (reuse) {
+@@ -315,28 +349,30 @@
+         if (attn_rot_disable) {
+             LLAMA_LOG_WARN("%s: attention rotation force disabled (LLAMA_ATTN_ROT_DISABLE)\n", __func__);
+         }
  
          attn_rot_k =
              !attn_rot_disable &&
@@ -4901,7 +5416,8 @@ index 8cf2e5e90..de9212851 100644
          // always create Hadamard rotation tensors for DeepSeek lightning indexers
          if ((model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4 || model.arch == LLM_ARCH_GLM_DSA) &&
                  hparams.n_embd_head_k_full == hparams.indexer_head_size) {
-@@ -330,10 +365,11 @@ llama_kv_cache::llama_kv_cache(
+             attn_rot_k = true;
+         }
  
          attn_rot_v =
              !attn_rot_disable &&
@@ -4913,7 +5429,13 @@ index 8cf2e5e90..de9212851 100644
  
      LLAMA_LOG_INFO("%s: attn_rot_k = %d, n_embd_head_k_all = %d\n", __func__, attn_rot_k, n_embd_head_k_all);
      LLAMA_LOG_INFO("%s: attn_rot_v = %d, n_embd_head_k_all = %d\n", __func__, attn_rot_v, n_embd_head_v_all);
-@@ -1252,17 +1288,19 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
+ 
+     // pre-compute the haramard matrices and keep them in host memory
+     // TODO: in the future, we can make copies in the backend buffers to avoid host -> device transfers
+@@ -1249,71 +1285,81 @@
+ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
+     const int32_t ikv = map_layer_ids.at(il);
+ 
      auto * k = layers[ikv].k;
  
      const uint64_t kv_size      = get_size();
@@ -4921,9 +5443,9 @@ index 8cf2e5e90..de9212851 100644
  
 -    assert(n_embd_k_gqa == hparams.n_embd_k_gqa(il));
 +    const int64_t head_k = (int64_t) n_embd_k_gqa / hparams.n_head_kv(il);
-+
-+    assert(n_embd_k_gqa >= hparams.n_embd_k_gqa(il));
  
++    assert(n_embd_k_gqa >= hparams.n_embd_k_gqa(il));
++
      const uint32_t ns = sinfo.s1 - sinfo.s0 + 1;
  
      return ggml_view_4d(ctx, k,
@@ -4936,7 +5458,12 @@ index 8cf2e5e90..de9212851 100644
              ggml_row_size(k->type, n_embd_k_gqa*kv_size)*sinfo.s0);
  }
  
-@@ -1275,26 +1313,28 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
+ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
+     const int32_t ikv = map_layer_ids.at(il);
+ 
+     auto * v = layers[ikv].v;
+ 
+     const uint64_t kv_size      = get_size();
      const uint64_t n_embd_v_gqa = v->ne[0];
  
      // [TAG_V_CACHE_VARIABLE]
@@ -4969,7 +5496,8 @@ index 8cf2e5e90..de9212851 100644
              ggml_row_size(v->type, kv_size*n_embd_v_gqa)*sinfo.s0);
  }
  
-@@ -1303,14 +1343,20 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
+ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const {
+     GGML_UNUSED(sinfo);
  
      const int32_t ikv = map_layer_ids.at(il);
  
@@ -4991,7 +5519,13 @@ index 8cf2e5e90..de9212851 100644
      // we can merge dims 0 and 1
      // TODO: add ggml helper function for this?
      GGML_ASSERT(ggml_row_size(k_cur->type, n_embd_head) == k_cur->nb[1]);
-@@ -1338,14 +1384,20 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
+ 
+     k_cur = ggml_view_2d(ctx, k_cur, n_embd_gqa, n_tokens, k_cur->nb[2], 0);
+ 
+@@ -1335,20 +1381,26 @@
+ 
+ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il, const slot_info & sinfo) const {
+     GGML_UNUSED(sinfo);
  
      const int32_t ikv = map_layer_ids.at(il);
  
@@ -5013,7 +5547,13 @@ index 8cf2e5e90..de9212851 100644
      // we can merge dims 0 and 1
      GGML_ASSERT(ggml_row_size(v_cur->type, n_embd_head) == v_cur->nb[1]);
  
-@@ -1867,13 +1919,24 @@ ggml_tensor * llama_kv_cache::build_rope_shift(
+     const int64_t n_stream = v->ne[2];
+ 
+     // take this branch when FA is enabled (the V cache is not transposed)
+@@ -1864,19 +1916,30 @@
+         // dequantize to f32 -> RoPE -> quantize back
+         tmp = ggml_cast(ctx, cur, GGML_TYPE_F32);
+ 
          // rotate back. `rot` is null when no Hadamard rotation was set up for
          // this quantized cache (head dim not a multiple of 64); guard or the KV
          // shift (cache-reuse / context-shift) null-derefs.
@@ -5041,7 +5581,13 @@ index 8cf2e5e90..de9212851 100644
          if (rot) tmp = llama_mul_mat_hadamard(ctx, tmp, rot);
  
          tmp = ggml_cpy(ctx, tmp, cur);
-@@ -1936,27 +1999,32 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
+     } else {
+         // we rotate only the first n_rot dimensions
+         tmp = ggml_rope_ext_inplace(ctx, cur,
+@@ -1933,33 +1996,38 @@
+     for (const auto & layer : layers) {
+         const uint32_t il = layer.il;
+ 
          if (!hparams.has_rope(il)) {
              continue;
          }
@@ -5078,11 +5624,15 @@ index 8cf2e5e90..de9212851 100644
  
          ggml_build_forward_expand(gf, cur);
      }
-diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 419e1eba4..5c972bf24 100644
+ 
+     res->add_input(std::move(inp));
+ 
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -286,10 +286,12 @@ if (APPLE)
+@@ -295,16 +295,18 @@
+ 
+ if (APPLE)
+     llama_build(test-rset-release.cpp)
  endif()
  
  if (NOT GGML_BACKEND_DL)
@@ -5095,11 +5645,15 @@ index 419e1eba4..5c972bf24 100644
      llama_build_and_test(test-rope.cpp)
      llama_build_and_test(test-col2im-1d.cpp)
  endif()
-diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 631a0cfcd..18c810914 100644
+ 
+ # libmtmd
+ set(LLAMA_TEST_NAME test-mtmd-c-api)
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -2437,10 +2437,13 @@ struct test_set_rows : public test_case {
+@@ -2434,16 +2434,19 @@
+                 init_set_rows_row_ids(t, ne[1]);
+             } else {
+                 init_tensor_uniform(t);
              }
          }
      }
@@ -5113,7 +5667,13 @@ index 631a0cfcd..18c810914 100644
              type_dst == GGML_TYPE_Q5_0 || type_dst == GGML_TYPE_Q5_1 || type_dst == GGML_TYPE_Q8_0) {
              // estimate what the max nmse error would be if one quantized value is
              // off by one. The test values are distributed in [-1,1], so it'll be
-@@ -8153,10 +8156,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+             // roughly (2.0 / 2^bits)^2, divided by the mean square value of the reference,
+             // which is roughly 0.25 times the number of elements.
+             double err_estimate = 1.0f/8.0f;
+@@ -8390,16 +8393,22 @@
+     }
+     for (bool v : {false, true}) {
+         test_cases.emplace_back(new test_get_rows_back(GGML_TYPE_I32, 256, 5, 4, 1, v));
      }
  
      test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_F32, GGML_TYPE_I64, { 1, 8, 1, 3 }, { 1, 1 }, 2, false));
@@ -5130,12 +5690,20 @@ index 631a0cfcd..18c810914 100644
              for (int b : {1, 7}) {
                  for (bool v : {false, true}) {
                      test_cases.emplace_back(new test_set_rows(src_type, type, GGML_TYPE_I64, { 256, 5,  b, 3 }, { 1, 1, }, 1, v));
-@@ -9632,10 +9641,58 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+                     test_cases.emplace_back(new test_set_rows(src_type, type, GGML_TYPE_I64, { 256, 11, 1, b }, { 2, 3, }, 7, v));
+ 
+                     test_cases.emplace_back(new test_set_rows(src_type, type, GGML_TYPE_I64, { 3*ggml_blck_size(type), 3, b, 1 }, { 2, 3, }, 2, v));
+@@ -9876,18 +9885,66 @@
+ 
+     // large-KV F16 cases (Qwen3.6-27B geometry and a llama-class control): the upstream matrix
+     // stops at kv=1024, blind to long-context FA bugs (e.g. the oneDNN SDPA ordering race on BMG).
+     for (int64_t kv : { 4096, 16384 }) {
+         test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, 512, true, false, 0, 0,
                                                          GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
          test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, kv, 512, true, false, 0, 0,
                                                          GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
-     }
- 
++    }
++
 +    for (ggml_type type : {GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0}) {
 +        for (int64_t head : {128, 384, 640}) {
 +            for (int64_t batch : {1, 16}) {
@@ -5144,8 +5712,8 @@ index 631a0cfcd..18c810914 100644
 +                    0.0f, 0.0f, GGML_PREC_F32, type, type));
 +            }
 +        }
-+    }
-+
+     }
+ 
 +    // Directed AMD wave32 coverage. kv=257 makes these cases easy to select as a
 +    // compact suite and exercises decode vec, medium-batch tile, and large-batch PF.
 +    for (ggml_type type_K : {GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
@@ -5189,11 +5757,15 @@ index 631a0cfcd..18c810914 100644
      test_cases.emplace_back(new test_cross_entropy_loss_back(GGML_TYPE_F32, {   10, 5, 4, 3}));
      test_cases.emplace_back(new test_cross_entropy_loss_back(GGML_TYPE_F32, {30000, 1, 1, 1}));
  
-diff --git a/tests/test-quantize-fns.cpp b/tests/test-quantize-fns.cpp
-index 9510ac14c..379709b95 100644
+     test_cases.emplace_back(new test_opt_step_adamw(GGML_TYPE_F32, {10, 5, 4, 3}));
+     test_cases.emplace_back(new test_opt_step_sgd(GGML_TYPE_F32, {10, 5, 4, 3}));
+ 
 --- a/tests/test-quantize-fns.cpp
 +++ b/tests/test-quantize-fns.cpp
-@@ -150,10 +150,18 @@ static int test_vec_dot_q(bool verbose) {
+@@ -147,45 +147,54 @@
+             continue;
+         }
+ 
          const ggml_type ei = (ggml_type)i;
  
          printf("Testing %s\n", ggml_type_name((ggml_type) i));
@@ -5212,7 +5784,8 @@ index 9510ac14c..379709b95 100644
              const float max_quantization_error =
                  type == GGML_TYPE_Q1_0    ? MAX_QUANTIZATION_TOTAL_ERROR_BINARY :
                  type == GGML_TYPE_TQ1_0   ? MAX_QUANTIZATION_TOTAL_ERROR_TERNARY :
-@@ -162,10 +170,11 @@ static int test_vec_dot_q(bool verbose) {
+                 type == GGML_TYPE_TQ2_0   ? MAX_QUANTIZATION_TOTAL_ERROR_TERNARY :
+                 type == GGML_TYPE_Q2_0    ? MAX_QUANTIZATION_TOTAL_ERROR_TERNARY :
                  type == GGML_TYPE_Q2_K    ? MAX_QUANTIZATION_TOTAL_ERROR_2BITS :
                  type == GGML_TYPE_IQ2_S   ? MAX_QUANTIZATION_TOTAL_ERROR_2BITS :
                  type == GGML_TYPE_Q3_K    ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
@@ -5224,7 +5797,12 @@ index 9510ac14c..379709b95 100644
              num_failed += failed;
              if (failed || verbose) {
                  printf("%5s absolute quantization error:    %s (%f)\n", ggml_type_name(type), RESULT_STR[failed], total_error);
-@@ -178,11 +187,11 @@ static int test_vec_dot_q(bool verbose) {
+             }
+ 
+             const float reference_error = reference_quantization_error(qfns, qfns_cpu, test_size, test_data.data());
+             failed = !(reference_error < MAX_QUANTIZATION_REFERENCE_ERROR);
+             num_failed += failed;
+             if (failed || verbose) {
                  printf("%5s reference implementation error: %s (%f)\n", ggml_type_name(type), RESULT_STR[failed], reference_error);
              }
  
@@ -5237,10 +5815,10 @@ index 9510ac14c..379709b95 100644
                  ? MAX_DOT_PRODUCT_ERROR_BINARY
                  : type == GGML_TYPE_TQ1_0 || type == GGML_TYPE_TQ2_0 || type == GGML_TYPE_Q2_0
                  ? MAX_DOT_PRODUCT_ERROR_TERNARY
-diff --git a/tests/test-turbo-quant.c b/tests/test-turbo-quant.c
-new file mode 100644
-index 000000000..789bdfb6d
---- /dev/null
+                 : type == GGML_TYPE_NVFP4
+                 ? MAX_DOT_PRODUCT_ERROR_FP4
+                 : MAX_DOT_PRODUCT_ERROR;
+--- a/tests/test-turbo-quant.c
 +++ b/tests/test-turbo-quant.c
 @@ -0,0 +1,125 @@
 +#include "ggml-quants.h"
@@ -5368,19 +5946,21 @@ index 000000000..789bdfb6d
 +    printf("TurboQuant CPU suite passed\n");
 +    return 0;
 +}
-diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index d7d4022c2..36fabc731 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
-@@ -498,10 +498,19 @@ static ggml_type ggml_type_from_name(const std::string & s) {
+@@ -494,17 +494,26 @@
+     if (s == "q5_0") {
+         return GGML_TYPE_Q5_0;
+     }
+     if (s == "q5_1") {
          return GGML_TYPE_Q5_1;
      }
      if (s == "iq4_nl") {
          return GGML_TYPE_IQ4_NL;
-     }
++    }
 +    if (s == "turbo2") {
 +        return GGML_TYPE_TURBO2_0;
-+    }
+     }
 +    if (s == "turbo3") {
 +        return GGML_TYPE_TURBO3_0;
 +    }
@@ -5392,3 +5972,6 @@ index d7d4022c2..36fabc731 100644
  }
  
  static cmd_params parse_cmd_params(int argc, char ** argv) {
+     cmd_params        params;
+     std::string       arg;
+     bool              invalid_param = false;
