@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.1] - 2026-08-19
 
 ### Added
 - **A working directory per conversation and per project.** With agent tools on, the model's file tools stay inside the folder you pick, shown next to the conversation's title.
