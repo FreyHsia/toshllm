@@ -3,6 +3,26 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Video no longer comes back as a flat colour.** Its attention was built in full instead of going through the card's kernels, and past a certain clip length it stopped fitting in a single allocation. A 33-frame clip at 704x400 is the case that showed it; 832x464 with 33 frames now renders too.
+- **Video no longer flickers.** The decode brightened one frame in every four, the rhythm the decoder compresses time at. Decoding in tiles removes it; a setting brings the old decode back.
+- **Video no longer ends in colour bands or noise.** Long clips ran past the time macOS allows a single piece of GPU work. The work is now split, and the tiled decode keeps each piece small.
+- **Wan 2.2 5B works, and on far less video memory than its listing claimed.** It was being sampled on a schedule that turns its output into coloured mush, worse the more steps it took; on the one it wants it returns a clean picture. It now asks for 12 GB instead of 24, up to 704 pixels, where its decoder still fits.
+- **Video no longer comes out as a still image.** The studio opened at 480x272, well under what these models were trained at, and there they stop moving: a clip at that size measures 0.5 of change between frames against 20.6 at 704x400. It now opens at the model's own size, and warns if you go below it.
+
+### Improved
+- **Images take much less video memory and are made 12 to 14% quicker.** Z-Image at 1600x900 drops from 8.2 GB to 966 MB, and at 1024x1024 from 2.4 GB to 690 MB, with the image unchanged. 2048x2048 and 2560x1440 now render on a 12 GB card.
+- **SD 1.5 needs nine times less video memory and is twice as quick**: 281 MB and 73 seconds at 768x768, against 2690 MB and 149. Its head sizes now fit the card's attention kernels, and 1024x1024 works for the first time. This is the model for 4 to 6 GB cards.
+- **Video is generated about 32% quicker.** Sampling a 33-frame clip at 704x400 goes from 209 to 142 seconds.
+- **The size list follows what the card can really do.** The memory estimate was written when the attention was built in full, and hid sizes that now fit.
+- **Models no longer ask for twice the card they need.** The stated minimums were set when the attention was built in full: Z-Image and SDXL Turbo drop from 8 to 6 GB, Flux.2 klein 4B from 12 to 6, klein 9B from 16 to 10, Flux.1 schnell from 16 to 8, Qwen-Image from 24 to 16, and the large video models from 32 to 24. Measured where the model is here, derived from the same figures elsewhere.
+- **Each studio says what its model was trained for**, so a repeated composition or a drifting clip reads as the model's limit and not as the app's.
+- **Updated image engine**, with the fixes released upstream since the last version.
+
+Measured on a Radeon RX 6700 XT with Wan 2.1 1.3B, Z-Image Turbo, SDXL Turbo and SD 1.5.
+
 ## [0.85.1] - 2026-08-19
 
 ### Added

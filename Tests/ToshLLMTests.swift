@@ -227,21 +227,38 @@ final class ImageGenTests: XCTestCase {
 
     func testResolutionLimitsScaleWithVRAM() {
         let r = ImageGenCatalog.zImageTurbo.residentGB
-        // 12 GB fits a 1600x900 frame but not a 1600x1600 square (measured, Z-Image).
+        // With the attention streamed instead of built in full, 12 GB fits far more than it
+        // used to: 2048x2048 measured 2757 MB of graph and 2560x1440 measured 2423 (08-19).
         XCTAssertTrue(ImageGenLimits.fits(width: 1600, height: 900, vramGB: 12, residentGB: r))
-        XCTAssertFalse(ImageGenLimits.fits(width: 1600, height: 1600, vramGB: 12, residentGB: r))
-        // A smaller card can't fit the frame the 12 GB card can.
-        XCTAssertFalse(ImageGenLimits.fits(width: 1600, height: 900, vramGB: 8, residentGB: r))
+        XCTAssertTrue(ImageGenLimits.fits(width: 2048, height: 2048, vramGB: 12, residentGB: r))
+        // 8 GB now reaches 1600x900 (966 MB of graph, measured), but not a 3072 square.
+        XCTAssertTrue(ImageGenLimits.fits(width: 1600, height: 900, vramGB: 8, residentGB: r))
+        XCTAssertFalse(ImageGenLimits.fits(width: 3072, height: 3072, vramGB: 8, residentGB: r))
         // A heavier model (larger resident) needs more VRAM for the same frame.
         XCTAssertGreaterThan(
             ImageGenLimits.estVRAMGB(px: 1600*900, residentGB: ImageGenCatalog.fluxSchnell.residentGB, attnVRAMSq: 0),
             ImageGenLimits.estVRAMGB(px: 1600*900, residentGB: r, attnVRAMSq: 0))
-        // The offered base sizes scale with the card: more VRAM unlocks larger.
-        let max8 = ImageGenLimits.baseSizes(vramGB: 8, residentGB: r).max() ?? 0
+        // The offered base sizes still scale with the card at the low end, where the
+        // resident weights, not the graph, are what a small card runs out of.
+        let max6 = ImageGenLimits.baseSizes(vramGB: 6, residentGB: r).max() ?? 0
         let max12 = ImageGenLimits.baseSizes(vramGB: 12, residentGB: r).max() ?? 0
-        let max32 = ImageGenLimits.baseSizes(vramGB: 32, residentGB: r).max() ?? 0
-        XCTAssertLessThan(max8, max12)
-        XCTAssertLessThan(max12, max32)
+        XCTAssertLessThan(max6, max12)
+        // On a card without the attention kernels (a 64-wide one in safe mode) the score
+        // matrix is built whole again, so the same frame stops fitting and the estimate has
+        // to say so: SD 1.5 measured 2.7 GB of scores at 768 before the kernels covered it.
+        XCTAssertFalse(ImageGenLimits.fits(width: 2048, height: 2048, vramGB: 12,
+                                           residentGB: ImageGenCatalog.sd15.residentGB,
+                                           attnVRAMSq: ImageGenCatalog.sd15.attnVRAMSq,
+                                           streamedAttention: false))
+        XCTAssertTrue(ImageGenLimits.fits(width: 2048, height: 2048, vramGB: 12,
+                                          residentGB: ImageGenCatalog.sd15.residentGB,
+                                          attnVRAMSq: ImageGenCatalog.sd15.attnVRAMSq))
+        // Safe mode only takes the kernels away from the 64-wide cards.
+        XCTAssertTrue(ImageGenLimits.streamsAttention(gpuName: "AMD Radeon RX 6700 XT",
+                                                     extraArgs: "GGML_METAL_WAVE64_SAFEMODE=1"))
+        XCTAssertFalse(ImageGenLimits.streamsAttention(gpuName: "AMD Radeon RX Vega 64",
+                                                      extraArgs: "GGML_METAL_WAVE64_SAFEMODE=1"))
+        XCTAssertTrue(ImageGenLimits.streamsAttention(gpuName: "AMD Radeon RX Vega 64", extraArgs: ""))
     }
 
     func testCommandBufferSplitClearsWatchdog() {

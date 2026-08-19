@@ -65,16 +65,27 @@ struct ImageGenModel: Identifiable {
     let defaultSteps: Int
     /// Guidance scale the model expects (Turbo models run at 1.0).
     let cfgScale: Double
-    /// Rough usable VRAM (GB) below which it won't fit well. Drives the pick.
+    /// Rough usable VRAM (GB) below which it won't fit well. Drives the pick. Measured for
+    /// SD 1.5, SDXL Turbo and Z-Image (resident weights plus the graph at 1024x1024, 08-19);
+    /// derived from the same formula for the rest, cross-checked against what each model
+    /// publishes for a comparable quantisation with the text encoder off the card.
     let minVRAMGB: Double
     /// False = shown and usable, but never the auto-recommended pick.
     var recommendable: Bool = true
     /// Largest long-edge (px) to offer as a quality guard: UNet models blur past
     /// their native size. VRAM is handled separately by attnVRAMSq.
     var maxLongEdge: Int = 2048
-    /// Extra VRAM (GB) per pixel² from UNet self-attention, which grows quadratically
-    /// with resolution (issue #25: SD1.5 OOMs far below the linear budget). Empirical,
-    /// scaled by the model's top-block token count; 0 for DiT/Flow (linear is enough).
+    /// Long edge (px) this model is known to hold up to. Past it the composition
+    /// starts to repeat (two horizons, duplicated subjects), which is the model's
+    /// limit and not the app's, so the UI says so instead of leaving the user
+    /// guessing. 0 means no note: only set it where there is a published figure or
+    /// a measurement, never a guess, or the warning cries wolf.
+    var nativeLongEdge: Int = 0
+    /// Extra VRAM (GB) per pixel² from self-attention built in full, which grows
+    /// quadratically with resolution (issue #25: SD1.5 OOMs far below the linear
+    /// budget). Only for models the AMD attention kernels do not cover: they take
+    /// head sizes of 64, 128, 256 and 512, so SD 1.5 (40, 80, 160) still pays it
+    /// while SDXL and every DiT no longer do. 0 means the attention is streamed.
     var attnVRAMSq: Double = 0
 
     /// Metal reports the working-set limit, not physical VRAM (a 16 GB card
@@ -124,7 +135,8 @@ enum ImageGenCatalog {
         components: [ImageGenComponent(kind: .checkpoint,
             urlString: "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF/resolve/main/stable-diffusion-v1-5-pruned-emaonly-Q8_0.gguf",
             fileName: "sd-v1-5-Q8_0.gguf", sizeGB: 1.68)],
-        defaultSteps: 20, cfgScale: 7.0, minVRAMGB: 3, maxLongEdge: 768, attnVRAMSq: 3.4e-12)
+        defaultSteps: 20, cfgScale: 7.0, minVRAMGB: 3, maxLongEdge: 768,
+        nativeLongEdge: 512, attnVRAMSq: 3.4e-12)
 
     /// SDXL Turbo (3.5B, single checkpoint). Few steps, opens the LoRA/style world.
     static let sdxlTurbo = ImageGenModel(
@@ -134,13 +146,16 @@ enum ImageGenCatalog {
         components: [ImageGenComponent(kind: .checkpoint,
             urlString: "https://huggingface.co/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors",
             fileName: "sd_xl_turbo_1.0_fp16.safetensors", sizeGB: 6.6)],
-        defaultSteps: 6, cfgScale: 1.0, minVRAMGB: 8, maxLongEdge: 1280, attnVRAMSq: 5e-13)
+        // measured 08-19: 5060 MB resident (its encoder goes to RAM) + 492 MB of graph.
+        // attnVRAMSq only applies on cards without the attention kernels (safe mode).
+        defaultSteps: 6, cfgScale: 1.0, minVRAMGB: 6, maxLongEdge: 1280,
+        nativeLongEdge: 512, attnVRAMSq: 5e-13)
 
     /// Z-Image Turbo (6B DiT, 8 steps, Apache). Diffusion + VAE + Qwen3-4B encoder.
     static let zImageTurbo = ImageGenModel(
         name: "Z-Image Turbo",
-        detailES: "6B, 8 pasos, Apache. Rápido y fotorrealista; el mejor equilibrio para 8-12 GB.",
-        detailEN: "6B, 8 steps, Apache. Fast and photorealistic; the best fit for 8-12 GB.",
+        detailES: "6B, 8 pasos, Apache. Rápido y fotorrealista; el mejor equilibrio en tarjetas AMD.",
+        detailEN: "6B, 8 steps, Apache. Fast and photorealistic; the best balance on AMD cards.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_0.gguf",
@@ -150,13 +165,15 @@ enum ImageGenCatalog {
                 urlString: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                 fileName: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", sizeGB: 2.4),
         ],
-        defaultSteps: 8, cfgScale: 1.0, minVRAMGB: 8)
+        // measured 08-19: 3673 MB resident + 690 MB of graph at 1024x1024, and holds up at
+        // 2048x2048 and 2560x1440 with no repeated composition
+        defaultSteps: 8, cfgScale: 1.0, minVRAMGB: 6, nativeLongEdge: 2048)
 
     /// Flux.1 schnell (12B, 4 steps, Apache). Top prompt adherence for large GPUs.
     static let fluxSchnell = ImageGenModel(
         name: "Flux.1 schnell",
-        detailES: "12B, 4 pasos, Apache. Máxima adherencia al prompt; para GPUs de 16 GB+.",
-        detailEN: "12B, 4 steps, Apache. Top prompt adherence; for 16 GB+ GPUs.",
+        detailES: "12B, 4 pasos, Apache. Máxima adherencia al prompt.",
+        detailEN: "12B, 4 steps, Apache. Top prompt adherence.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_0.gguf",
@@ -169,7 +186,8 @@ enum ImageGenCatalog {
                 urlString: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
                 fileName: "clip_l.safetensors", sizeGB: 0.23),
         ],
-        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 16)
+        // lower minimum than before, but Z-Image stays the curated pick for these cards
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 8, recommendable: false)
 
     /// Non-gated FLUX.2 autoencoder (full encoder + small decoder), shared by the
     /// Flux 2 family; the reference `ae.safetensors` lives in a gated BFL repo.
@@ -191,14 +209,14 @@ enum ImageGenCatalog {
                 urlString: "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
                 fileName: "Qwen3-4B-Q4_K_M.gguf", sizeGB: 2.5),
         ],
-        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 12, recommendable: false,
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 6, recommendable: false,
         extraArgs: ["--sampling-method", "euler"])
 
     /// Flux.2 klein 9B (step-distilled, Apache). Flux 2 quality for 16 GB GPUs.
     static let flux2Klein9B = ImageGenModel(
         name: "Flux.2 klein 9B",
-        detailES: "9B, 4 pasos, Apache. La calidad Flux 2 en GPUs de 16 GB.",
-        detailEN: "9B, 4 steps, Apache. Flux 2 quality on 16 GB GPUs.",
+        detailES: "9B, 4 pasos, Apache. La calidad de Flux 2 sin la descarga de 30 GB.",
+        detailEN: "9B, 4 steps, Apache. Flux 2 quality without the 30 GB download.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_0.gguf",
@@ -208,7 +226,7 @@ enum ImageGenCatalog {
                 urlString: "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
                 fileName: "Qwen3-8B-Q4_K_M.gguf", sizeGB: 5.0),
         ],
-        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 16,
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 10, recommendable: false,
         extraArgs: ["--sampling-method", "euler"])
 
     /// Flux.2 dev (32B). The quality reference; enormous, non-commercial license.
@@ -216,8 +234,8 @@ enum ImageGenCatalog {
     /// holds VRAM at a time.
     static let flux2Dev = ImageGenModel(
         name: "Flux.2 dev",
-        detailES: "32B, la referencia de calidad. Muy pesado (34 GB de descarga); GPUs de 24 GB+. Licencia no comercial.",
-        detailEN: "32B, the quality reference. Very heavy (34 GB download); 24 GB+ GPUs. Non-commercial license.",
+        detailES: "32B, la referencia de calidad. Muy pesado (34 GB de descarga). Licencia no comercial.",
+        detailEN: "32B, the quality reference. Very heavy (34 GB download). Non-commercial license.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/city96/FLUX.2-dev-gguf/resolve/main/flux2-dev-Q4_K_S.gguf",
@@ -227,15 +245,15 @@ enum ImageGenCatalog {
                 urlString: "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
                 fileName: "Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf", sizeGB: 14.3),
         ],
-        defaultSteps: 20, cfgScale: 1.0, minVRAMGB: 24,
+        defaultSteps: 20, cfgScale: 1.0, minVRAMGB: 24, recommendable: false,
         extraArgs: ["--sampling-method", "euler", "--offload-to-cpu"])
 
     /// Qwen-Image (20B MMDiT). The one that renders legible text inside images.
     /// Heavy: for 24 GB+ GPUs. Text encoder is Qwen2.5-VL.
     static let qwenImage = ImageGenModel(
         name: "Qwen-Image",
-        detailES: "20B. Escribe texto legible dentro de la imagen. Muy pesado; para GPUs de 24 GB+.",
-        detailEN: "20B. Renders legible text inside images. Heavy; for 24 GB+ GPUs.",
+        detailES: "20B. Escribe texto legible dentro de la imagen. Muy pesado y lento.",
+        detailEN: "20B. Renders legible text inside images. Heavy and slow.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q4_0.gguf",
@@ -249,7 +267,7 @@ enum ImageGenCatalog {
         ],
         // Its 3D VAE needs IM2COL_3D, which Metal doesn't implement (issue #19):
         // run the VAE on CPU until we ship a kernel.
-        defaultSteps: 20, cfgScale: 2.5, minVRAMGB: 24,
+        defaultSteps: 20, cfgScale: 2.5, minVRAMGB: 16,
         extraArgs: ["--backend", "vae=cpu"])
 
     /// Curated order (small to large). Z-Image sits before SDXL so it wins the
@@ -298,41 +316,78 @@ enum ImageGenCatalog {
 /// pixels) and the macOS GPU watchdog (a single command buffer that runs too long
 /// is killed). These pick sizes that clear both.
 enum ImageGenLimits {
-    /// Estimated peak VRAM (GB) for a frame: resident model + ~1 GB overhead + a
-    /// linear per-pixel term (buffers/activations) + a quadratic attention term for
-    /// UNet models (attnVRAMSq). Linear calibrated on Z-Image (12 GB fits 1600x900,
-    /// OOMs at 1600x1600); the quadratic term is what makes SD1.5 realistic (#25).
-    static func estVRAMGB(px: Int, residentGB: Double, attnVRAMSq: Double) -> Double {
+    /// Estimated peak VRAM (GB): resident weights, half a gigabyte of runtime, and
+    /// the larger of the two graphs, which never overlap (the model samples, then
+    /// the VAE decodes). Recalibrated 08-19 against the sizes the engine reports,
+    /// with the attention going through the AMD kernels: the diffusion graph is a
+    /// straight line in pixels (690 MB at 1024x1024, 966 at 1600x900 and 2757 at
+    /// 2048x2048 on Z-Image; SDXL is lower, so this is the conservative side) and
+    /// the tiled VAE decode is flat at about 0.5 GB whatever the frame size. The
+    /// quadratic term only survives for models those kernels do not cover.
+    static func estVRAMGB(px: Int, residentGB: Double, attnVRAMSq: Double,
+                          streamedAttention: Bool = true) -> Double {
         let p = Double(px)
-        return residentGB + 1.0 + 4.5e-6 * p + attnVRAMSq * p * p
+        guard streamedAttention else {
+            // A card the attention kernels do not cover builds the score matrix whole, and
+            // then memory grows with the square of the frame again. This is the estimate as
+            // it was calibrated for that case, kept for exactly those cards.
+            return residentGB + 1.0 + 4.5e-6 * p + attnVRAMSq * p * p
+        }
+        let graphMB = max(6.6e-4 * p, 500)
+        return residentGB + 0.5 + graphMB / 1024
+    }
+
+    /// Whether this GPU runs attention through the card's own kernels, which is what keeps
+    /// the graph linear. Apple Silicon uses the upstream path and AMD ours; the 64-wide
+    /// cards lose it in safe mode, which is the case the estimate must not get wrong.
+    static func streamsAttention(gpuName: String, extraArgs: String) -> Bool {
+        guard extraArgs.contains("GGML_METAL_WAVE64_SAFEMODE") else { return true }
+        return GPUArchitectureClassifier.architecture(for: gpuName) != "GCN / Vega"
     }
 
     /// Base (long-edge) sizes to offer: a 16:9 frame at that base must fit VRAM,
     /// capped by the model's quality ceiling. Scales with the card and the model.
+    /// Does this card stream attention? Read from the selected GPU and the engine's extra
+    /// arguments, so a card in safe mode gets the estimate that matches what it really does.
+    static func streamsAttention(gpuIndex: Int) -> Bool {
+        let d = UserDefaults.standard
+        let extra = d.string(forKey: SettingsKeys.extraArgs) ?? ""
+        let devices = MTLCopyAllDevices()
+        let name = (gpuIndex >= 0 && gpuIndex < devices.count)
+            ? devices[gpuIndex].name
+            : (MTLCreateSystemDefaultDevice()?.name ?? "")
+        return streamsAttention(gpuName: name, extraArgs: extra)
+    }
+
     static func baseSizes(vramGB: Double, residentGB: Double,
-                          attnVRAMSq: Double = 0, maxLongEdge: Int = .max) -> [Int] {
+                          attnVRAMSq: Double = 0, maxLongEdge: Int = .max,
+                          streamedAttention: Bool = true) -> [Int] {
         let candidates = [512, 640, 768, 896, 1024, 1152, 1280, 1440,
                           1600, 1792, 2048, 2304, 2560, 3072]
         return candidates.filter { base in
             guard base <= maxLongEdge else { return false }
             let short = max(256, Int((Double(base) * 9 / 16 / 64).rounded()) * 64)
             return fits(width: base, height: short, vramGB: vramGB,
-                        residentGB: residentGB, attnVRAMSq: attnVRAMSq)
+                        residentGB: residentGB, attnVRAMSq: attnVRAMSq,
+                        streamedAttention: streamedAttention)
         }
     }
 
     /// True when a specific frame's estimated VRAM fits (a square at a large base,
     /// or any UNet frame at high res, may not even when a 16:9 base does).
     static func fits(width: Int, height: Int, vramGB: Double,
-                     residentGB: Double, attnVRAMSq: Double = 0) -> Bool {
-        estVRAMGB(px: width * height, residentGB: residentGB, attnVRAMSq: attnVRAMSq) <= vramGB
+                     residentGB: Double, attnVRAMSq: Double = 0,
+                     streamedAttention: Bool = true) -> Bool {
+        estVRAMGB(px: width * height, residentGB: residentGB, attnVRAMSq: attnVRAMSq,
+                  streamedAttention: streamedAttention) <= vramGB
     }
 
     /// Fraction of VRAM the frame is estimated to use (drives the near-limit note).
     static func vramFraction(width: Int, height: Int, vramGB: Double,
-                             residentGB: Double, attnVRAMSq: Double = 0) -> Double {
-        estVRAMGB(px: width * height, residentGB: residentGB, attnVRAMSq: attnVRAMSq)
-            / max(0.1, vramGB)
+                             residentGB: Double, attnVRAMSq: Double = 0,
+                             streamedAttention: Bool = true) -> Double {
+        estVRAMGB(px: width * height, residentGB: residentGB, attnVRAMSq: attnVRAMSq,
+                  streamedAttention: streamedAttention) / max(0.1, vramGB)
     }
 
     /// Command buffers to split each diffusion step into so none exceeds the
@@ -546,6 +601,11 @@ final class ImageGenerator: ObservableObject {
             // Tiled VAE decode keeps each Metal command buffer under the AMD GPU
             // watchdog; without it the decode times out and the colors corrupt.
             "--vae-tiling",
+            // Attention through the card's own kernels instead of building the whole
+            // table: 2379 to 690 MB at 1024x1024 on Z-Image and 8243 to 966 at
+            // 1600x900, which is what used to run past the largest block the card
+            // allows. Also 12 to 14% quicker, same image (45.8 to 50.6 dB).
+            "--diffusion-fa",
             // The text encoder runs once and then sits in VRAM for the whole
             // sampling: measured 1.56 GB freed on SDXL for 0.4 s of encode.
             "--params-backend", "te=cpu",
@@ -587,6 +647,9 @@ final class ImageGenerator: ObservableObject {
         // The wide matmul tile is tuned for LLM prefill shapes; on diffusion it costs
         // 1.7% on SDXL and 3% on Wan, with byte-identical output. Measured 08-14.
         env["TOSH_MM_WIDE_DISABLE"] = "1"
+        // The flash-attention kernels for AMD are opt-in; without this the backend
+        // turns --diffusion-fa down and the attention is materialized instead.
+        env["TOSH_FA_AMD"] = "1"
         // AMD discrete GPUs corrupt output without disabling Metal concurrency;
         // Apple Silicon keeps it on. Mirrors the LLM engine defaults.
         // Split each step into enough command buffers to clear the GPU watchdog.

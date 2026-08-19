@@ -736,20 +736,36 @@ struct ImageInstanceForm: View {
     }
     private var baseSizes: [Int] {
         let sizes = ImageGenLimits.baseSizes(vramGB: targetVRAM, residentGB: model.residentGB,
-                                             attnVRAMSq: model.attnVRAMSq, maxLongEdge: model.maxLongEdge)
+                                             attnVRAMSq: model.attnVRAMSq, maxLongEdge: model.maxLongEdge,
+                                             streamedAttention: ImageGenLimits.streamsAttention(gpuIndex: cfg.gpuIndex))
         return sizes.isEmpty ? [512] : sizes
     }
     private var fitsVRAM: Bool {
         let (w, h) = cfg.dimensions
         return ImageGenLimits.fits(width: w, height: h, vramGB: targetVRAM,
-                                   residentGB: model.residentGB, attnVRAMSq: model.attnVRAMSq)
+                                   residentGB: model.residentGB, attnVRAMSq: model.attnVRAMSq,
+                                   streamedAttention: ImageGenLimits.streamsAttention(gpuIndex: cfg.gpuIndex))
     }
+    /// Past the size the model itself was trained at, where it starts repeating the
+    /// composition. Nothing to do with the card, so the note says whose limit it is.
+    private var pastNativeSize: Bool {
+        !cfg.isCustom && model.nativeLongEdge > 0 && cfg.dimensions.0 > model.nativeLongEdge
+    }
+
+    private var nativeSizeNote: some View {
+        Label(loc.t("Por encima de los \(model.nativeLongEdge) px con los que se entrenó este modelo: puede repetir la composición (dos horizontes, sujetos duplicados). Es límite del modelo, no de la app.",
+                    "Above the \(model.nativeLongEdge) px this model was trained at: it may repeat the composition (two horizons, duplicated subjects). That is the model's limit, not the app's."),
+              systemImage: "info.circle")
+            .font(.caption2).foregroundStyle(.secondary)
+    }
+
     /// Fits, but close enough to the VRAM ceiling that a freeze or crash is possible.
     private var nearVRAMLimit: Bool {
         let (w, h) = cfg.dimensions
         return fitsVRAM && ImageGenLimits.vramFraction(width: w, height: h, vramGB: targetVRAM,
                                                        residentGB: model.residentGB,
-                                                       attnVRAMSq: model.attnVRAMSq) >= 0.8
+                                                       attnVRAMSq: model.attnVRAMSq,
+                                                       streamedAttention: ImageGenLimits.streamsAttention(gpuIndex: cfg.gpuIndex)) >= 0.8
     }
 
     var body: some View {
@@ -770,6 +786,7 @@ struct ImageInstanceForm: View {
                 settingsGrid
                 if !fitsVRAM { vramWarning }
                 else if nearVRAMLimit { nearLimitNote }
+                if pastNativeSize { nativeSizeNote }
                 dimensionsFootnote
             }
             if canRemove {

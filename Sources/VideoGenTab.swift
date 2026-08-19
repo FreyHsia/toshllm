@@ -19,8 +19,11 @@ struct VideoControls: View {
     @AppStorage(SettingsKeys.videoModel) private var modelName = ""
     @AppStorage(SettingsKeys.videoFrames) private var frames = 33
     @AppStorage(SettingsKeys.videoSteps) private var steps = 30
-    @AppStorage(SettingsKeys.videoBase) private var base = 480
+    // The model's own size. Below it these models stop moving: at 480x272 Wan 2.1 measures
+    // 0.5 of frame-to-frame change against 20.6 at 704x400, which reads as a still image.
+    @AppStorage(SettingsKeys.videoBase) private var base = 832
     @AppStorage(SettingsKeys.videoGPU) private var gpuIndex = -1
+    @AppStorage(SettingsKeys.videoVAETiling) private var vaeTiling = true
     @State private var prompt = ""
     @State private var seed = -1
     @State private var initImage = ""
@@ -39,6 +42,22 @@ struct VideoControls: View {
                                     vramGB: vram, residentGB: model.vramResidentGB)
     }
     private var height: Int { Self.shortEdge(base) }
+
+    /// What the model itself was trained for, so a clip that drifts or repeats
+    /// reads as the model's limit and not as the app failing.
+    private var nativeNote: String {
+        let size = "\(model.maxLongEdge)x\(Self.shortEdge(model.maxLongEdge))"
+        guard model.nativeFrames > 0 else {
+            return loc.t("Entrenado hasta \(size).", "Trained up to \(size).")
+        }
+        let secs = String(format: "%.1f", VideoGenLimits.seconds(frames: model.nativeFrames))
+        if frames > model.nativeFrames || base > model.maxLongEdge {
+            return loc.t("Por encima de lo aprendido por el modelo (\(size), \(model.nativeFrames) fotogramas): el movimiento puede irse. Es límite del modelo, no de la app.",
+                         "Past what the model learned (\(size), \(model.nativeFrames) frames): the motion may drift. That is the model's limit, not the app's.")
+        }
+        return loc.t("Entrenado hasta \(size) y \(model.nativeFrames) fotogramas (\(secs) s).",
+                     "Trained up to \(size) and \(model.nativeFrames) frames (\(secs) s).")
+    }
 
     /// 16:9 short edge, rounded to the latent grid.
     static func shortEdge(_ base: Int) -> Int {
@@ -192,6 +211,18 @@ struct VideoControls: View {
                 }
                 .help(loc.t("Menos de 20 pasos quema el color con este modelo.",
                             "Below 20 steps this model burns the colors."))
+
+                Toggle(loc.t("Decodificar por trozos", "Decode in tiles"), isOn: $vaeTiling)
+                    .help(loc.t("Recomendado. Sin esto el decodificado aclara un fotograma de cada cuatro y el clip parpadea, y además pide hasta 16 GB en vez de 3.4. Cuesta un 26% del decodificado.",
+                                "Recommended. Without it the decode brightens one frame in every four and the clip flickers, and it asks for up to 16 GB instead of 3.4. It costs 26% of the decode."))
+
+                if base < model.maxLongEdge * 3 / 4 {
+                    Label(loc.t("Por debajo del tamaño del modelo el clip casi no se mueve: a 480x272 se queda en una imagen fija.",
+                                "Below the model's own size the clip barely moves: at 480x272 it comes out as a still image."),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+                Text(nativeNote).font(.caption2).foregroundStyle(.secondary)
 
                 if vramFraction > 0.9 {
                     Label(loc.t("Estimo ~\(Int(vramFraction * 100))% de la VRAM. Si falla, baja los fotogramas antes que el tamaño.",

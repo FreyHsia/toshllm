@@ -165,6 +165,8 @@ enum SettingsKeys {
     static let videoSteps = "videoSteps"
     static let videoBase = "videoBase"
     static let videoGPU = "videoGPU"
+    /// Decode the frames in tiles (default on): fixed 3.4 GB instead of up to 16.
+    static let videoVAETiling = "videoVAETiling"
     static let upscalerFlavor = "upscalerFlavor"
     static let imageStudioMode = "imageStudioMode"
     static let upscalerScale = "upscalerScale"
