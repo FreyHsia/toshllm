@@ -3,11 +3,6 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
-
-### Fixed
-- **SD 1.5 says when the frame is not the shape it knows.** That model was trained on square frames only, and any other shape comes back with colour blotches in the background however many steps it takes; the studio now says so, instead of leaving it looking like a fault of the app. The newer models saw many aspect ratios and are unaffected.
-
 ## [0.85.2] - 2026-08-19
 
 ### Fixed
@@ -15,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Video no longer flickers.** The decode brightened one frame in every four, the rhythm the decoder compresses time at. Decoding in tiles removes it; a setting brings the old decode back.
 - **Video no longer ends in colour bands or noise.** Long clips ran past the time macOS allows a single piece of GPU work. The work is now split, and the tiled decode keeps each piece small.
 - **Wan 2.2 5B works, and on far less video memory than its listing claimed.** It was being sampled on a schedule that turns its output into coloured mush, worse the more steps it took; on the one it wants it returns a clean picture. It now asks for 12 GB instead of 24, up to 704 pixels, where its decoder still fits.
+- **SD 1.5 says when the frame is not the shape it knows.** That model was trained on square frames only, and any other shape comes back with colour blotches in the background however many steps it takes; the studio now says so, instead of leaving it looking like a fault of the app. The newer models saw many aspect ratios and are unaffected.
 - **Video no longer comes out as a still image.** The studio opened at 480x272, well under what these models were trained at, and there they stop moving: a clip at that size measures 0.5 of change between frames against 20.6 at 704x400. It now opens at the model's own size, and warns if you go below it.
 
 ### Improved
