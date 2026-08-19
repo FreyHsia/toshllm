@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-3dc7285b4}"   # llama.cpp commit validated against the patches
-SD_COMMIT="${SD_COMMIT:-de298c2}"         # stable-diffusion.cpp commit validated for image gen
+SD_COMMIT="${SD_COMMIT:-97d2990}"         # stable-diffusion.cpp commit validated for image gen
 ARCH="${ARCH:-$(uname -m)}"
 DEPLOYMENT_TARGET="14.0"        # same floor as the app (Package.swift)
 if [ "$ARCH" = "universal" ]; then
@@ -180,27 +180,28 @@ build_image_engine() {
 
     # impl.h needs -C2: this engine's decode N_R0/N_SG block differs from llama.cpp's, so a -U5
     # hunk finds no match. Safe only because every define it edits is unique, asserted below.
-    # the 0001-* series is the shared Metal backend; this engine takes only its ggml-metal hunks
-    # this engine's ggml is pinned older than llama.cpp's, so a shared hunk the bumped
-    # tree moved past it is frozen under patches/image/shared and wins here. The recorded
-    # sha is the llama version at freeze time: if that patch gains anything later, this
-    # stops the build instead of letting the image engine drift behind in silence.
+    # The 0001-* series is the shared Metal backend and is applied here **unchanged**, so any
+    # improvement to it reaches this engine on its own. This ggml is older, and exactly four
+    # hunks cannot land on it; they are applied from patches/image/0002 in their adapted form.
+    # If that set ever changes, the build stops instead of shipping a backend missing a hunk.
+    local expected_rejects="ggml-metal-device.cpp.rej ggml-metal-device.m.rej ggml-metal.cpp.rej ggml-metal.metal.rej"
     for shared in "$ROOT"/patches/llama/metal/0001-*.patch; do
-        frozen="$ROOT/patches/image/shared/$(basename "$shared")"
-        if [ -f "$frozen" ]; then
-            recorded=$(cat "$frozen.sha256" 2>/dev/null)
-            now=$("$ROOT/scripts/shared-hunks-sha.py" "$shared")
-            if [ "$recorded" != "$now" ]; then
-                echo "ERROR: $(basename "$shared") changed since it was frozen for the image engine."
-                echo "  port the change into patches/image/shared/ (or delete it if this engine's"
-                echo "  ggml caught up), then refresh its .sha256 with scripts/shared-hunks-sha.py"
-                exit 1
-            fi
-            shared="$frozen"
-        fi
-        git apply --exclude='ggml/src/ggml-metal/ggml-metal-impl.h' \
-                  --include='ggml/src/ggml-metal/*' -p1 "$shared"
+        git apply --reject --exclude='ggml/src/ggml-metal/ggml-metal-impl.h' \
+                  --include='ggml/src/ggml-metal/*' -p1 "$shared" >/dev/null 2>&1 || true
     done
+    local got_rejects
+    got_rejects=$(find ggml/src/ggml-metal -name '*.rej' -exec basename {} \; | sort -u | tr '\n' ' ')
+    got_rejects="${got_rejects% }"
+    if [ "$got_rejects" != "$expected_rejects" ]; then
+        echo "ERROR: the shared Metal series no longer diverges where patches/image/0002 expects." >&2
+        echo "  expected rejects: $expected_rejects" >&2
+        echo "  got:              $got_rejects" >&2
+        echo "  inspect the .rej files, then update patches/image/0002-image-metal-divergent-hunks.patch" >&2
+        exit 1
+    fi
+    find ggml/src/ggml-metal \( -name '*.rej' -o -name '*.orig' \) -delete
+    git apply --include='ggml/src/ggml-metal/*' -p1 \
+              "$ROOT/patches/image/0002-image-metal-divergent-hunks.patch"
     git apply --include='ggml/src/ggml-metal/ggml-metal-impl.h' -C2 -p1 \
               "$ROOT/patches/llama/metal/0001-7-metal-backend-host.patch"
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0003-image-metal-ncb.patch"
@@ -211,6 +212,10 @@ build_image_engine() {
     # generated on top of it. Without a Metal im2col_3d, ggml_conv_3d falls back to
     # the direct 3D convolution, slow enough that the Wan VAE trips the watchdog.
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0021-image-metal-im2col-3d.patch"
+    # UNet head sizes for the AMD flash-attention kernels: SD 1.5 builds a 2.7 GB score
+    # matrix at 768 and does not fit at all at 1024 without them. Image-side copy because
+    # this engine's .metal spells the wave64 instantiation macro differently.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0047-image-fa-unet-heads.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
