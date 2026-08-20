@@ -29,3 +29,4 @@ diff -U8 -r old/tools/mtmd/clip-model.h new/tools/mtmd/clip-model.h
      }
      bool is_global_attn(int32_t layer) const {
          const auto indices = global_attn_indices();
+ 
