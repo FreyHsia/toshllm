@@ -64,10 +64,10 @@ enum GGUFFile {
         path.lowercased().contains("mmproj")
     }
 
-    /// A speculative-decoding draft (DFlash). App-managed drafts are saved as
-    /// `<model>.dflash.gguf`; any GGUF with "dflash" in its name is a draft too.
+    /// A DFlash or MTP speculative-decoding draft.
     static func isDraft(_ path: String) -> Bool {
-        URL(fileURLWithPath: path).lastPathComponent.lowercased().contains("dflash")
+        let name = URL(fileURLWithPath: path).lastPathComponent.lowercased()
+        return name.contains("dflash") || name.hasPrefix("mtp-") || name.hasSuffix(".mtp.gguf")
     }
 
     private static func isModelFile(_ path: String) -> Bool {

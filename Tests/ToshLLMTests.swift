@@ -170,6 +170,144 @@ final class EstimatorTests: XCTestCase {
     }
 }
 
+final class ResumableDownloadTests: XCTestCase {
+    private final class RangeProtocol: URLProtocol, @unchecked Sendable {
+        static let payload = Data((0..<(256 * 1024)).map { UInt8($0 % 251) })
+        static let lock = NSLock()
+        nonisolated(unsafe) static var observedRanges: [String?] = []
+
+        override class func canInit(with request: URLRequest) -> Bool {
+            request.url?.host == "resume.test"
+        }
+
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            let range = request.value(forHTTPHeaderField: "Range")
+            Self.lock.lock(); Self.observedRanges.append(range); Self.lock.unlock()
+            let offset = range.flatMap { Int($0.dropFirst("bytes=".count).dropLast()) } ?? 0
+            let headers: [String: String]
+            let status: Int
+            let body: Data
+            if offset > 0 {
+                status = 206
+                body = Self.payload.suffix(from: offset)
+                headers = [
+                    "Content-Length": String(body.count),
+                    "Content-Range": "bytes \(offset)-\(Self.payload.count - 1)/\(Self.payload.count)"
+                ]
+            } else {
+                status = 200
+                body = Self.payload.prefix(64 * 1024)
+                headers = ["Content-Length": String(Self.payload.count)]
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: status,
+                                           httpVersion: "HTTP/1.1", headerFields: headers)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            // Stall the initial response so the test can pause it.
+            if offset > 0 { client?.urlProtocolDidFinishLoading(self) }
+        }
+
+        override func stopLoading() {}
+
+        static func reset() {
+            lock.lock(); observedRanges = []; lock.unlock()
+        }
+
+        static func ranges() -> [String?] {
+            lock.lock(); defer { lock.unlock() }
+            return observedRanges
+        }
+    }
+
+    @MainActor
+    private func waitUntil(_ predicate: @escaping () -> Bool,
+                           timeout: TimeInterval = 3) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return predicate()
+    }
+
+    func testResumeAlwaysUsesStableURLAndByteRange() {
+        let remote = URL(string: "https://huggingface.co/owner/repo/resolve/main/model.gguf")!
+        let fresh = ResumableDownload.request(remote: remote, partialBytes: 0)
+        XCTAssertEqual(fresh.url, remote)
+        XCTAssertNil(fresh.value(forHTTPHeaderField: "Range"))
+
+        let resumed = ResumableDownload.request(remote: remote, partialBytes: 12_345)
+        XCTAssertEqual(resumed.url, remote, "a stale presigned redirect must never be persisted")
+        XCTAssertEqual(resumed.value(forHTTPHeaderField: "Range"), "bytes=12345-")
+        XCTAssertEqual(resumed.cachePolicy, .reloadIgnoringLocalCacheData)
+    }
+
+    func testResumeAppendsOnlyAResponseForTheRequestedOffset() {
+        XCTAssertEqual(
+            ResumableDownload.responsePlan(statusCode: 206,
+                                            contentRange: "bytes 12345-19999/20000",
+                                            contentLength: 7_655,
+                                            partialBytes: 12_345,
+                                            expectedBytes: 20_000),
+            .append(totalBytes: 20_000))
+        XCTAssertEqual(
+            ResumableDownload.responsePlan(statusCode: 206,
+                                            contentRange: "bytes 0-19999/20000",
+                                            contentLength: 20_000,
+                                            partialBytes: 12_345,
+                                            expectedBytes: 20_000),
+            .reject)
+    }
+
+    func testServerIgnoringRangeRestartsInsteadOfCorruptingPartialFile() {
+        XCTAssertEqual(
+            ResumableDownload.responsePlan(statusCode: 200, contentRange: nil,
+                                            contentLength: 20_000, partialBytes: 12_345,
+                                            expectedBytes: 20_000),
+            .restart(totalBytes: 20_000))
+        XCTAssertEqual(
+            ResumableDownload.responsePlan(statusCode: 416, contentRange: "bytes */20000",
+                                            contentLength: 0, partialBytes: 20_000,
+                                            expectedBytes: 20_000),
+            .alreadyComplete)
+        XCTAssertEqual(
+            ResumableDownload.responsePlan(statusCode: 403, contentRange: nil,
+                                            contentLength: 0, partialBytes: 12_345,
+                                            expectedBytes: 20_000),
+            .reject)
+    }
+
+    @MainActor
+    func testDownloadItemPausesAndResumesFromPartialFile() async throws {
+        RangeProtocol.reset()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RangeProtocol.self]
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("download-resume-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let destination = dir.appendingPathComponent("model.gguf")
+        let item = DownloadItem(remote: URL(string: "https://resume.test/model.gguf")!,
+                                destination: destination, sessionConfiguration: config)
+
+        let receivedPartial = await waitUntil { item.receivedMB > 0 }
+        XCTAssertTrue(receivedPartial)
+        item.pause()
+        XCTAssertEqual(item.phase, .paused)
+        item.resume()
+        let completed = await waitUntil({ item.finished }, timeout: 5)
+        XCTAssertTrue(completed)
+        XCTAssertEqual(try Data(contentsOf: destination), RangeProtocol.payload)
+
+        let ranges = RangeProtocol.ranges()
+        XCTAssertEqual(ranges.count, 2)
+        XCTAssertNil(ranges[0])
+        XCTAssertEqual(ranges[1], "bytes=65536-")
+    }
+}
+
 final class DflashPolicyTests: XCTestCase {
     func testAutoAllowsDenseAndFullGPUModels() {
         XCTAssertTrue(DflashPolicy.autoEligible(isMoE: true, ncmoe: 1))
@@ -259,6 +397,93 @@ final class ImageGenTests: XCTestCase {
         XCTAssertFalse(ImageGenLimits.streamsAttention(gpuName: "AMD Radeon RX Vega 64",
                                                       extraArgs: "GGML_METAL_WAVE64_SAFEMODE=1"))
         XCTAssertTrue(ImageGenLimits.streamsAttention(gpuName: "AMD Radeon RX Vega 64", extraArgs: ""))
+    }
+
+    func testVideoVRAMEstimateSeparatesSamplingAndDecode() {
+        let estimated = VideoGenLimits.estVRAMGB(
+            px: 1280 * 704, frames: 33,
+            samplingResidentGB: VideoGenCatalog.wan22TI2V5B.diffusionResidentGB,
+            decodeResidentGB: VideoGenCatalog.wan22TI2V5B.decodeResidentGB)
+        XCTAssertGreaterThan(estimated, 10.5)
+        XCTAssertLessThan(estimated, 12.0)
+    }
+
+    func testWan22VideoStageWeightsMatchCatalog() {
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.diffusionResidentGB, 10.0,
+                       accuracy: 0.001)
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.decodeResidentGB, 1.41,
+                       accuracy: 0.001)
+        let lat = Double(VideoGenLimits.latentFrames(33))
+        let decodePeak = VideoGenCatalog.wan22TI2V5B.decodeResidentGB
+            + (3320 + 10 * lat) / 1024
+            + VideoGenCatalog.wan22TI2V5B.decodeWorkspaceAdjustmentGB
+        XCTAssertEqual(decodePeak, 5.09, accuracy: 0.03)
+
+        func measuredEstimate(_ frames: Int) -> Double {
+            VideoGenLimits.estVRAMGB(
+                px: 1280 * 704, frames: frames,
+                samplingResidentGB: VideoGenCatalog.wan22TI2V5B.diffusionResidentGB,
+                decodeResidentGB: VideoGenCatalog.wan22TI2V5B.decodeResidentGB,
+                decodeWorkspaceAdjustmentGB: VideoGenCatalog.wan22TI2V5B.decodeWorkspaceAdjustmentGB,
+                samplingWorkspaceBaseMB: VideoGenCatalog.wan22TI2V5B.samplingWorkspaceBaseMB,
+                samplingWorkspaceCoefficient: VideoGenCatalog.wan22TI2V5B.samplingWorkspaceCoefficient)
+        }
+        XCTAssertEqual(measuredEstimate(33), 10.71, accuracy: 0.04)
+        XCTAssertEqual(measuredEstimate(49), 11.00, accuracy: 0.04)
+    }
+
+    func testWan22LongFrameSettingsRecommend16GB() {
+        XCTAssertNil(VideoGenLimits.recommendedVRAMGB(model: VideoGenCatalog.wan22TI2V5B,
+                                                      frames: 33))
+        XCTAssertEqual(VideoGenLimits.recommendedVRAMGB(model: VideoGenCatalog.wan22TI2V5B,
+                                                        frames: 49), 16)
+        XCTAssertEqual(VideoGenLimits.recommendedVRAMGB(model: VideoGenCatalog.wan22TI2V5B,
+                                                        frames: 81), 16)
+    }
+
+    func testWan22UsesOfficialInferenceValuesRepresentableByEngine() {
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.defaultSteps, 50)
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.cfgScale, 5.0, accuracy: 0.001)
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.flowShift, 5.0, accuracy: 0.001)
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.fps, 24)
+        XCTAssertEqual(VideoGenCatalog.wan22TI2V5B.nativeFrames, 121)
+    }
+
+    func testWan21UsesOfficialInferenceValuesRepresentableByEngine() {
+        let t2v = VideoGenCatalog.wan21T2V13B
+        XCTAssertEqual(t2v.defaultSteps, 50)
+        XCTAssertEqual(t2v.cfgScale, 5.0, accuracy: 0.001)
+        XCTAssertEqual(t2v.flowShift, 5.0, accuracy: 0.001)
+        XCTAssertEqual(t2v.fps, 16)
+        XCTAssertEqual(t2v.nativeFrames, 81)
+        XCTAssertEqual(t2v.sizes.map(\.label), ["832x480", "480x832"])
+
+        let i2v = VideoGenCatalog.wan21I2V14B
+        XCTAssertEqual(i2v.defaultSteps, 40)
+        XCTAssertEqual(i2v.cfgScale, 5.0, accuracy: 0.001)
+        XCTAssertEqual(i2v.flowShift, 3.0, accuracy: 0.001)
+        XCTAssertEqual(i2v.fps, 16)
+        XCTAssertEqual(i2v.nativeFrames, 81)
+        XCTAssertTrue(i2v.supportsI2V)
+        XCTAssertEqual(i2v.sizes.map(\.label), ["832x480", "480x832"])
+        XCTAssertEqual(t2v.negativePrompt, VideoGenCatalog.defaultNegative)
+        XCTAssertEqual(i2v.negativePrompt, VideoGenCatalog.defaultNegative)
+    }
+
+    func testHunyuan15UsesOfficialRecipeAndCompleteConditioning() {
+        let model = VideoGenCatalog.hunyuanVideo15
+        XCTAssertEqual(model.defaultSteps, 50)
+        XCTAssertEqual(model.cfgScale, 6.0, accuracy: 0.001)
+        XCTAssertEqual(model.flowShift, 7.0, accuracy: 0.001)
+        XCTAssertEqual(model.fps, 24)
+        XCTAssertEqual(model.nativeFrames, 121)
+        XCTAssertFalse(model.supportsI2V)
+        XCTAssertTrue(model.components.contains {
+            $0.fileName == "byt5_small_glyphxl_fp16.safetensors"
+        })
+        XCTAssertTrue(model.negativePrompt.isEmpty)
+        XCTAssertEqual(VideoGenCatalog.ltx23Distilled.negativePrompt,
+                       "worst quality, low quality, blurry, distorted, artifacts")
     }
 
     func testCommandBufferSplitClearsWatchdog() {
@@ -693,6 +918,47 @@ final class ServerSettingsTests: XCTestCase {
         // No key: the .nextn. tensor names decide.
         XCTAssertTrue(ServerSettings.modelHasMTP(at: makeGGUF(nextnLayers: nil, tensorName: "blk.0.nextn.eh_proj.weight").path))
         XCTAssertFalse(ServerSettings.modelHasMTP(at: makeGGUF(nextnLayers: nil, tensorName: "blk.0.attn_q.weight").path))
+    }
+
+    func testSeparateMTPAssistantIsHiddenPairedAndPassedAsDraft() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mtp-pair-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = dir.appendingPathComponent("gemma-4-E2B-it-UD-Q4_K_XL.gguf")
+        let draft = dir.appendingPathComponent("mtp-gemma-4-E2B-it.gguf")
+        try Data("base".utf8).write(to: base)
+        try Data("draft".utf8).write(to: draft)
+
+        let models = LocalModel.scan(in: dir)
+        let canonicalBase = base.resolvingSymlinksInPath().path
+        let canonicalDraft = draft.resolvingSymlinksInPath().path
+        XCTAssertEqual(models.map { $0.url.resolvingSymlinksInPath().path }, [canonicalBase],
+                       "the assistant must not appear as a standalone model")
+        XCTAssertEqual(ServerSettings.mtpDraftPath(forModel: base.path).map {
+            URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
+        }, canonicalDraft)
+        XCTAssertTrue(ServerSettings.modelUsesMTP(at: base.path))
+
+        var settings = makeSettings()
+        settings.modelPath = base.path
+        let args = settings.arguments
+        XCTAssertEqual(URL(fileURLWithPath: args[args.firstIndex(of: "-md")! + 1])
+            .resolvingSymlinksInPath().path, canonicalDraft)
+        XCTAssertEqual(args[args.firstIndex(of: "--spec-type")! + 1], "draft-mtp")
+    }
+
+    func testSeparateMTPAssistantDoesNotPairWithAnotherModel() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mtp-mismatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = dir.appendingPathComponent("qwen3-8b-Q4_K_M.gguf")
+        let draft = dir.appendingPathComponent("mtp-gemma-4-E2B-it.gguf")
+        try Data("base".utf8).write(to: base)
+        try Data("draft".utf8).write(to: draft)
+
+        XCTAssertNil(ServerSettings.mtpDraftPath(forModel: base.path))
     }
 
     func testFlashAttentionPolicy() {

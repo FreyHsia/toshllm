@@ -242,6 +242,8 @@ struct ServerSettings {
             args += ["-md", selection.draft, "--spec-type", "draft-dflash",
                      "-ngld", String(selection.ngld),
                      "-ctkd", "q8_0", "-ctvd", "q8_0"]
+        } else if let draft = Self.mtpDraftPath(forModel: modelPath) {
+            args += ["-md", draft, "--spec-type", "draft-mtp"]
         } else if Self.modelHasMTP(at: modelPath) {
             args += ["--spec-type", "draft-mtp"]
         }
@@ -361,6 +363,9 @@ struct ServerSettings {
                 lines.append("gpu-layers-draft = \(selection.ngld)")
                 lines.append("cache-type-k-draft = q8_0")
                 lines.append("cache-type-v-draft = q8_0")
+            } else if let draft = Self.mtpDraftPath(forModel: path) {
+                lines.append("model-draft = \(draft)")
+                lines.append("spec-type = draft-mtp")
             } else if Self.modelHasMTP(at: path) {
                 lines.append("spec-type = draft-mtp")
             }
@@ -753,6 +758,42 @@ struct ServerSettings {
             return layers >= 1
         }
         return GGUFMetadataCache.tensorFlags(at: path).hasNextNTensor
+    }
+
+    /// Finds a separate MTP assistant stored beside its base model.
+    nonisolated static func mtpDraftPath(forModel modelPath: String) -> String? {
+        guard !modelPath.isEmpty, !GGUFFile.isDraft(modelPath) else { return nil }
+        let modelURL = URL(fileURLWithPath: modelPath)
+        let modelStem = modelURL.deletingPathExtension().lastPathComponent.lowercased()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: modelURL.deletingLastPathComponent(), includingPropertiesForKeys: nil
+        ) else { return nil }
+
+        let candidates = files.filter { file in
+            guard file.pathExtension.lowercased() == "gguf", GGUFFile.isDraft(file.path) else { return false }
+            let name = file.lastPathComponent.lowercased()
+            let target: String
+            if name.hasPrefix("mtp-") {
+                target = String(name.dropFirst(4).dropLast(5))
+            } else if name.hasSuffix(".mtp.gguf") {
+                target = String(name.dropLast(9))
+            } else {
+                return false
+            }
+            guard modelStem == target || modelStem.hasPrefix(target + "-") || modelStem.hasPrefix(target + ".") else {
+                return false
+            }
+            if let baseArch = ggufString("general.architecture", at: modelPath),
+               let draftArch = ggufString("general.architecture", at: file.path) {
+                return draftArch == baseArch + "_assistant"
+            }
+            return true
+        }
+        return candidates.sorted { $0.lastPathComponent.count > $1.lastPathComponent.count }.first?.path
+    }
+
+    nonisolated static func modelUsesMTP(at path: String) -> Bool {
+        modelHasMTP(at: path) || mtpDraftPath(forModel: path) != nil
     }
 
     /// True when the model's weights use a TurboQuant type (ggml_type 45/46). Read from
@@ -1261,7 +1302,11 @@ final class ServerController: ObservableObject {
                        "GGML_SCHED_PREFETCH_EXPERTS", "GGML_CPU_NO_REPACK",
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
         let env = settings.environment
-        let envLine = envKeys.compactMap { k in env[k].map { "\(k)=\($0)" } }.joined(separator: " ")
+        // Include user-provided environment variables in diagnostic logs.
+        let userKeys = settings.extraArgTokens.env.keys.filter { !envKeys.contains($0) }.sorted()
+        let envLine = (envKeys + userKeys)
+            .compactMap { k in env[k].map { "\(k)=\($0)" } }
+            .joined(separator: " ")
         var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
         if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
         return """
@@ -1295,7 +1340,7 @@ final class ServerController: ObservableObject {
         }
 
         prewarmActive = !settings.routerMode && settings.persistCache && settings.effectiveFaAmd
-            && !settings.visionLoaded && !ServerSettings.modelHasMTP(at: settings.modelPath)
+            && !settings.visionLoaded && !ServerSettings.modelUsesMTP(at: settings.modelPath)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: settings.serverBinary)
@@ -1378,9 +1423,12 @@ final class ServerController: ObservableObject {
         if tail.contains("address already in use") || tail.contains("couldn't bind") {
             return "Puerto ocupado: cambia el puerto en Ajustes / port busy: change it in Settings"
         }
-        // a single oversized block failing is not the same as running out of memory: the driver
-        // can refuse one allocation while the total still fits
+        // A refused block does not necessarily mean total memory is exhausted.
         if tail.contains("failed to allocate buffer, size =") {
+            // Graph tensors cannot be split by the weight-buffer cap.
+            if tail.contains("ggml_gallocr_reserve") {
+                return "La tarjeta rechazó un bloque de memoria del grafo: reduce el contexto, y si el modelo tiene visión baja el tope de tokens por imagen / the card refused a graph memory block: reduce context, and lower the image token cap if the model has vision"
+            }
             return "La tarjeta rechazó un bloque de memoria demasiado grande: reduce el contexto, o arranca con TOSH_METAL_MAX_BUFFER_MB=1024 para repartirlo / the card refused a single oversized memory block: reduce context, or start with TOSH_METAL_MAX_BUFFER_MB=1024 to split it"
         }
         if tail.contains("out of memory") || tail.contains("failed to allocate")

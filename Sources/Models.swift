@@ -50,8 +50,87 @@ struct LocalModel: Identifiable, Hashable {
 }
 
 
+enum ResumableDownload {
+    enum ResponsePlan: Equatable {
+        case append(totalBytes: Int64?)
+        case restart(totalBytes: Int64?)
+        case alreadyComplete
+        case reject
+    }
+
+    static func request(remote: URL, partialBytes: Int64) -> URLRequest {
+        var request = URLRequest(url: remote)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        if partialBytes > 0 {
+            request.setValue("bytes=\(partialBytes)-", forHTTPHeaderField: "Range")
+        }
+        return request
+    }
+
+    static func responsePlan(statusCode: Int, contentRange: String?, contentLength: Int64,
+                             partialBytes: Int64, expectedBytes: Int64?) -> ResponsePlan {
+        if statusCode == 416, let expectedBytes, partialBytes == expectedBytes {
+            return .alreadyComplete
+        }
+        if statusCode == 206 {
+            guard let range = contentRange,
+                  range.lowercased().hasPrefix("bytes \(partialBytes)-") else { return .reject }
+            let total = range.split(separator: "/").last.flatMap { Int64($0) }
+            return .append(totalBytes: total ?? expectedBytes)
+        }
+        if (200...299).contains(statusCode) {
+            let total = contentLength > 0 ? contentLength : expectedBytes
+            return .restart(totalBytes: total)
+        }
+        return .reject
+    }
+}
+
+private final class DownloadSink: @unchecked Sendable {
+    let url: URL
+    private let lock = NSLock()
+    private var handle: FileHandle?
+
+    init(url: URL) { self.url = url }
+
+    func size() -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        return ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
+    }
+
+    func open(append: Bool) throws -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        try? handle?.close()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let next = try FileHandle(forWritingTo: url)
+        if append {
+            try next.seekToEnd()
+        } else {
+            try next.truncate(atOffset: 0)
+        }
+        handle = next
+        return Int64(try next.offset())
+    }
+
+    func append(_ data: Data) throws -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        guard let handle else { throw CocoaError(.fileNoSuchFile) }
+        try handle.write(contentsOf: data)
+        return Int64(try handle.offset())
+    }
+
+    func close() {
+        lock.lock(); defer { lock.unlock() }
+        try? handle?.close()
+        handle = nil
+    }
+}
+
 @MainActor
-final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDownloadDelegate {
+final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDataDelegate {
     enum Phase: Equatable {
         case preparing, downloading, paused, verifying, finished
         case failed(String)
@@ -71,9 +150,11 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
 
     private var expectedSHA256: String?
     private var expectedBytes: Int64?
-    private var task: URLSessionDownloadTask?
-    private var resumeData: Data?
-    private lazy var session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    private var task: URLSessionDataTask?
+    private var requestedOffset: Int64 = 0
+    private let sink: DownloadSink
+    private let sessionConfiguration: URLSessionConfiguration
+    private lazy var session = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: nil)
 
     // Compatibility accessors used across the UI
     var finished: Bool { phase == .finished }
@@ -82,12 +163,14 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
         return nil
     }
 
-    init(remote: URL, destination: URL) {
+    init(remote: URL, destination: URL, sessionConfiguration: URLSessionConfiguration = .default) {
         self.remote = remote
         self.destination = destination
         // The saved name, which may differ from the remote (e.g. projectors are
         // renamed to <model>.mmproj.gguf). The UI keys progress off this.
         self.fileName = destination.lastPathComponent
+        self.sink = DownloadSink(url: destination.appendingPathExtension("download"))
+        self.sessionConfiguration = sessionConfiguration
         super.init()
         Task { await prepare() }
     }
@@ -102,9 +185,10 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
         if let needed = expectedBytes {
             let values = try? destination.deletingLastPathComponent()
                 .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            let remaining = max(0, needed - sink.size())
             if let free = values?.volumeAvailableCapacityForImportantUsage,
-               free < needed + 1_000_000_000 {
-                let neededGB = Double(needed) / 1_073_741_824
+               free < remaining + 1_000_000_000 {
+                let neededGB = Double(remaining) / 1_073_741_824
                 let freeGB = Double(free) / 1_073_741_824
                 phase = .failed(String(format: "Espacio insuficiente: %.1f GB libres, %.1f GB necesarios / not enough disk space", freeGB, neededGB))
                 return
@@ -116,26 +200,22 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
     }
 
     private func startTask() {
-        let t: URLSessionDownloadTask
-        if let data = resumeData {
-            t = session.downloadTask(withResumeData: data)
-            resumeData = nil
-        } else {
-            t = session.downloadTask(with: remote)
-        }
+        requestedOffset = sink.size()
+        let t = session.dataTask(with: ResumableDownload.request(remote: remote, partialBytes: requestedOffset))
         task = t
         phase = .downloading
+        receivedMB = Double(requestedOffset) / 1_048_576
+        if let expectedBytes, expectedBytes > 0 {
+            progress = Double(requestedOffset) / Double(expectedBytes)
+        }
         t.resume()
     }
 
     func pause() {
         guard phase == .downloading else { return }
-        task?.cancel { [weak self] data in
-            Task { @MainActor in
-                self?.resumeData = data
-                self?.phase = .paused
-            }
-        }
+        phase = .paused
+        task?.cancel()
+        sink.close()
     }
 
     func resume() {
@@ -144,54 +224,93 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
     }
 
     func cancel() {
-        task?.cancel()
-        session.invalidateAndCancel()
         phase = .failed("Cancelada / cancelled")
+        task?.cancel()
+        sink.close()
+        session.invalidateAndCancel()
     }
 
-    // MARK: URLSessionDownloadDelegate
+    // MARK: URLSessionDataDelegate
 
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                                didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
-                                totalBytesExpectedToWrite: Int64) {
-        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : 0
-        let p = expected > 0 ? Double(totalBytesWritten) / Double(expected) : 0
-        let rec = Double(totalBytesWritten) / 1_048_576
-        let tot = Double(expected) / 1_048_576
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                                didReceive response: URLResponse,
+                                completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
         Task { @MainActor in
-            self.progress = p
-            self.receivedMB = rec
-            if tot > 0 { self.totalMB = tot }
+            self.handle(response: response, completionHandler: completionHandler)
         }
     }
 
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                                didFinishDownloadingTo location: URL) {
-        let dest = destination
-        // Move out of the system temp dir synchronously, then verify.
-        let staging = dest.appendingPathExtension("download")
-        do {
-            try? FileManager.default.removeItem(at: staging)
-            try FileManager.default.moveItem(at: location, to: staging)
-        } catch {
-            let msg = error.localizedDescription
-            Task { @MainActor in self.phase = .failed(msg) }
+    private func handle(response: URLResponse,
+                        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            phase = .failed("Respuesta de descarga inválida / invalid download response")
             return
         }
+        let offset = requestedOffset
+        let plan = ResumableDownload.responsePlan(
+            statusCode: http.statusCode,
+            contentRange: http.value(forHTTPHeaderField: "Content-Range"),
+            contentLength: response.expectedContentLength,
+            partialBytes: offset,
+            expectedBytes: expectedBytes)
+        do {
+            let total: Int64?
+            switch plan {
+            case .append(let bytes):
+                _ = try sink.open(append: true)
+                total = bytes
+            case .restart(let bytes):
+                _ = try sink.open(append: false)
+                total = bytes
+            case .alreadyComplete:
+                total = expectedBytes
+            case .reject:
+                completionHandler(.cancel)
+                phase = .failed("El servidor rechazó la reanudación / server rejected resume request")
+                return
+            }
+            completionHandler(plan == .alreadyComplete ? .cancel : .allow)
+            if let total, total > 0 { totalMB = Double(total) / 1_048_576 }
+            if plan == .alreadyComplete { finishTransfer() }
+        } catch {
+            completionHandler(.cancel)
+            phase = .failed(error.localizedDescription)
+        }
+    }
 
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                                didReceive data: Data) {
+        let bytes: Int64
+        do { bytes = try sink.append(data) } catch {
+            dataTask.cancel()
+            let message = error.localizedDescription
+            Task { @MainActor in self.phase = .failed(message) }
+            return
+        }
         Task { @MainActor in
-            self.phase = .verifying
-            let expected = self.expectedSHA256
+            self.receivedMB = Double(bytes) / 1_048_576
+            let expected = self.expectedBytes ?? Int64(self.totalMB * 1_048_576)
+            if expected > 0 { self.progress = min(1, Double(bytes) / Double(expected)) }
+        }
+    }
+
+    private func finishTransfer() {
+        sink.close()
+        phase = .verifying
+        let expected = expectedSHA256
+        let staging = sink.url
+        Task {
             let ok: Bool = await Task.detached(priority: .userInitiated) {
-                guard let expected else { return true }   // no checksum published
+                guard let expected else { return true }
                 return FileHash.sha256(of: staging)?.lowercased() == expected.lowercased()
             }.value
 
             if ok {
-                try? FileManager.default.removeItem(at: dest)
+                try? FileManager.default.removeItem(at: destination)
                 do {
-                    try FileManager.default.moveItem(at: staging, to: dest)
-                    if let expected { ModelStore.recordDigest(expected, forFile: dest.lastPathComponent) }
+                    try FileManager.default.moveItem(at: staging, to: destination)
+                    if let expected { ModelStore.recordDigest(expected, forFile: destination.lastPathComponent) }
                     self.progress = 1
                     self.phase = .finished
                     self.onFinish?()
@@ -207,19 +326,18 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDo
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error else { return }
-        let nsError = error as NSError
-        guard nsError.code != NSURLErrorCancelled else { return }
-        let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
-        let msg = error.localizedDescription
+        sink.close()
         Task { @MainActor in
-            // Keep resume data so a transient network failure is resumable.
-            if let data {
-                self.resumeData = data
+            if let error {
+                if (error as NSError).code == NSURLErrorCancelled || self.phase == .paused || self.error != nil {
+                    return
+                }
+                // Keep the partial file and resume from the stable URL.
                 self.phase = .paused
-            } else {
-                self.phase = .failed(msg)
+                AppLog.downloads.error("download paused after network error: \(error.localizedDescription)")
+                return
             }
+            self.finishTransfer()
         }
     }
 }
@@ -430,11 +548,11 @@ final class ModelStore: ObservableObject {
         download(urlString: item.remote.absoluteString, preferredName: preferred)
     }
 
-    /// Moves the model to the Trash (recoverable). Its paired projector (mmproj)
-    /// and DFlash draft are removed too, so no orphan files are left.
+    /// Moves the model and its paired files to the Trash.
     func delete(_ model: LocalModel) {
         for sibling in [ServerSettings.mmprojPath(forModel: model.url.path),
-                        ServerSettings.dflashDraftPath(forModel: model.url.path)].compactMap({ $0 }) {
+                        ServerSettings.dflashDraftPath(forModel: model.url.path),
+                        ServerSettings.mtpDraftPath(forModel: model.url.path)].compactMap({ $0 }) {
             try? FileManager.default.trashItem(at: URL(fileURLWithPath: sibling), resultingItemURL: nil)
         }
         var digests = UserDefaults.standard.dictionary(forKey: SettingsKeys.modelDigest) as? [String: String] ?? [:]

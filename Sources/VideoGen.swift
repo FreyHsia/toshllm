@@ -5,8 +5,15 @@ import Combine
 import AVFoundation
 import ImageIO
 
-/// A text/image-to-video model: the same component machinery as image generation
-/// (download, flags, paths) plus the temporal settings sd-cli needs for `vid_gen`.
+/// A model-supported video size.
+struct VideoGenSize: Identifiable, Hashable {
+    let width: Int
+    let height: Int
+    var id: String { label }
+    var label: String { "\(width)x\(height)" }
+    var isPortrait: Bool { height > width }
+}
+
 struct VideoGenModel: Identifiable {
     let name: String
     let detailES: String
@@ -14,29 +21,46 @@ struct VideoGenModel: Identifiable {
     let components: [ImageGenComponent]
     let defaultSteps: Int
     let cfgScale: Double
-    /// Flow-matching shift; Wan wants 3.0 at 480p and 5.0 at 720p.
     let flowShift: Double
     let minVRAMGB: Double
-    /// Model native long edge. Going past it costs time without adding detail.
-    var maxLongEdge: Int = 832
-    /// Frames the model was trained to produce in one go. Past this the motion
-    /// drifts and the subject falls apart, which is the model's limit and not the
-    /// card's, so the UI can say so. 0 when the model does not state one.
+    let sizes: [VideoGenSize]
+    let fps: Int
+    var maxLongEdge: Int { sizes.map(\.width).max() ?? 0 }
+    /// Native frame count, or zero when the model does not state one.
     var nativeFrames: Int = 81
     /// Accepts an init image as the first frame (`-i`).
     var supportsI2V: Bool = false
     var recommendable: Bool = true
     var extraArgs: [String] = []
+    var negativePrompt: String = ""
+    var samplingWorkspaceBaseMB: Double = 8
+    var samplingWorkspaceCoefficient: Double = 1.84e-4
+    var decodeWorkspaceAdjustmentGB: Double = 0
 
     var id: String { name }
     var totalGB: Double { components.reduce(0) { $0 + $1.sizeGB } }
 
-    /// What actually stays in VRAM: the text encoder runs on the CPU, so only the
-    /// diffusion model and the VAE are resident. Measured on Wan 2.1 1.3B: 2951 MB
-    /// against 9615 MB with the encoder in VRAM.
+    /// GPU-resident weights during sampling.
+    var diffusionResidentGB: Double {
+        components.reduce(0) { total, component in
+            switch component.kind {
+            case .checkpoint, .diffusion: return total + component.sizeGB
+            default: return total
+            }
+        }
+    }
+
+    var decodeResidentGB: Double {
+        components.reduce(0) { total, component in
+            switch component.kind {
+            case .vae, .audioVAE: return total + component.sizeGB
+            default: return total
+            }
+        }
+    }
+
     var vramResidentGB: Double {
-        components.filter { $0.kind != .textEncoder && $0.kind != .t5 && $0.kind != .connectors }
-            .reduce(0) { $0 + $1.sizeGB }
+        diffusionResidentGB + decodeResidentGB
     }
 
     func fitsVRAMClass(_ vramGB: Double) -> Bool { vramGB >= minVRAMGB * 0.9 }
@@ -58,8 +82,7 @@ enum VideoGenCatalog {
         urlString: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
         fileName: "wan2.2_vae.safetensors", sizeGB: 1.41)
 
-    /// Wan's own negative prompt. It is not optional in practice: without it the
-    /// model returns burnt, oversaturated frames that read as a broken app.
+    /// Wan's recommended negative prompt.
     static let defaultNegative =
         "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，"
         + "JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，"
@@ -67,59 +90,62 @@ enum VideoGenCatalog {
 
     static let wan21T2V13B = VideoGenModel(
         name: "Wan 2.1 T2V 1.3B",
-        detailES: "1.3B. El más ligero y con diferencia el más rápido; el recomendado para empezar.",
-        detailEN: "1.3B. The lightest and by far the fastest; the one to start with.",
+        detailES: "1.3B, texto a vídeo a 480p y 16 fps. Receta oficial: 50 pasos, CFG 5 y shift 5. El más ligero y rápido.",
+        detailEN: "1.3B text-to-video at 480p and 16 fps. Official recipe: 50 steps, CFG 5 and shift 5. The lightest and fastest.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
                 fileName: "wan2.1_t2v_1.3B_fp16.safetensors", sizeGB: 2.84),
             wan21VAE, umt5,
         ],
-        defaultSteps: 30, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 8, maxLongEdge: 832)
+        defaultSteps: 50, cfgScale: 5.0, flowShift: 5.0, minVRAMGB: 8,
+        sizes: [VideoGenSize(width: 832, height: 480), VideoGenSize(width: 480, height: 832)],
+        fps: 16,
+        negativePrompt: defaultNegative)
 
-    /// Only safetensors: every Wan GGUF stores patch_embedding.weight with 5 dims
-    /// (it is a 3D convolution) and ggml's GGUF reader caps at 4, so the file fails
-    /// to load and the run returns noise. Checked on QuantStack, unsloth and the
-    /// isfs build that advertises sd.cpp support: all three are 5D.
+    /// Wan 2.2 TI2V in its supported safetensors format.
     static let wan22TI2V5B = VideoGenModel(
         name: "Wan 2.2 TI2V 5B",
-        detailES: "5B. Texto e imagen a vídeo en un solo modelo. Lento y hasta 704 px: su decodificador es muy pesado.",
-        detailEN: "5B. Text and image to video in one model. Slow and up to 704 px: its decoder is very heavy.",
+        detailES: "5B, texto o imagen a vídeo, 1280×704 a 24 fps. Alta calidad, pero lento y con VAE pesado.",
+        detailEN: "5B text- or image-to-video, 1280×704 at 24 fps. High quality, but slow with a heavy VAE.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
                 fileName: "wan2.2_ti2v_5B_fp16.safetensors", sizeGB: 10.0),
             wan22VAE, umt5,
         ],
-        // The default schedule turns this model's output into saturated mush, worse the
-        // more steps it takes, and lcm only gets it halfway; on smoothstep the same
-        // settings return a clean picture. Measured 08-19 at 624x360, which also fits a
-        // 12 GB card: past 704 its VAE alone asks for 19 GB and trips the watchdog.
-        // 12 GB is measured, not derived: it ran at 624x360 with 10 GB of weights resident
-        defaultSteps: 30, cfgScale: 5.0, flowShift: 3.0, minVRAMGB: 12,
-        maxLongEdge: 704, nativeFrames: 121, supportsI2V: true, recommendable: false,
-        // keeps the VAE from allocating its whole working set at once (sd.cpp #868)
-        extraArgs: ["--vae-conv-direct", "--scheduler", "smoothstep"])
+        defaultSteps: 50, cfgScale: 5.0, flowShift: 5.0, minVRAMGB: 12,
+        sizes: [VideoGenSize(width: 1280, height: 704), VideoGenSize(width: 704, height: 1280)],
+        fps: 24,
+        nativeFrames: 121, supportsI2V: true, recommendable: false,
+        extraArgs: ["--vae-conv-direct", "--vae-tile-size", "16",
+                    "--scheduler", "smoothstep"],
+        negativePrompt: defaultNegative,
+        samplingWorkspaceBaseMB: 64,
+        samplingWorkspaceCoefficient: 8.2e-5,
+        decodeWorkspaceAdjustmentGB: 0.35)
 
     static let wan21I2V14B = VideoGenModel(
         name: "Wan 2.1 I2V 14B",
-        detailES: "14B, 480p. Máxima calidad de imagen a vídeo; necesita una tarjeta grande.",
-        detailEN: "14B, 480p. Top image-to-video quality; needs a large card.",
+        detailES: "14B, imagen a vídeo a 480p y 16 fps. Receta oficial 480p: 40 pasos, CFG 5 y shift 3. Checkpoint FP8 grande.",
+        detailEN: "14B image-to-video at 480p and 16 fps. Official 480p recipe: 40 steps, CFG 5 and shift 3. Large FP8 checkpoint.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors",
                 fileName: "wan2.1_i2v_480p_14B_fp8_scaled.safetensors", sizeGB: 16.40),
             wan21VAE, umt5,
         ],
-        defaultSteps: 30, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 24,
-        maxLongEdge: 832, supportsI2V: true,
-        extraArgs: ["--vae-conv-direct"])
+        defaultSteps: 40, cfgScale: 5.0, flowShift: 3.0, minVRAMGB: 24,
+        sizes: [VideoGenSize(width: 832, height: 480), VideoGenSize(width: 480, height: 832)],
+        fps: 16, supportsI2V: true,
+        extraArgs: ["--vae-conv-direct"],
+        negativePrompt: defaultNegative)
 
-    /// LTX-2.3 distilled (22B). The only one here that also generates audio.
+    /// LTX-2.3 distilled video model.
     static let ltx23Distilled = VideoGenModel(
         name: "LTX-2.3 distilled",
-        detailES: "22B destilado, 720p y el único que genera audio. Pide una tarjeta muy grande.",
-        detailEN: "22B distilled, 720p and the only one that generates audio. Needs a very large card.",
+        detailES: "22B destilado, 8 pasos. El modelo incluye audio sincronizado; esta vista exporta solo vídeo.",
+        detailEN: "22B distilled, 8 steps. The model includes synchronized audio; this view exports video only.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
@@ -137,15 +163,19 @@ enum VideoGenCatalog {
                 urlString: "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
                 fileName: "gemma-3-12b-it-Q4_K_M.gguf", sizeGB: 7.30),
         ],
-        defaultSteps: 20, cfgScale: 6.0, flowShift: 3.0, minVRAMGB: 24,
-        maxLongEdge: 1280, nativeFrames: 0, supportsI2V: true, recommendable: false,
-        extraArgs: ["--offload-to-cpu"])
+        defaultSteps: 8, cfgScale: 1.0, flowShift: 3.0, minVRAMGB: 24,
+        sizes: [VideoGenSize(width: 1280, height: 704), VideoGenSize(width: 960, height: 576),
+                VideoGenSize(width: 832, height: 448), VideoGenSize(width: 704, height: 1280)],
+        fps: 24,
+        nativeFrames: 0, supportsI2V: true, recommendable: false,
+        extraArgs: ["--offload-to-cpu"],
+        negativePrompt: "worst quality, low quality, blurry, distorted, artifacts")
 
     /// HunyuanVideo 1.5, 720p. Qwen2.5-VL 7B does the conditioning, so it is heavy.
     static let hunyuanVideo15 = VideoGenModel(
         name: "HunyuanVideo 1.5",
-        detailES: "720p, movimiento y física muy naturales. 24 GB de descarga.",
-        detailEN: "720p, very natural motion and physics. A 24 GB download.",
+        detailES: "8.3B, texto a vídeo a 720p y 24 fps. Receta oficial: 50 pasos, CFG 6 y shift 7; 24 GB de descarga.",
+        detailEN: "8.3B text-to-video at 720p and 24 fps. Official recipe: 50 steps, CFG 6 and shift 7; a 24 GB download.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_720p_t2v_fp16.safetensors",
@@ -156,9 +186,15 @@ enum VideoGenCatalog {
             ImageGenComponent(kind: .textEncoder,
                 urlString: "https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q4_K_M.gguf",
                 fileName: "Qwen2.5-VL-7B-Instruct.Q4_K_M.gguf", sizeGB: 4.68),
+            ImageGenComponent(kind: .t5,
+                urlString: "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors",
+                fileName: "byt5_small_glyphxl_fp16.safetensors", sizeGB: 0.439),
         ],
-        defaultSteps: 30, cfgScale: 6.0, flowShift: 5.0, minVRAMGB: 24,
-        maxLongEdge: 1280, nativeFrames: 121, recommendable: false,
+        defaultSteps: 50, cfgScale: 6.0, flowShift: 7.0, minVRAMGB: 24,
+        sizes: [VideoGenSize(width: 1280, height: 720), VideoGenSize(width: 960, height: 960),
+                VideoGenSize(width: 720, height: 1280)],
+        fps: 24,
+        nativeFrames: 121, recommendable: false,
         extraArgs: ["--offload-to-cpu", "--vae-tiling"])
 
     static let all: [VideoGenModel] = [wan21T2V13B, wan22TI2V5B, wan21I2V14B,
@@ -180,36 +216,40 @@ enum VideoGenLimits {
         frameCounts.min(by: { abs($0 - n) < abs($1 - n) }) ?? 33
     }
 
-    /// Seconds of output: Wan is trained at 16 fps.
-    static func seconds(frames: Int, fps: Int = 16) -> Double {
-        Double(frames) / Double(fps)
+    /// Recommended capacity when the measured fit leaves little system headroom.
+    static func recommendedVRAMGB(model: VideoGenModel, frames: Int) -> Double? {
+        model.id == VideoGenCatalog.wan22TI2V5B.id && frames >= 49 ? 16 : nil
     }
 
-    /// Peak VRAM (GB): the weights that stay resident plus the larger of the two
-    /// graphs, which never overlap (the model samples, then the VAE decodes).
-    /// Calibrated 08-19 on Wan 2.1 1.3B against the sizes the engine reports, at
-    /// five frame sizes and four durations: sampling is a straight line in pixels
-    /// times latent frames (within 1 MB at every point), and the tiled decode is
-    /// nearly flat because it works one tile at a time. Untiled, that same decode
-    /// grows with the frame size instead: 6.7 GB at 480x272 and 16 GB at 704x400.
-    static func estVRAMGB(px: Int, frames: Int, residentGB: Double,
+    static func seconds(frames: Int, fps: Int) -> Double {
+        Double(frames) / Double(max(1, fps))
+    }
+
+    /// Peak VRAM is the larger of the non-overlapping sampling and decode stages.
+    static func estVRAMGB(px: Int, frames: Int, samplingResidentGB: Double,
+                          decodeResidentGB: Double,
+                          decodeWorkspaceAdjustmentGB: Double = 0,
+                          samplingWorkspaceBaseMB: Double = 8,
+                          samplingWorkspaceCoefficient: Double = 1.84e-4,
                           tiledDecode: Bool = true) -> Double {
         let lat = Double(latentFrames(frames))
-        let samplingMB = 8 + 1.84e-4 * Double(px) * lat
+        let samplingMB = samplingWorkspaceBaseMB
+            + samplingWorkspaceCoefficient * Double(px) * lat
         let decodeMB = tiledDecode ? 3320 + 10 * lat : 6700 + 3.35e-2 * Double(px)
-        return residentGB + max(samplingMB, decodeMB) / 1024
+        let samplingPeak = samplingResidentGB + samplingMB / 1024
+        let decodePeak = decodeResidentGB + decodeMB / 1024 + decodeWorkspaceAdjustmentGB
+        return max(samplingPeak, decodePeak)
     }
 
     static func vramFraction(width: Int, height: Int, frames: Int,
-                             vramGB: Double, residentGB: Double) -> Double {
-        estVRAMGB(px: width * height, frames: frames, residentGB: residentGB,
+                             vramGB: Double, model: VideoGenModel) -> Double {
+        estVRAMGB(px: width * height, frames: frames,
+                  samplingResidentGB: model.diffusionResidentGB,
+                  decodeResidentGB: model.decodeResidentGB,
+                  decodeWorkspaceAdjustmentGB: model.decodeWorkspaceAdjustmentGB,
+                  samplingWorkspaceBaseMB: model.samplingWorkspaceBaseMB,
+                  samplingWorkspaceCoefficient: model.samplingWorkspaceCoefficient,
                   tiledDecode: vaeTilingEnabled) / max(0.1, vramGB)
-    }
-
-    /// Every size the model is good for. Not filtered by VRAM: the estimate is too
-    /// rough to hide the 720p a 720p model exists for, so the UI warns instead.
-    static func baseSizes(maxLongEdge: Int) -> [Int] {
-        [480, 640, 832, 960, 1280].filter { $0 <= maxLongEdge }
     }
 
     /// Latent frames: Wan's VAE compresses time 4x and the decoder walks them one
@@ -221,7 +261,7 @@ enum VideoGenLimits {
     /// watchdog to kill it mid-clip and the frames come back as noise. Measured on
     /// Wan 2.1 at 704x400 with 33 frames: two timeouts without it, none with, and
     /// no cost on a clip that already worked (480x272, 33 frames: 130 vs 131 s).
-    static let nCB = 8
+    static let nCB = 32
 
     /// Decode the frames in tiles. On by default, and not only to save memory: the
     /// decode in one piece brightens the first frame of every group of four (the
@@ -284,7 +324,7 @@ final class VideoGenerator: ObservableObject {
 
     func generate(model: VideoGenModel, models: ModelStore, prompt: String,
                   width: Int, height: Int, frames frameCount: Int, steps: Int,
-                  seed: Int, fps: Int = 16, gpuIndex: Int,
+                  seed: Int, fps: Int, gpuIndex: Int,
                   initImagePath: String = "") {
         guard !isBusy else { return }
         lastPrompt = prompt; lastSeed = seed; lastFPS = fps
@@ -303,7 +343,7 @@ final class VideoGenerator: ObservableObject {
         }
         args += [
             "-p", prompt,
-            "-n", VideoGenCatalog.defaultNegative,
+            "-n", model.negativePrompt,
             "--cfg-scale", String(format: "%.1f", model.cfgScale),
             "--flow-shift", String(format: "%.1f", model.flowShift),
             "--sampling-method", "euler",
@@ -334,6 +374,7 @@ final class VideoGenerator: ObservableObject {
         env["TOSH_MM_WIDE_DISABLE"] = "1"
         // Split each graph into enough command buffers to clear the GPU watchdog.
         env["GGML_METAL_NCB"] = String(VideoGenLimits.nCB)
+        env["TOSH_VAE_TILE_YIELD_MS"] = "100"
         // Our flash-attention kernels for AMD are opt-in. Without them the backend
         // refuses --diffusion-fa and the attention matrix is built whole, which is
         // quadratic in the latent length: past 3.5 GB (this card's largest buffer)

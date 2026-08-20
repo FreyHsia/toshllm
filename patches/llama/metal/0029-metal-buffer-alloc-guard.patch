@@ -26,7 +26,7 @@
  static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1094,16 +1094,29 @@
+@@ -1094,16 +1094,30 @@
  
              dev->props.supports_gpu_family_apple7 = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
  
@@ -45,6 +45,7 @@
 +                const size_t cap = (size_t) atoll(getenv("TOSH_METAL_MAX_BUFFER_MB")) * 1024 * 1024;
 +                if (cap > 0 && cap < dev->props.max_buffer_size) {
 +                    dev->props.max_buffer_size = cap;
++                    fprintf(stderr, "ggml_metal: max single buffer capped to %zu MiB by TOSH_METAL_MAX_BUFFER_MB\n", cap / 1024 / 1024);
 +                }
 +            }
 +

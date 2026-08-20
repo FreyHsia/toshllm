@@ -551,7 +551,7 @@ struct SettingsView: View {
                           systemImage: amdFlashActive ? "bolt.fill" : "cpu")
                         .font(.caption).foregroundStyle(amdFlashActive ? .green : .secondary)
                 }
-                if !modelPath.isEmpty && ServerSettings.modelHasMTP(at: modelPath) {
+                if !modelPath.isEmpty && ServerSettings.modelUsesMTP(at: modelPath) {
                     Label(loc.t("MTP automático activo", "Automatic MTP active"),
                           systemImage: "hare.fill")
                         .font(.caption)

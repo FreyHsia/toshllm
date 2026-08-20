@@ -357,7 +357,7 @@ The **Chat / Images** toggle at the top of the window switches to the image stud
 
 **Flash Attention** — Memory-efficient attention. `auto` is right on AMD GPUs.
 
-**AMD dGPU stability** — Disables Metal concurrency. **Required**: without it, output corrupts on discrete AMD GPUs.
+**AMD dGPU stability** — The bundled engine disables unsafe Metal concurrency automatically on discrete GPUs.
 
 **CPU threads** — For the CPU-side work. Physical core count is usually optimal.
 """),
@@ -501,7 +501,7 @@ Hybrid MoE generation is RAM-bandwidth-bound: a faster GPU won't improve it, but
         DocSection(title: "Troubleshooting", icon: "wrench.and.screwdriver", body: """
 **macOS blocks the app on install** — Downloaded releases are not Apple-notarized yet: go to System Settings → Privacy & Security and click "Open Anyway" (once per version).
 
-**Output is gibberish** — Check that "AMD dGPU stability" is enabled in Settings. It's the #1 cause on discrete AMD GPUs.
+**Output is gibberish** — Save the server log and report the model, quantization and GPU; the bundled engine already applies the discrete-GPU safety mode.
 
 **Very slow (2-8 t/s)** — Enable "Copy weights to VRAM (--no-mmap)". If already on, VRAM may be saturated: raise "MoE experts on CPU" a couple of layers.
 

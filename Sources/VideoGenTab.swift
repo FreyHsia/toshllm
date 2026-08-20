@@ -5,10 +5,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Video studio. Same split as the image one (controls in the sidebar, canvas in
-// the detail), but the result is a PNG sequence the canvas animates itself:
-// macOS ships no VP8 decoder, so playing the engine's own container is not an
-// option.
+// Video studio controls and animated PNG-sequence preview.
 
 /// Sidebar: model, prompt and the temporal settings.
 struct VideoControls: View {
@@ -19,9 +16,8 @@ struct VideoControls: View {
     @AppStorage(SettingsKeys.videoModel) private var modelName = ""
     @AppStorage(SettingsKeys.videoFrames) private var frames = 33
     @AppStorage(SettingsKeys.videoSteps) private var steps = 30
-    // The model's own size. Below it these models stop moving: at 480x272 Wan 2.1 measures
-    // 0.5 of frame-to-frame change against 20.6 at 704x400, which reads as a still image.
-    @AppStorage(SettingsKeys.videoBase) private var base = 832
+    @AppStorage(SettingsKeys.videoRecipeVersion) private var recipeVersion = 0
+    @AppStorage(SettingsKeys.videoSize) private var sizeLabel = ""
     @AppStorage(SettingsKeys.videoGPU) private var gpuIndex = -1
     @AppStorage(SettingsKeys.videoVAETiling) private var vaeTiling = true
     @State private var prompt = ""
@@ -35,36 +31,31 @@ struct VideoControls: View {
     }
     private var installed: Bool { VideoGenerator.installed(model, in: models) }
 
-    private var sizes: [Int] { VideoGenLimits.baseSizes(maxLongEdge: model.maxLongEdge) }
+    private var sizes: [VideoGenSize] { model.sizes }
+
+    private var size: VideoGenSize {
+        model.sizes.first { $0.label == sizeLabel } ?? model.sizes[0]
+    }
 
     private var vramFraction: Double {
-        VideoGenLimits.vramFraction(width: base, height: height, frames: frames,
-                                    vramGB: vram, residentGB: model.vramResidentGB)
+        VideoGenLimits.vramFraction(width: size.width, height: size.height, frames: frames,
+                                    vramGB: vram, model: model)
     }
-    private var height: Int { Self.shortEdge(base) }
 
-    /// What the model itself was trained for, so a clip that drifts or repeats
-    /// reads as the model's limit and not as the app failing.
     private var nativeNote: String {
-        let size = "\(model.maxLongEdge)x\(Self.shortEdge(model.maxLongEdge))"
+        let list = model.sizes.map(\.label).joined(separator: ", ")
         guard model.nativeFrames > 0 else {
-            return loc.t("Entrenado hasta \(size).", "Trained up to \(size).")
+            return loc.t("Tamaños del modelo: \(list). A \(model.fps) fps.",
+                         "The model's sizes: \(list). At \(model.fps) fps.")
         }
-        let secs = String(format: "%.1f", VideoGenLimits.seconds(frames: model.nativeFrames))
-        if frames > model.nativeFrames || base > model.maxLongEdge {
-            return loc.t("Por encima de lo aprendido por el modelo (\(size), \(model.nativeFrames) fotogramas): el movimiento puede irse. Es límite del modelo, no de la app.",
-                         "Past what the model learned (\(size), \(model.nativeFrames) frames): the motion may drift. That is the model's limit, not the app's.")
+        let secs = String(format: "%.1f", VideoGenLimits.seconds(frames: model.nativeFrames, fps: model.fps))
+        if frames > model.nativeFrames {
+            return loc.t("Por encima de los \(model.nativeFrames) fotogramas que aprendió el modelo: el movimiento puede irse. Es límite del modelo, no de la app.",
+                         "Past the \(model.nativeFrames) frames the model learned: the motion may drift. That is the model's limit, not the app's.")
         }
-        return loc.t("Entrenado hasta \(size) y \(model.nativeFrames) fotogramas (\(secs) s).",
-                     "Trained up to \(size) and \(model.nativeFrames) frames (\(secs) s).")
+        return loc.t("Tamaños del modelo: \(list), \(model.nativeFrames) fotogramas (\(secs) s) a \(model.fps) fps.",
+                     "The model's sizes: \(list), \(model.nativeFrames) frames (\(secs) s) at \(model.fps) fps.")
     }
-
-    /// 16:9 short edge, rounded to the latent grid.
-    static func shortEdge(_ base: Int) -> Int {
-        max(240, Int((Double(base) * 9 / 16 / 16).rounded()) * 16)
-    }
-
-    static func sizeLabel(_ base: Int) -> String { "\(base)x\(shortEdge(base))" }
 
     var body: some View {
         ScrollView {
@@ -76,7 +67,18 @@ struct VideoControls: View {
             }
             .padding(14)
         }
-        .onAppear { if modelName.isEmpty { modelName = VideoGenCatalog.recommended(vramGB: vram).name } }
+        .onAppear {
+            if modelName.isEmpty { modelName = VideoGenCatalog.recommended(vramGB: vram).name }
+            // Preserve manual choices after the one-time recipe migration.
+            if recipeVersion < 1 {
+                steps = model.defaultSteps
+                recipeVersion = 1
+            }
+        }
+        .onChange(of: modelName) { _, _ in
+            steps = model.defaultSteps
+            sizeLabel = ""
+        }
     }
 
     private var modelCard: some View {
@@ -190,41 +192,44 @@ struct VideoControls: View {
         Card(title: loc.t("Ajustes", "Settings"), icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 10) {
                 LabeledContent(loc.t("Tamaño", "Size")) {
-                    Picker("", selection: $base) {
-                        ForEach(sizes, id: \.self) { b in
-                            Text(Self.sizeLabel(b)).tag(b)
+                    Picker("", selection: $sizeLabel) {
+                        ForEach(sizes) { s in
+                            Text(s.label).tag(s.label)
                         }
                     }.labelsHidden().frame(width: 130)
                 }
+                .help(loc.t("Solo los tamaños que el modelo declara. Fuera de ellos la imagen sale blanda o el modelo ni acepta la forma.",
+                            "Only the sizes the model states. Outside them the picture comes back soft, or the model does not accept the shape at all."))
                 LabeledContent(loc.t("Fotogramas", "Frames")) {
                     Picker("", selection: $frames) {
                         ForEach(VideoGenLimits.frameCounts, id: \.self) {
-                            Text("\($0)  ·  \(String(format: "%.1f", VideoGenLimits.seconds(frames: $0)))s").tag($0)
+                            Text("\($0)  ·  \(String(format: "%.1f", VideoGenLimits.seconds(frames: $0, fps: model.fps)))s").tag($0)
                         }
                     }.labelsHidden().frame(width: 130)
                 }
-                .help(loc.t("El VAE de Wan comprime el tiempo 4×, así que solo valen cuentas 4n+1.",
-                            "Wan's VAE compresses time 4x, so only 4n+1 counts are valid."))
+                .help(loc.t("Los VAE temporales admitidos por el motor requieren cuentas 4n+1.",
+                            "The temporal VAEs supported by the engine require 4n+1 frame counts."))
+
+                if let recommended = VideoGenLimits.recommendedVRAMGB(model: model, frames: frames) {
+                    Label(loc.t("Este ajuste recomienda \(Int(recommended)) GB de VRAM. En 12 GB queda menos de 2 GB libres para el escritorio y otras apps.",
+                                "This setting recommends \(Int(recommended)) GB of VRAM. On 12 GB, less than 2 GB remains for the desktop and other apps."),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
 
                 LabeledContent(loc.t("Pasos", "Steps")) {
                     Stepper("\(steps)", value: $steps, in: 8...60, step: 2).frame(width: 130)
                 }
-                .help(loc.t("Menos de 20 pasos quema el color con este modelo.",
-                            "Below 20 steps this model burns the colors."))
+                .help(loc.t("Recomendación para \(model.name): \(model.defaultSteps) pasos.",
+                            "Recommended for \(model.name): \(model.defaultSteps) steps."))
 
                 Toggle(loc.t("Decodificar por trozos", "Decode in tiles"), isOn: $vaeTiling)
                     .help(loc.t("Recomendado. Sin esto el decodificado aclara un fotograma de cada cuatro y el clip parpadea, y además pide hasta 16 GB en vez de 3.4. Cuesta un 26% del decodificado.",
                                 "Recommended. Without it the decode brightens one frame in every four and the clip flickers, and it asks for up to 16 GB instead of 3.4. It costs 26% of the decode."))
 
-                if base < model.maxLongEdge * 3 / 4 {
-                    Label(loc.t("Por debajo del tamaño del modelo el clip casi no se mueve: a 480x272 se queda en una imagen fija.",
-                                "Below the model's own size the clip barely moves: at 480x272 it comes out as a still image."),
-                          systemImage: "exclamationmark.triangle")
-                        .font(.caption2).foregroundStyle(.orange)
-                }
                 Text(nativeNote).font(.caption2).foregroundStyle(.secondary)
 
-                if vramFraction > 0.9 {
+                if vramFraction > 0.9 && VideoGenLimits.recommendedVRAMGB(model: model, frames: frames) == nil {
                     Label(loc.t("Estimo ~\(Int(vramFraction * 100))% de la VRAM. Si falla, baja los fotogramas antes que el tamaño.",
                                 "I estimate ~\(Int(vramFraction * 100))% of VRAM. If it fails, drop the frame count before the size."),
                           systemImage: "exclamationmark.triangle")
@@ -261,8 +266,8 @@ struct VideoControls: View {
             } else {
                 Button {
                     gen.generate(model: model, models: models, prompt: prompt,
-                                 width: base, height: height, frames: frames,
-                                 steps: steps, seed: seed, gpuIndex: gpuIndex,
+                                 width: size.width, height: size.height, frames: frames,
+                                 steps: steps, seed: seed, fps: model.fps, gpuIndex: gpuIndex,
                                  initImagePath: initImage)
                 } label: {
                     Label(loc.t("Generar vídeo", "Generate video"), systemImage: "play.fill")

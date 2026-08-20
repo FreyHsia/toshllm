@@ -1,0 +1,175 @@
+diff -U8 -r old/src/model_manager.h new/src/model_manager.h
+--- old/src/model_manager.h	2026-08-20 10:56:32
++++ new/src/model_manager.h	2026-08-20 10:56:32
+@@ -95,25 +95,30 @@
+     bool load_tensors(const std::vector<TensorState*>& states);
+     bool stage_tensors_to_compute_backend(const std::vector<TensorState*>& states);
+
+     ggml_backend_buffer_type_t params_buffer_type_for(const TensorState& state) const;
+     ggml_backend_buffer_type_t split_buffer_type_for(const TensorState& state) const;
+     void release_compute_staging_blocks(bool force                                            = false,
+                                         const std::unordered_set<TensorState*>* target_states = nullptr);
+     void release_params_storage_blocks(bool force                                            = false,
+-                                       const std::unordered_set<TensorState*>* target_states = nullptr);
++                                       const std::unordered_set<TensorState*>* target_states = nullptr,
++                                       bool allow_resident                                   = false);
+     void free_compute_staging_block(ComputeStagingBlock& block);
+     void free_params_storage_block(ParamsStorageBlock& block);
+     void erase_params_storage_block(ParamsStorageBlock* block);
+     void reset_lora_applied_params();
+
+ public:
+     ~ModelManager() override;
+
++    // hand back the video memory a module's weights hold, even when they are resident
++    // rather than streamed from disk. The caller has to know the module is done.
++    void unload_params(const std::vector<ggml_tensor*>& tensors);
++
+     ModelLoader& loader() { return model_loader_; }
+     const ModelLoader& loader() const { return model_loader_; }
+
+     void set_n_threads(int n_threads) {
+         n_threads_ = n_threads;
+         model_loader_.set_n_threads(n_threads);
+     }
+     void set_enable_mmap(bool enable_mmap) { enable_mmap_ = enable_mmap; }
+diff -U8 -r old/src/model_manager.cpp new/src/model_manager.cpp
+--- old/src/model_manager.cpp	2026-08-20 10:56:32
++++ new/src/model_manager.cpp	2026-08-20 10:56:32
+@@ -997,34 +997,36 @@
+
+         state->loaded_to_params_backend = false;
+         state->applied_lora_epoch       = UINT64_MAX;
+     }
+     block.states.clear();
+ }
+
+ void ModelManager::release_params_storage_blocks(bool force,
+-                                                 const std::unordered_set<TensorState*>* target_states) {
++                                                 const std::unordered_set<TensorState*>* target_states,
++                                                 bool allow_resident) {
+     for (auto it = params_storage_blocks_.begin(); it != params_storage_blocks_.end();) {
+         ParamsStorageBlock* block = it->get();
+         bool can_release          = force;
+         if (!can_release) {
+             can_release = std::all_of(block->states.begin(),
+                                       block->states.end(),
+-                                      [target_states](TensorState* state) {
++                                      [target_states, allow_resident](TensorState* state) {
+                                           if (state == nullptr) {
+                                               return true;
+                                           }
+                                           if (target_states != nullptr &&
+                                               target_states->find(state) == target_states->end()) {
+                                               return false;
+                                           }
+                                           return state->active_prepare_count == 0 &&
+                                                  !state->staged_to_compute_backend &&
+-                                                 state->residency_mode == ResidencyMode::Disk;
++                                                 (allow_resident ||
++                                                  state->residency_mode == ResidencyMode::Disk);
+                                       });
+         }
+
+         if (can_release) {
+             free_params_storage_block(*block);
+             it = params_storage_blocks_.erase(it);
+         } else {
+             ++it;
+@@ -1188,16 +1190,29 @@
+     }
+     std::vector<TensorState*> required_states;
+     if (!resolve_required_tensor_states(tensors, required_states)) {
+         return;
+     }
+     finish_compute_backend_usage(required_states);
+ }
+
++void ModelManager::unload_params(const std::vector<ggml_tensor*>& tensors) {
++    if (tensors.empty()) {
++        return;
++    }
++    std::vector<TensorState*> required_states;
++    if (!resolve_required_tensor_states(tensors, required_states) || required_states.empty()) {
++        return;
++    }
++    std::unordered_set<TensorState*> target_states(required_states.begin(), required_states.end());
++    release_compute_staging_blocks(false, &target_states);
++    release_params_storage_blocks(false, &target_states, true);
++}
++
+ void ModelManager::release_params_backend_params(const std::vector<ggml_tensor*>& tensors) {
+     if (tensors.empty()) {
+         return;
+     }
+     std::vector<TensorState*> required_states;
+     if (!resolve_required_tensor_states(tensors, required_states)) {
+         return;
+     }
+diff -U8 -r old/src/stable-diffusion.cpp new/src/stable-diffusion.cpp
+--- old/src/stable-diffusion.cpp	2026-08-20 10:56:32
++++ new/src/stable-diffusion.cpp	2026-08-20 11:03:51
+@@ -6834,16 +6834,42 @@
+     img_gen_params.circular_y        = sd_vid_gen_params->circular_y;
+
+     sd_ctx->sd->animatediff_num_frames = n_frames;
+     bool ok                            = generate_image(sd_ctx, &img_gen_params, frames_out, num_frames_out);
+     sd_ctx->sd->animatediff_num_frames = 0;
+     return ok;
+ }
+
++// The sampler keeps the diffusion weights in video memory until the whole run ends, and
++// the video decoder then has to fit next to them: a 5B in fp16 leaves under 2 GB free on a
++// 12 GB card and the decode setup fails there. Only call this once no sampling pass is left,
++// which on the LTX hires path is after the upscale refine, not after the first sampling.
++static void release_diffusion_weights(sd_ctx_t* sd_ctx) {
++    if (sd_ctx == nullptr || sd_ctx->sd == nullptr || sd_ctx->sd->model_manager == nullptr) {
++        return;
++    }
++    const std::shared_ptr<DiffusionModelRunner> runners[] = {sd_ctx->sd->diffusion_model,
++                                                             sd_ctx->sd->high_noise_diffusion_model};
++    for (const std::shared_ptr<DiffusionModelRunner>& runner : runners) {
++        if (runner == nullptr) {
++            continue;
++        }
++        runner->runner_done();
++        std::map<std::string, ggml_tensor*> params;
++        runner->get_param_tensors(params);
++        std::vector<ggml_tensor*> tensors;
++        tensors.reserve(params.size());
++        for (const auto& pair : params) {
++            tensors.push_back(pair.second);
++        }
++        sd_ctx->sd->model_manager->unload_params(tensors);
++    }
++}
++
+ SD_API bool generate_video(sd_ctx_t* sd_ctx,
+                            const sd_vid_gen_params_t* sd_vid_gen_params,
+                            sd_image_t** frames_out,
+                            int* num_frames_out,
+                            sd_audio_t** audio_out) {
+     if (sd_ctx == nullptr || sd_vid_gen_params == nullptr) {
+         return false;
+     }
+@@ -7150,16 +7175,20 @@
+         }
+         LOG_INFO("sampling(latent upscale) completed, taking %.2fs",
+                  (sampling_end - sampling_start) * 1.0f / 1000);
+     }
+
+     int64_t latent_end = ggml_time_ms();
+     LOG_INFO("generating latent video completed, taking %.2fs", (latent_end - latent_start) * 1.0f / 1000);
+
++    // every sampling pass is done here, including the LTX upscale refine above, so give
++    // the decoder the room the sampler is holding
++    release_diffusion_weights(sd_ctx);
++
+     sd_audio_t* generated_audio = nullptr;
+     if ((sd_version_is_ltxav(sd_ctx->sd->version) || sd_version_is_minimax_h3(sd_ctx->sd->version)) &&
+         latents.audio_length > 0 &&
+         sd_ctx->sd->audio_vae_model != nullptr) {
+         if (sd_ctx->sd->get_cancel_flag() == SD_CANCEL_ALL) {
+             LOG_ERROR("cancelling generation before audio decode");
+             return false;
+         }

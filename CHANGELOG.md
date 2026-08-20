@@ -3,6 +3,23 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.85.3] - 2026-08-20
+
+### Fixed
+- **Separate MTP heads now attach to their base model** ([#60](https://github.com/engeldlgado/toshllm/issues/60)). They stay out of the model menu and work in normal and router modes.
+- **Paused model downloads resume reliably after links expire** ([#61](https://github.com/engeldlgado/toshllm/issues/61)). Servers that ignore the requested range restart the transfer instead of corrupting the partial file.
+- **Models with 40- or 80-wide attention heads no longer write nonsense.** All 108 affected engine operator tests now pass.
+- **The image token cap also limits memory while a vision model loads.** At 512 tokens, a 2B vision model's largest warm-up block drops from 4372 to 228 MiB. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+- **The server log includes environment variables entered in Extra arguments.** Shared diagnostics now show the settings that were actually applied.
+- **Video models only offer their supported sizes and frame rates.** Wan 2.1 uses 832×480 at 16 fps; Wan 2.2 uses 1280×704 at 24 fps.
+- **Native-size video generation no longer brings down the graphics session.** Wan 2.2 releases 8.5 GB before decoding and keeps long VAE work responsive.
+- **Video memory warnings follow the real generation stages.** Wan 2.2 at 1280×704 measured 10.68 GB for 33 frames and 10.97 GB for 49; 49 frames recommend a 16 GB card.
+- **Wan 2.1 and Wan 2.2 use their official inference values.** Defaults now follow each checkpoint's steps, CFG, shift, size and frame rate.
+- **HunyuanVideo 1.5 downloads its complete conditioning stack.** It now includes the 439 MB ByT5 encoder and uses 50 steps, CFG 6 and shift 7.
+- **Negative prompts stay with the matching model family.** Wan, LTX and Hunyuan no longer inherit one another's instructions.
+- **Rejected memory blocks now produce the right guidance.** Graph allocations suggest reducing context or image tokens; weight allocations can suggest the buffer cap.
+- **Metal shaders precompile reliably from Xcode's downloaded toolchain.** Both bundled engines retain runtime compilation as a fallback.
+
 ## [0.85.2] - 2026-08-19
 
 ### Fixed

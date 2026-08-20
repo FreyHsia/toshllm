@@ -163,7 +163,8 @@ enum SettingsKeys {
     static let videoModel = "videoModel"
     static let videoFrames = "videoFrames"
     static let videoSteps = "videoSteps"
-    static let videoBase = "videoBase"
+    static let videoRecipeVersion = "videoRecipeVersion"
+    static let videoSize = "videoSize"
     static let videoGPU = "videoGPU"
     /// Decode the frames in tiles (default on): fixed 3.4 GB instead of up to 16.
     static let videoVAETiling = "videoVAETiling"

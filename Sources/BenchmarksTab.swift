@@ -408,7 +408,7 @@ struct BenchmarksView: View {
             Text(loc.t("Mide pp\(cfg.benchPPClamped) (prompt) y tg\(cfg.benchTGClamped) (generación), 2 repeticiones. Tarda varios minutos en modelos grandes.",
                        "Measures pp\(cfg.benchPPClamped) (prompt) and tg\(cfg.benchTGClamped) (generation), 2 repetitions. Takes minutes on large models."))
                 .font(.caption).foregroundStyle(.secondary)
-            if !cfg.modelPath.isEmpty && ServerSettings.modelHasMTP(at: cfg.modelPath) {
+            if !cfg.modelPath.isEmpty && ServerSettings.modelUsesMTP(at: cfg.modelPath) {
                 Label(loc.t("Ejecutar mide el decode crudo, sin MTP. Para la velocidad real de este modelo usa \"Generación real\".",
                             "Run measures raw decode, without MTP. For this model's real speed use \"Real generation\"."),
                       systemImage: "info.circle")

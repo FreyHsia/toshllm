@@ -1,0 +1,31 @@
+diff -U8 -r old/tools/mtmd/clip-model.h new/tools/mtmd/clip-model.h
+--- old/tools/mtmd/clip-model.h	2026-08-20 10:17:15
++++ new/tools/mtmd/clip-model.h	2026-08-20 10:17:15
+@@ -196,20 +196,26 @@
+             image_min_pixels = custom_image_min_tokens * patch_area;
+         }
+         if (custom_image_max_tokens > 0) {
+             image_max_pixels = custom_image_max_tokens * patch_area;
+         }
+     }
+
+     void set_warmup_n_tokens(int n_tokens) {
++        // the cap has to shrink the warmup too: without flash attention this graph holds the
++        // whole score matrix, and on a small card it is the warmup that fails to allocate
++        const bool capped = custom_image_max_tokens > 0 && custom_image_max_tokens < n_tokens;
++        if (capped) {
++            n_tokens = custom_image_max_tokens;
++        }
+         int n_tok_per_side = static_cast<int>(std::sqrt(n_tokens));
+-        GGML_ASSERT(n_tok_per_side * n_tok_per_side == n_tokens && "n_tokens must be n*n");
++        GGML_ASSERT(n_tok_per_side > 0);
++        GGML_ASSERT((capped || n_tok_per_side * n_tok_per_side == n_tokens) && "n_tokens must be n*n");
+         warmup_image_size = n_tok_per_side * patch_size * n_merge;
+-        // TODO: support warmup size for custom token numbers
+     }
+     // sam vit deepseek-ocr
+     std::vector<int32_t> global_attn_indices() const {
+         return {  2,  5,  8, 11 };
+     }
+     bool is_global_attn(int32_t layer) const {
+         const auto indices = global_attn_indices();
