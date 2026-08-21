@@ -50,10 +50,13 @@ LLAMA_STATIC="vendor/llama.cpp/build-static/bin"
 [ -x "$LLAMA_STATIC/llama-server" ] || LLAMA_STATIC="$HOME/dev/repositorios/llama.cpp/build-static/bin"
 if [ -x "$LLAMA_STATIC/llama-server" ]; then
     mkdir -p "$APP/Contents/Resources/bin"
-    # llama-perplexity ships so testers can run numeric A/Bs without building, and
-    # test-backend-ops so the Logs tab can check the kernels on cards we cannot reach
-    cp "$LLAMA_STATIC/llama-server" "$LLAMA_STATIC/llama-bench" "$LLAMA_STATIC/llama-perplexity" \
-       "$LLAMA_STATIC/test-backend-ops" "$APP/Contents/Resources/bin/"
+    # llama-perplexity ships so testers can run numeric A/Bs without building
+    cp "$LLAMA_STATIC/llama-server" "$LLAMA_STATIC/llama-bench" "$LLAMA_STATIC/llama-perplexity" "$APP/Contents/Resources/bin/"
+    # Drives the engine check in the Logs tab. Optional: an external engine may not
+    # have it, and the button disables itself when it is missing.
+    if [ -f "$LLAMA_STATIC/test-backend-ops" ]; then
+        cp "$LLAMA_STATIC/test-backend-ops" "$APP/Contents/Resources/bin/"
+    fi
     # Precompiled Metal library (loaded instead of compiling shaders at runtime;
     # see ggml-metal-device.m). Optional: without it the engine still works,
     # just slower to load. Must sit next to the binary.
