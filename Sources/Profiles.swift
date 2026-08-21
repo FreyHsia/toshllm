@@ -39,6 +39,7 @@ struct Profile: Codable, Identifiable {
     var localNetworkDiscovery: Bool? = nil
     var gpuList: [Int]? = nil
     var embeddings: Bool? = nil
+    var uiMcpProxy: Bool? = nil
     var routerMode: Bool? = nil
     var routerModelsMax: Int? = nil
     /// Added servers inherit the global settings except these fields. nil (any
@@ -53,6 +54,7 @@ struct Profile: Codable, Identifiable {
         static let discovery  = "discovery"
         static let vision     = "vision"
         static let embeddings = "embeddings"
+        static let uiMcpProxy  = "uiMcpProxy"
         static let router     = "router"
     }
 }
@@ -153,6 +155,7 @@ final class ProfileStore: ObservableObject {
         if let v = p.cacheReuse { d.set(v, forKey: SettingsKeys.cacheReuse) }
         if let v = p.gpuList { d.set(v.map(String.init).joined(separator: ","), forKey: SettingsKeys.gpuList) }
         if let v = p.embeddings { d.set(v, forKey: SettingsKeys.embeddings) }
+        if let v = p.uiMcpProxy { d.set(v, forKey: SettingsKeys.uiMcpProxy) }
         if let v = p.routerMode { d.set(v, forKey: SettingsKeys.routerMode) }
         if let v = p.routerModelsMax { d.set(v, forKey: SettingsKeys.routerModelsMax) }
         switch p.engine {
@@ -207,7 +210,7 @@ extension ServerSettings {
                 multiGPU: multiGPU, forcePrivateBuffers: forcePrivateBuffers,
                 cacheReuse: cacheReuse, loadVision: loadVision,
                 localNetworkDiscovery: localNetworkDiscovery,
-                gpuList: gpuList, embeddings: embeddings,
+                gpuList: gpuList, embeddings: embeddings, uiMcpProxy: uiMcpProxy,
                 routerMode: routerMode, routerModelsMax: routerModelsMax)
     }
 
@@ -232,6 +235,7 @@ extension ServerSettings {
         if let v = p.localNetworkDiscovery { localNetworkDiscovery = v }
         gpuList = p.gpuList ?? []
         if let v = p.embeddings { embeddings = v }
+        if let v = p.uiMcpProxy { uiMcpProxy = v }
         if let v = p.routerMode { routerMode = v }
         if let v = p.routerModelsMax { routerModelsMax = v }
         switch p.engine {
@@ -252,6 +256,7 @@ extension ServerSettings {
         if pinned.contains(Profile.Pin.discovery), let v = p.localNetworkDiscovery { localNetworkDiscovery = v }
         if pinned.contains(Profile.Pin.vision), let v = p.loadVision { loadVision = v }
         if pinned.contains(Profile.Pin.embeddings), let v = p.embeddings { embeddings = v }
+        if pinned.contains(Profile.Pin.uiMcpProxy), let v = p.uiMcpProxy { uiMcpProxy = v }
         if pinned.contains(Profile.Pin.router) {
             if let v = p.routerMode { routerMode = v }
             if let v = p.routerModelsMax { routerModelsMax = v }

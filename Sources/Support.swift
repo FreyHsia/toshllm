@@ -58,6 +58,7 @@ enum SettingsKeys {
     static let toolsRuntime = "toolsRuntime"
     static let jsSandboxEnabled = "jsSandboxEnabled"
     static let mcpServers = "mcpServers"
+    static let uiMcpProxy = "uiMcpProxy"
     static let cacheTypeK = "cacheTypeK"
     static let cacheTypeV = "cacheTypeV"
     static let mlock = "mlock"
@@ -183,7 +184,7 @@ enum SettingsKeys {
     /// live outside UserDefaults and are untouched.
     static let resettableOptionKeys = [
         serverBinary, port, ngl, ncmoe, ctx, threads, flashAttn, noMmap, jinja,
-        vramReserve, gpuIndex, gpuList, extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, mcpServers,
+        vramReserve, gpuIndex, gpuList, extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts, routerMode, routerModelsMax,
         persistCache, multiGPU, multiGPUCount, splitMode, mgpuEvents, mgpuPeer,

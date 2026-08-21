@@ -21,6 +21,7 @@ struct DashboardView: View {
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
     @AppStorage(SettingsKeys.embeddings) private var embeddings = false
+    @AppStorage(SettingsKeys.uiMcpProxy) private var uiMcpProxy = false
     @State private var showNotes = false
     @AppStorage(SettingsKeys.routerMode) private var routerMode = false
     @AppStorage(SettingsKeys.routerModelsMax) private var routerModelsMax = 1
@@ -323,6 +324,18 @@ struct DashboardView: View {
                             "Serves /v1/embeddings via --embeddings for RAG clients (e.g. Obsidian Copilot). The server becomes embeddings-only: use it with an embedding model, not for chat."))
                 .padding(.top, 4)
                 HStack(spacing: 8) {
+                    Image(systemName: "point.3.filled.connected.trianglepath.dotted")
+                        .frame(width: 18).foregroundStyle(.secondary)
+                    Text(loc.t("Proxy MCP de la interfaz web", "MCP proxy for the web interface")).font(.callout)
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $uiMcpProxy)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .disabled(serverBusy)
+                }
+                .help(loc.t("Deja que la interfaz web del motor hable con servidores MCP de otro origen, haciendo de puente para saltar la restricción del navegador. Experimental y solo en redes de confianza: quien alcance este servidor puede usar el puente. No afecta al chat de la app, que habla con MCP por su cuenta.",
+                            "Lets the engine's web interface talk to MCP servers on another origin, bridging the browser's cross-origin restriction. Experimental and for trusted networks only: anyone who can reach this server can use the bridge. It does not affect the app's own chat, which talks to MCP by itself."))
+                .padding(.top, 4)
+                HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath").frame(width: 18).foregroundStyle(.secondary)
                     Text(loc.t("Router (multi-modelo)", "Router (multi-model)")).font(.callout)
                     Spacer(minLength: 8)
@@ -532,6 +545,7 @@ struct AddedServerCard: View {
     @AppStorage(SettingsKeys.localNetworkDiscovery) private var gDiscovery = false
     @AppStorage(SettingsKeys.loadVision) private var gLoadVision = true
     @AppStorage(SettingsKeys.embeddings) private var gEmbeddings = false
+    @AppStorage(SettingsKeys.uiMcpProxy) private var gUiMcpProxy = false
     @AppStorage(SettingsKeys.routerMode) private var gRouterMode = false
     @AppStorage(SettingsKeys.routerModelsMax) private var gRouterModelsMax = 1
 
@@ -665,6 +679,20 @@ struct AddedServerCard: View {
                 }
                 .help(loc.t("Sirve /v1/embeddings con --embeddings para clientes RAG (p. ej. Obsidian Copilot). El servidor queda dedicado a embeddings: úsalo con un modelo de embeddings, no para chatear.",
                             "Serves /v1/embeddings via --embeddings for RAG clients (e.g. Obsidian Copilot). The server becomes embeddings-only: use it with an embedding model, not for chat."))
+                .padding(.top, 4)
+                HStack(spacing: 8) {
+                    Image(systemName: "point.3.filled.connected.trianglepath.dotted")
+                        .frame(width: 18).foregroundStyle(.secondary)
+                    Text(loc.t("Proxy MCP de la interfaz web", "MCP proxy for the web interface")).font(.callout)
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: Binding(
+                        get: { isPinned(Profile.Pin.uiMcpProxy) ? (c.profile?.uiMcpProxy ?? false) : gUiMcpProxy },
+                        set: { c.profile?.uiMcpProxy = $0; pin(Profile.Pin.uiMcpProxy); manager.persist() }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .disabled(busy)
+                }
+                .help(loc.t("Deja que la interfaz web del motor hable con servidores MCP de otro origen, haciendo de puente para saltar la restricción del navegador. Experimental y solo en redes de confianza: quien alcance este servidor puede usar el puente. No afecta al chat de la app, que habla con MCP por su cuenta.",
+                            "Lets the engine's web interface talk to MCP servers on another origin, bridging the browser's cross-origin restriction. Experimental and for trusted networks only: anyone who can reach this server can use the bridge. It does not affect the app's own chat, which talks to MCP by itself."))
                 .padding(.top, 4)
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath").frame(width: 18).foregroundStyle(.secondary)

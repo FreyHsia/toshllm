@@ -517,25 +517,51 @@ struct SettingsView: View {
                             "Quantization for KV cache values. With the AMD Flash Attention kernel any standard value type (f16/q8_0/q4_0) runs on the GPU at full speed, including the fast long-prompt route. Quantizing values saves more memory; keeping them at f16 (with quantized keys) preserves more quality... both run equally fast.")
                     : loc.t("Cuantización de los valores del KV cache. ⚠️ En GPU AMD (sin el kernel Flash Attention AMD) esto fuerza Flash Attention en CPU: la generación baja ~3× (de ~50 a ~15-19 t/s en un 8B). Úsalo solo cuando necesites contexto enorme; si no, déjalo en f16 y cuantiza solo las claves.",
                             "Quantization for KV cache values. ⚠️ On AMD GPUs (without the AMD Flash Attention kernel) this forces Flash Attention onto the CPU: generation drops ~3× (from ~50 to ~15-19 t/s on an 8B). Use only when you need huge context; otherwise keep f16 and quantize keys only."))
-                if let s = kvSuggestion, cacheTypeK != s.k || cacheTypeV != s.v {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Label(loc.t("Sugerencia medida: claves \(s.k) y valores \(s.v). Calidad indistinguible de f16 con un 25% menos de caché que q8_0 en ambos.",
-                                    "Measured suggestion: \(s.k) keys with \(s.v) values. Quality indistinguishable from f16, with 25% less cache than q8_0 on both."),
-                              systemImage: "sparkles")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                if !turboKVIncompatible, let s = kvSuggestion, cacheTypeK != s.k || cacheTypeV != s.v {
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(loc.t("Sugerencia medida: claves \(s.k), valores \(s.v)",
+                                       "Measured suggestion: \(s.k) keys, \(s.v) values"))
+                                .font(.callout.weight(.medium))
+                            Text(loc.t("Calidad indistinguible de f16 y un 25% menos de caché que q8_0 en ambos.",
+                                       "Quality indistinguishable from f16, and 25% less cache than q8_0 on both."))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
                         Button(loc.t("Aplicar", "Apply")) { cacheTypeK = s.k; cacheTypeV = s.v }
-                            .buttonStyle(.link).font(.caption)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                             .help(loc.t("Pone las claves en \(s.k) y los valores en \(s.v).",
                                         "Sets keys to \(s.k) and values to \(s.v)."))
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .glassSurface(in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 if turboKVIncompatible {
-                    Label(loc.t("TurboQuant KV no es compatible con este modelo, backend o combinación. q4_0 no se puede mezclar con Turbo.",
-                                "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo."),
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                    HStack(alignment: .center, spacing: 12) {
+                        Label(loc.t("TurboQuant KV no es compatible con este modelo, backend o combinación. q4_0 no se puede mezclar con Turbo.",
+                                    "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo."),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let s = kvSuggestion {
+                            Spacer(minLength: 8)
+                            Button(loc.t("Usar \(s.k) / \(s.v)", "Use \(s.k) / \(s.v)")) {
+                                cacheTypeK = s.k; cacheTypeV = s.v
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help(loc.t("Cambia a una combinación válida y medida.",
+                                        "Switches to a valid, measured combination."))
+                        }
+                    }
                 } else if turboKVSelected {
                     Label(loc.t("Turbo en las claves es lo que cuesta calidad, y más cuanto menor es el modelo. Con las claves en q8_0, los valores admiten Turbo4 sin pérdida apreciable en ningún tamaño, y Turbo3 casi; Turbo en ambos conviene solo en modelos grandes.",
                                 "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models."),

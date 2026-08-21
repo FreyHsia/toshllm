@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - **Settings suggests the KV cache types that measure best.** Keys at `q8_0` with Turbo4 values matched f16 quality on 4B, 8B and 35B models while taking a quarter less cache than `q8_0` on both; one click applies it.
+- **Each server can bridge MCP for the engine's web interface.** A switch under the server card's advanced options passes `--ui-mcp-proxy`, so the web interface can reach MCP servers on another origin; it is per server, experimental, and meant for trusted networks only.
 
 ### Fixed
 - **Extra arguments reach router mode too.** Flags typed there were applied to a normal server but dropped when the router served the models.

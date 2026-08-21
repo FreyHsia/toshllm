@@ -40,6 +40,7 @@ struct ServerSettings {
     /// to embedding use, so it's meant for a dedicated embedding-model server.
     var embeddings: Bool = false
     var agentToolsEnabled: Bool = false
+    var uiMcpProxy: Bool = false
     /// `--tools-runtime` target (`docker:image`, `podman:image`, `ssh:host`...). Empty
     /// runs the tools in the app's own environment, which is the engine default.
     var toolsRuntime: String = ""
@@ -230,6 +231,7 @@ struct ServerSettings {
             args += ["--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
+        if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if persistCache && effectiveFaAmd {
             args += ["--slot-save-path", Self.slotCacheDir(port: port).path]
         }
@@ -288,6 +290,7 @@ struct ServerSettings {
             args += ["--jinja", "--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
+        if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
@@ -579,6 +582,7 @@ struct ServerSettings {
             extraArgs: d.string(forKey: SettingsKeys.extraArgs) ?? "",
             embeddings: bool(SettingsKeys.embeddings, false),
             agentToolsEnabled: bool(SettingsKeys.agentToolsEnabled, false),
+            uiMcpProxy: bool(SettingsKeys.uiMcpProxy, false),
             toolsRuntime: (d.string(forKey: SettingsKeys.toolsRuntime) ?? "")
                 .trimmingCharacters(in: .whitespaces),
             cacheTypeK: Self.sanitizedKV(d.string(forKey: SettingsKeys.cacheTypeK), default: "f16"),
