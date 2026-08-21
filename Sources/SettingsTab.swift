@@ -84,6 +84,14 @@ struct SettingsView: View {
     private var turboKVSelected: Bool {
         cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
     }
+    /// Quantizing the keys is what costs quality; values tolerate 4 bits. Measured
+    /// within 0.5% of f16 on 4B, 8B and 35B, at 25% less cache than q8_0/q8_0.
+    private var kvSuggestion: (k: String, v: String)? {
+        guard !ServerSettings.isAppleSilicon, !modelPath.isEmpty,
+              ServerSettings.modelSupportsTurboKV(at: modelPath),
+              !ServerSettings.modelUsesMLA(at: modelPath) else { return nil }
+        return ("q8_0", "turbo4")
+    }
     private var serverIsStopped: Bool {
         if case .stopped = server.state { return true }
         if case .failed = server.state { return true }
@@ -509,6 +517,19 @@ struct SettingsView: View {
                             "Quantization for KV cache values. With the AMD Flash Attention kernel any standard value type (f16/q8_0/q4_0) runs on the GPU at full speed, including the fast long-prompt route. Quantizing values saves more memory; keeping them at f16 (with quantized keys) preserves more quality... both run equally fast.")
                     : loc.t("Cuantización de los valores del KV cache. ⚠️ En GPU AMD (sin el kernel Flash Attention AMD) esto fuerza Flash Attention en CPU: la generación baja ~3× (de ~50 a ~15-19 t/s en un 8B). Úsalo solo cuando necesites contexto enorme; si no, déjalo en f16 y cuantiza solo las claves.",
                             "Quantization for KV cache values. ⚠️ On AMD GPUs (without the AMD Flash Attention kernel) this forces Flash Attention onto the CPU: generation drops ~3× (from ~50 to ~15-19 t/s on an 8B). Use only when you need huge context; otherwise keep f16 and quantize keys only."))
+                if let s = kvSuggestion, cacheTypeK != s.k || cacheTypeV != s.v {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Label(loc.t("Sugerencia medida: claves \(s.k) y valores \(s.v). Calidad indistinguible de f16 con un 25% menos de caché que q8_0 en ambos.",
+                                    "Measured suggestion: \(s.k) keys with \(s.v) values. Quality indistinguishable from f16, with 25% less cache than q8_0 on both."),
+                              systemImage: "sparkles")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(loc.t("Aplicar", "Apply")) { cacheTypeK = s.k; cacheTypeV = s.v }
+                            .buttonStyle(.link).font(.caption)
+                            .help(loc.t("Pone las claves en \(s.k) y los valores en \(s.v).",
+                                        "Sets keys to \(s.k) and values to \(s.v)."))
+                    }
+                }
                 if turboKVIncompatible {
                     Label(loc.t("TurboQuant KV no es compatible con este modelo, backend o combinación. q4_0 no se puede mezclar con Turbo.",
                                 "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo."),
@@ -516,8 +537,8 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 } else if turboKVSelected {
-                    Label(loc.t("La pérdida de calidad disminuye con el tamaño del modelo. Turbo4 es la opción recomendada desde 4B; reserva Turbo3 para modelos grandes cuando priorices VRAM.",
-                                "Quality loss decreases with model size. Turbo4 is recommended from 4B; reserve Turbo3 for large models when VRAM savings matter most."),
+                    Label(loc.t("Turbo en las claves es lo que cuesta calidad, y más cuanto menor es el modelo. Con las claves en q8_0, los valores admiten Turbo4 sin pérdida apreciable en ningún tamaño, y Turbo3 casi; Turbo en ambos conviene solo en modelos grandes.",
+                                "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models."),
                           systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
