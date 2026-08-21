@@ -290,6 +290,7 @@ struct ServerSettings {
         }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
+        args += extraArgTokens.cli
         return args
     }
 
