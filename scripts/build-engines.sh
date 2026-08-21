@@ -230,6 +230,9 @@ build_image_engine() {
     git apply -p1 "$ROOT/patches/image/0049-image-free-diffusion-before-video-decode.patch"
     # Yield between VAE tiles to keep the desktop responsive.
     git apply -p1 "$ROOT/patches/image/0050-image-vae-tile-yield.patch"
+    # Read tensors with pread: stdio refills 4 KiB at a time and the load ran at a tenth
+    # of what the disk gives.
+    git apply -p1 "$ROOT/patches/image/0051-image-loader-pread.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong

@@ -3,6 +3,14 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Radeon RX 400/500, Radeon Pro 400/500 and Radeon Pro WX no longer write nonsense.** Since 0.84.4 the engine read Q6_K weights four bytes at a time, from addresses those cards need aligned, so half of them came back as neighbouring data. Almost every model keeps part of its layers in that format, the output head among them, which is why whole models turned to gibberish. Reported by [FreQRiDeR](https://github.com/engeldlgado/toshllm/issues/1) and [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+
+### Improved
+- **Image and video models load about five times quicker.** The loader asked the drive for 4 KiB at a time, so 2.46 GB of weights took 7.8 seconds where the disk does it in 0.7. A cold start of Flux.2 klein 4B drops from 12.9 to 2.5 seconds, with the image unchanged.
+
 ## [0.85.4] - 2026-08-21
 
 ### Added

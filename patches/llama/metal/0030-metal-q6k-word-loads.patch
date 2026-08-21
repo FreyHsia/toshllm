@@ -10,8 +10,8 @@
  constant short FC_mul_mv_r2    [[function_constant(FC_MUL_MV + 3)]];
  constant short FC_mul_mv_r3    [[function_constant(FC_MUL_MV + 4)]];
 +
-+// the row stride is a multiple of 4, so a quant block's byte arrays can be read a word at a
-+// time. The host sets it; a block size that is not a multiple of 4 leaves it false
++// the row stride is even, so a quant block's byte arrays can be read two bytes at a time. The
++// host sets it; a block size that is not a multiple of 2 leaves it false
 +constant bool  FC_mul_mv_row4  [[function_constant(FC_MUL_MV + 6)]];
  
  template<typename block_q_type, short NR0, typename args_t>
@@ -21,7 +21,7 @@
          device const char * src1,
          device       char * dst,
          threadgroup  char * shmem,
-@@ -10690,21 +10694,34 @@
+@@ -10690,21 +10694,39 @@
              yl[4*l + 1] = y[l + 32];
              yl[4*l + 2] = y[l + 64];
              yl[4*l + 3] = y[l + 96];
@@ -30,13 +30,18 @@
          for (short row = 0; row < nr0; ++row) {
              float4 sums = {0.f, 0.f, 0.f, 0.f};
  
-+            // the three arrays are read four consecutive bytes at a time, which is one word
-+            // when the row is aligned; otherwise the compiler has to emit a load per byte
++            // the three arrays are read four consecutive bytes at a time. The block is 210 bytes,
++            // so every other one sits two bytes off a word and a card that requires natural
++            // alignment reads the wrong bytes there; two shorts land right on every block
 +            uint w1 = 0, w2 = 0, wh = 0;
 +            if (FC_mul_mv_row4) {
-+                w1 = *((device const uint *) q1);
-+                w2 = *((device const uint *) q2);
-+                wh = *((device const uint *) qh);
++                device const ushort * s1 = (device const ushort *) q1;
++                device const ushort * s2 = (device const ushort *) q2;
++                device const ushort * sh = (device const ushort *) qh;
++
++                w1 = (uint) s1[0] | ((uint) s1[1] << 16);
++                w2 = (uint) s2[0] | ((uint) s2[1] << 16);
++                wh = (uint) sh[0] | ((uint) sh[1] << 16);
 +            }
 +
              FOR_UNROLL (short l = 0; l < 4; ++l) {
@@ -72,8 +77,8 @@
      }
  
 +    // q6_K's 210-byte block leaves the compiler assuming byte alignment, so it reads its quant
-+    // arrays a byte at a time; an even block count puts every row back on a word boundary
-+    const bool row4 = (op->src[0]->nb[1] % 4 == 0) && (op->src[0]->nb[2] % 4 == 0) &&
++    // arrays a byte at a time; an even stride lets the kernel read them two bytes at a time
++    const bool row4 = (op->src[0]->nb[1] % 2 == 0) && (op->src[0]->nb[2] % 2 == 0) &&
 +                      getenv("TOSH_MV_ROW4_DISABLE") == nullptr;
 +
      snprintf(base, 256, "kernel_mul_mv_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), suffix);
@@ -108,7 +113,7 @@
          else if (lut) { nw = (int16_t) props_id->simd_width; smem = (size_t) nw*sizeof(float); }
      }
 +
-+    const bool row4 = (op->src[0]->nb[1] % 4 == 0) && (op->src[0]->nb[2] % 4 == 0) &&
++    const bool row4 = (op->src[0]->nb[1] % 2 == 0) && (op->src[0]->nb[2] % 2 == 0) &&
 +                      getenv("TOSH_MV_ROW4_DISABLE") == nullptr;
  
      snprintf(base, 256, "kernel_mul_mv_id_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), suffix);
