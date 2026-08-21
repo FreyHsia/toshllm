@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.6] - 2026-08-21
 
 ### Added
 - **Settings suggests the KV cache types that measure best.** Keys at `q8_0` with Turbo4 values matched f16 quality on 4B, 8B and 35B models while taking a quarter less cache than `q8_0` on both; one click applies it.
