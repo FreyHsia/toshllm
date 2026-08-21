@@ -35,7 +35,7 @@ Most local-LLM tools on macOS only target Apple Silicon. Intel Macs with discret
 |---|---|---|
 | Output | corrupted | correct |
 | Qwen3-8B generation | 0.6–2.6 t/s | **~61 t/s** |
-| Qwen3.6-35B (MoE) generation | unusable | **~24 t/s**, flat on long runs |
+| Qwen3.6-35B (MoE) generation | unusable | **~29 t/s**, flat on long runs |
 
 It opens, detects your hardware, and recommends models that will actually run well — no guesswork.
 
@@ -92,22 +92,22 @@ The built-in benchmark runs prompt and generation tests for any configuration an
   <img src="Assets/benchmarks.jpg" alt="ToshLLM benchmarks comparison" width="760">
 </div>
 
-Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine, KV f16, `pp512` / `tg128`):
+Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine 0.85.5, KV f16, `pp512` / `tg128`):
 
 | Model | Type | Prompt (t/s) | Generation (t/s) |
 |---|---|---:|---:|
-| Llama-3.2-1B Q4_K_M | dense | 2994 | 250 |
-| gemma-3-4B Q4_K_M | dense | 1168 | 90 |
-| Qwen3-4B Q4_K_M | dense | 1005 | 94 |
-| Qwen3-8B Q4_K_M | dense | 764 | 61 |
-| Qwen3.5-9B Q4_K_M | dense | 411 | 45 |
-| gemma-4-12B Q4_K_XL | dense | 342 | 34 |
-| Qwen3.6-14B-A3B Q5_K_M | MoE (full VRAM) | 736 | 56 |
-| gpt-oss-20B Q4_K_M | MoE (full VRAM) | 972 | 93 |
-| gemma-4-26B-A4B MXFP4 | MoE (offload) | 552 | 22 |
-| Qwen3.6-35B-A3B Q4_K_S | MoE (offload) | 434 | 25 |
+| Llama-3.2-1B Q4_K_M | dense | 5770 | 254 |
+| gemma-3-4B Q4_K_M | dense | 1751 | 89 |
+| Qwen3-4B Q4_K_M | dense | 1562 | 98 |
+| Qwen3-8B Q4_K_M | dense | 851 | 61 |
+| Qwen3.5-9B Q4_K_M | dense | 743 | 52 |
+| gemma-4-12B Q4_K_XL | dense | 534 | 37 |
+| Qwen3.6-14B-A3B Q5_K_M | MoE, all experts in VRAM | 1243 | 67 |
+| gpt-oss-20B Q4_K_M | MoE, all experts in VRAM | 1305 | 94 |
+| gemma-4-26B-A4B MXFP4 | MoE, `--n-cpu-moe 16` | 595 | 25 |
+| Qwen3.6-35B-A3B Q4_K_S | MoE, `--n-cpu-moe 24` | 475 | 29 |
 
-Numbers vary with quant, context depth and cooling; the app records your own history so you can compare configurations directly. The 8B row was re-measured on 0.83.12; the others date from earlier releases and, on prompt processing, are conservative — that path has gained speed since.
+Numbers vary with quant, context depth and cooling; the app records your own history so you can compare configurations directly.
 
 For scale: on [llama.cpp's official gpt-oss benchmarks](https://github.com/ggml-org/llama.cpp/discussions/15396), that generation speed sits at M4 Max level (92.4 t/s) and ahead of an M1 Max (75.2).
 
@@ -195,7 +195,19 @@ With the AMD attention kernel running on the GPU, quantizing the KV cache stops 
 
 Two things stand out. Prompt processing at depth is *faster* with a quantized cache than with `f16`, because attention reads a smaller KV (less bandwidth). And `q8_0` matches `f16` generation speed while halving the KV footprint — a free win for long context, and you can quantize both keys and values, not just keys.
 
-Below `q8_0` the bundled engine also offers the **TurboQuant** KV types (Turbo3 and Turbo4), which pack the cache further with cooperative GPU writes, cache reuse and context shifts intact; the AMD attention path covers head sizes from 128 through 640 on wave32 and wave64. Turbo4 is worth it from 4B models upward; Turbo3 trades more quality for memory and is meant for larger models at very long context.
+Below `q8_0` the bundled engine also offers the **TurboQuant** KV types ([Google Research](https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/), Turbo3 and Turbo4), which pack the cache further with cooperative GPU writes, cache reuse and context shifts intact; the AMD attention path covers head sizes from 128 through 640 on wave32 and wave64.
+
+**Where you spend the bits matters more than how many.** Perplexity on wikitext, same card, against `f16`:
+
+| keys / values | bits per channel | Qwen3-4B | Qwen3-8B | Qwen3.6-35B MoE |
+|---|---:|---:|---:|---:|
+| `q8_0` / `q8_0` | 8 | −0.1% | +0.0% | +0.0% |
+| **`q8_0` / Turbo4** | **6** | **−0.7%** | **+0.2%** | **+0.4%** |
+| `q8_0` / Turbo3 | 5.5 | +0.5% | +0.6% | +0.8% |
+| Turbo4 / Turbo4 | 4 | +5.7% | +3.5% | +0.3% |
+| Turbo3 / Turbo3 | 3 | +50% | +9.2% | +0.7% |
+
+Quantizing the **keys** is what costs quality on dense models, and the smaller the model the more it costs: at equal budget, `q8_0` keys with Turbo3 values costs 0.5% on a 4B where Turbo3 on both costs 50%. Large MoE models behave the other way round — there the keys barely matter and the values set the floor. So **`q8_0` keys with Turbo4 values** is the setting to reach for: indistinguishable from `f16` at every size measured, a quarter less cache than `q8_0`, and generation within ~3% of it. Settings suggests it for you. Turbo on both is worth it only on large models, where it holds quality at half the bits.
 
 ### ToshGEMM: tiled prefill matmul on AMD
 
