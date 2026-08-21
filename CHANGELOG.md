@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.5] - 2026-08-21
 
 ### Fixed
 - **Radeon RX 400/500, Radeon Pro 400/500 and Radeon Pro WX no longer write nonsense.** Since 0.84.4 the engine read Q6_K weights four bytes at a time, from addresses those cards need aligned, so half of them came back as neighbouring data. Almost every model keeps part of its layers in that format, the output head among them, which is why whole models turned to gibberish. Reported by [FreQRiDeR](https://github.com/engeldlgado/toshllm/issues/1) and [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
