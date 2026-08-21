@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **The Logs tab can now check the engine on your own card.** It runs the engine's operator tests, tells apart the one failure that comes from upstream and is not a problem, and saves the result together with the diagnostics as a single text file you can send. It takes a few minutes and asks for the server to be stopped, since it uses the whole card.
+
 ## [0.85.3] - 2026-08-20
 
 ### Fixed

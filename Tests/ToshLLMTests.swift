@@ -1940,4 +1940,55 @@ final class ModelNameTests: XCTestCase {
         XCTAssertEqual(ModelName("Qwen3.5-122B-A10B-UD-Q8_K_XL-00001-of-00005.gguf").quant, "UD-Q8_K_XL")
         XCTAssertEqual(ModelName("Qwen3.5-122B-A10B-UD-Q8_K_XL-00001-of-00005.gguf").title, "Qwen3.5 122B-A10B")
     }
+
+    // MARK: engine check
+
+    private var engineCheckSample: String {
+        """
+        ggml_metal_device_init: probed SIMD-group width = 64
+        ggml_metal: device 0: AMD Radeon RX Vega 64 (peer group 0, not bridged) probed SIMD-group width = 64
+        Backend 1/3: MTL0
+        [TIMESTEP_EMBEDDING] ERR = 0.0013 > 0.0000 sentinel mismatch: sent_2   TIMESTEP_EMBEDDING(type=f32,dim=320): \u{1B}[1;31mFAIL\u{1B}[0m
+        [MUL_MAT] ERR = 0.9 > 0.0001   MUL_MAT(type_a=q4_K,m=16): \u{1B}[1;31mFAIL\u{1B}[0m
+          10726/10727 tests passed
+          Backend MTL0: \u{1B}[1;31mFAIL\u{1B}[0m
+        Backend 2/3: BLAS
+          12/12 tests passed
+          Backend BLAS: \u{1B}[1;32mOK\u{1B}[0m
+        """
+    }
+
+    func testEngineCheckParsesDeviceAndCounts() {
+        let r = EngineCheck.parse(engineCheckSample)
+        XCTAssertEqual(r.simdWidth, 64)
+        XCTAssertEqual(r.device, "AMD Radeon RX Vega 64")
+        XCTAssertEqual(r.backends, [EngineCheckBackend(name: "MTL0", passed: 10726, total: 10727),
+                                    EngineCheckBackend(name: "BLAS", passed: 12, total: 12)])
+    }
+
+    func testEngineCheckSeparatesKnownUpstreamFailure() {
+        let r = EngineCheck.parse(engineCheckSample)
+        XCTAssertEqual(r.knownFailures.count, 1)
+        XCTAssertTrue(r.knownFailures[0].contains("TIMESTEP_EMBEDDING"))
+        XCTAssertEqual(r.failures.count, 1)
+        XCTAssertTrue(r.failures[0].contains("MUL_MAT"))
+        XCTAssertFalse(r.ok)
+    }
+
+    func testEngineCheckCleanRunHasNoFailures() {
+        let clean = """
+        ggml_metal_device_init: probed SIMD-group width = 32
+        Backend 1/2: MTL0
+        [TIMESTEP_EMBEDDING] ERR   TIMESTEP_EMBEDDING(type=f32): FAIL
+          10726/10727 tests passed
+        """
+        let r = EngineCheck.parse(clean)
+        XCTAssertTrue(r.ok)
+        XCTAssertEqual(r.simdWidth, 32)
+        XCTAssertTrue(EngineCheck.report(r, localized: { _, en in en }).contains("no need to report"))
+    }
+
+    func testEngineCheckBinarySitsNextToTheEngine() {
+        XCTAssertEqual(EngineCheck.binaryPath(serverBinary: "/a/bin/llama-server"), "/a/bin/test-backend-ops")
+    }
 }

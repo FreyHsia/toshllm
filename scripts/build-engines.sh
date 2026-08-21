@@ -139,7 +139,7 @@ build_engine() {
     done
 
     cmake -B build-static "${CMAKE_FLAGS[@]}"
-    cmake --build build-static --config Release -j "$(sysctl -n hw.ncpu)" -t llama-server llama-bench llama-perplexity
+    cmake --build build-static --config Release -j "$(sysctl -n hw.ncpu)" -t llama-server llama-bench llama-perplexity test-backend-ops
 
     # built from the merged source the embed step produces, with the same defines the runtime
     # would use on an Intel/AMD GPU, so device.m can load it instead of compiling

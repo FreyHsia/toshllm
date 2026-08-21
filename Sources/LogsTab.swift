@@ -45,6 +45,8 @@ struct ServerLogView: View {
     /// Which engine's log to show: the chat server, or the image studio.
     @State private var logSource = "server"
     @State private var imageLog = ""
+    @StateObject private var checker = EngineChecker()
+    @State private var checkVerdict: String?
 
     /// The raw log for the selected source. The image log is read from disk (the
     /// image studio runs in another window).
@@ -62,6 +64,61 @@ struct ServerLogView: View {
         // The image log lives in a file written by the other window; poll it while shown.
         .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
             if logSource == "images" { reloadImageLog() }
+        }
+        .sheet(isPresented: .constant(checker.running)) { engineCheckSheet }
+        .alert(loc.t("Comprobación del motor", "Engine check"),
+               isPresented: Binding(get: { checkVerdict != nil }, set: { if !$0 { checkVerdict = nil } })) {
+            Button(loc.t("Aceptar", "OK"), role: .cancel) {}
+        } message: {
+            Text(checkVerdict ?? "")
+        }
+    }
+
+    // MARK: engine check
+
+    private var engineCheckReady: Bool {
+        server.state != .running && server.state != .starting
+            && EngineCheck.isAvailable(serverBinary: ServerSettings.fromDefaults().serverBinary)
+    }
+
+    private var engineCheckHelp: String {
+        if server.state == .running || server.state == .starting {
+            return loc.t("Detén el servidor antes de comprobar: la prueba ocupa la GPU entera.",
+                         "Stop the server before checking: the test uses the whole GPU.")
+        }
+        if !EngineCheck.isAvailable(serverBinary: ServerSettings.fromDefaults().serverBinary) {
+            return loc.t("Este motor no incluye la herramienta de comprobación.",
+                         "This engine does not ship the check tool.")
+        }
+        return loc.t("Ejecuta las pruebas de operaciones del motor en tu tarjeta y las añade al diagnóstico. Tarda varios minutos y usa la GPU al máximo.",
+                     "Runs the engine's operator tests on your card and adds them to the diagnostics. Takes several minutes and drives the GPU hard.")
+    }
+
+    private var engineCheckSheet: some View {
+        VStack(spacing: 14) {
+            ProgressView().controlSize(.large)
+            Text(loc.t("Comprobando el motor…", "Checking the engine…")).font(.headline)
+            Text(loc.t("\(checker.testCount) operaciones probadas\(checker.currentOp.isEmpty ? "" : " · \(checker.currentOp)")",
+                       "\(checker.testCount) operations tested\(checker.currentOp.isEmpty ? "" : " · \(checker.currentOp)")"))
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Text(loc.t("Tarda varios minutos. La pantalla puede ir a tirones mientras dura.",
+                       "This takes several minutes. The screen may stutter while it runs."))
+                .font(.caption).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(loc.t("Cancelar", "Cancel"), role: .cancel) { checker.cancel() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(24)
+        .frame(minWidth: 340)
+    }
+
+    private func startEngineCheck() {
+        checker.start(settings: ServerSettings.fromDefaults()) { result in
+            guard !result.cancelled else { return }
+            // Save first: the panel is modal, and the verdict alert would race it.
+            saveDiagnostics(extra: EngineCheck.report(result, localized: loc.t),
+                            name: "toshllm-engine-check.txt")
+            checkVerdict = EngineCheck.verdict(result, localized: loc.t)
         }
     }
 
@@ -120,6 +177,10 @@ struct ServerLogView: View {
                     }
                     Button(loc.t("Exportar diagnóstico…", "Export diagnostics…"),
                            systemImage: "square.and.arrow.up") { exportDiagnostics() }
+                    Button(loc.t("Comprobar el motor y exportar…", "Check the engine and export…"),
+                           systemImage: "checkmark.seal") { startEngineCheck() }
+                        .disabled(!engineCheckReady)
+                        .help(engineCheckHelp)
                     Divider()
                     Button(loc.t("Limpiar en pantalla", "Clear on screen"),
                            systemImage: "trash", role: .destructive) {
@@ -303,6 +364,10 @@ struct ServerLogView: View {
     // MARK: diagnostics
 
     private func exportDiagnostics() {
+        saveDiagnostics(extra: nil, name: "toshllm-diagnostics.txt")
+    }
+
+    private func saveDiagnostics(extra: String?, name: String) {
         let settings = ServerSettings.fromDefaults()
         let logTail = (try? String(contentsOf: server.logFileURL, encoding: .utf8))?
             .split(separator: "\n").suffix(250).joined(separator: "\n") ?? server.log
@@ -321,12 +386,13 @@ struct ServerLogView: View {
         model: \(URL(fileURLWithPath: settings.modelPath).lastPathComponent)
         engine: \(settings.serverBinary)
         args: \(settings.arguments.joined(separator: " "))
-
+        \(extra.map { "\n\($0)\n" } ?? "")
         ## Recent log
         \(logTail)
         """
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "toshllm-diagnostics.txt"
+        panel.nameFieldStringValue = name
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         if panel.runModal() == .OK, let url = panel.url {
             try? report.write(to: url, atomically: true, encoding: .utf8)
         }
