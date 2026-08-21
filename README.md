@@ -109,7 +109,17 @@ Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine 0
 
 Numbers vary with quant, context depth and cooling; the app records your own history so you can compare configurations directly.
 
-For scale: on [llama.cpp's official gpt-oss benchmarks](https://github.com/ggml-org/llama.cpp/discussions/15396), that generation speed sits at M4 Max level (92.4 t/s) and ahead of an M1 Max (75.2).
+For scale, the same gpt-oss-20B run against the Apple Silicon numbers posted in llama.cpp's gpt-oss guide, same flags (`-ngl 99 -t 1 -fa 1 -b 2048 -ub 2048`):
+
+| test | RX 6700 XT | [Mac mini M4 Pro 64 GB](https://github.com/ggml-org/llama.cpp/discussions/15396#discussioncomment-14226807) | [MBP M3 Max 128 GB](https://github.com/ggml-org/llama.cpp/discussions/15396#discussioncomment-14224424) | [M4 Max 36 GB](https://github.com/ggml-org/llama.cpp/discussions/15396#discussioncomment-14225207) |
+|---|---:|---:|---:|---:|
+| pp2048 | 1233 | 701 | 1348 | — |
+| pp8192 | **1088** | 619 | 1040 | — |
+| pp16384 | **919** | 535 | 908 | — |
+| pp32768 | **610** | 420 | 531 | — |
+| tg128 | 95.0 | 63.3 | 64.3 | 95.9 |
+
+A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 8k tokens up, and generates at the same rate as an M4 Max. Two things to keep in mind. The M3 Max `tg128` is low because that run was heat throttled, as the maintainer notes in the linked reply, so the M4 Max figure is the one to compare generation against; both it and the run here measured generation on its own, which is what avoids the throttling. And the file is not the same: theirs is the stock MXFP4 build, ours a `Q4_K_M` repack. That matters less than the name suggests, because **87% of our file is still MXFP4** — the 72 expert tensors keep the model's native format, and only the remaining 13% (attention, embeddings, norms) is repacked to Q8_0/Q5_0/Q4_K, which is why it weighs 10.81 GiB against their 11.27.
 
 ## Install
 
