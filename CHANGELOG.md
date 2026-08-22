@@ -11,6 +11,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - **Cache keys at q4_0 can be paired with TurboQuant values.** The combination had no kernel of its own, so it was rejected and attention ran on the processor; it now runs on the card like every other pair.
 
+- **Mistral Small 4 runs its attention on the card.** Its 320-wide keys had no kernel, so every layer's attention fell back to the processor.
+
 ### Fixed
 - **The TurboQuant warning says which of its reasons applies.** It listed the model, the backend and the type combination in one sentence, and explained only the last.
 

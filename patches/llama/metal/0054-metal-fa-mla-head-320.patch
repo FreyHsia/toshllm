@@ -144,7 +144,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
          ? props_dev->has_simdgroup_reduction
          : props_dev->wave64_decode;
      if (getenv("TOSH_FA_AMD") != NULL && fa_amd_pipeline[0] != '\0' &&
-@@ -3481,27 +3482,33 @@
+@@ -3480,28 +3481,37 @@
+ 
          // queries per threadgroup, matching the instantiation for this head size
          static const bool pf512 = getenv("TOSH_FA_PF_DK512") != nullptr;
          // MLA keeps K wider than V; the tile kernel it used to fall back to measures ~26% slower
@@ -152,8 +153,12 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
          const bool fa_pf_512 = pf512 && ne00 == 512 && ne00 == ne20;
          const bool fa_pf_mla = pfmla && ne00 == 576 && ne20 == 512 &&
                                 op->src[2]->type == GGML_TYPE_F16;
-         const int fa_pf_bq = (ne00 == 256 || ne00 == 160) ? 32 : ((fa_pf_512 || fa_pf_mla) ? 16 : 64);
+-        const int fa_pf_bq = (ne00 == 256 || ne00 == 160) ? 32 : ((fa_pf_512 || fa_pf_mla) ? 16 : 64);
 +        const bool fa_pf_mla320 = ne00 == 320 && ne20 == 256 && op->src[1]->type == op->src[2]->type;
++        // BQ must match the instantiation: dispatching in wider blocks than the kernel
++        // covers leaves most queries uncomputed
++        const int fa_pf_bq = (ne00 == 256 || ne00 == 160) ? 32
++            : ((fa_pf_512 || fa_pf_mla || fa_pf_mla320) ? 16 : 64);
          const bool fa_pf_head_ok =
 -            ne00 == 64 || ne00 == 128 || ne00 == 256 || fa_amd_dk72 || fa_amd_unet || fa_pf_512 || fa_pf_mla;
 +            ne00 == 64 || ne00 == 128 || ne00 == 256 || fa_amd_dk72 || fa_amd_unet || fa_pf_512 ||
@@ -179,7 +184,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
              auto pipeline = ggml_metal_library_get_pipeline(lib, fa_pf_pipeline);
              if (!pipeline.pipeline) {
                  pipeline = ggml_metal_library_compile_pipeline(lib, fa_pf_pipeline, fa_pf_pipeline, nullptr);
-@@ -3526,18 +3533,20 @@
+@@ -3526,18 +3536,20 @@
                  return 1;
              }
          }
@@ -202,7 +207,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
                           props_dev->simd_width == 64 ? "_w64" : "");
              }
  
-@@ -3581,17 +3590,18 @@
+@@ -3581,17 +3593,18 @@
          }
          if (props_dev->simd_width == 64) {
              fa_amd_nsg /= 2;
