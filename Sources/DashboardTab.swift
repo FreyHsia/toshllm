@@ -604,23 +604,27 @@ struct GPUsCard: View {
     }
 
     @ViewBuilder private func gpuRow(_ g: GPUStat) -> some View {
-        HStack(spacing: 8) {
-            // Reads as a block even if Metal lists a group's members apart.
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(peerColors[g.peerGroupID] ?? .clear)
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if vram.gpus.count > 1 {
                     Text("#\(g.id)")
                         .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
-                    Text(g.name).font(.callout).lineLimit(1)
-                    peerBadge(for: g)
-                    Spacer(minLength: 8)
-                    Text(String(format: "%.1f / %.0f GB", g.usedMB / 1024, g.totalMB / 1024))
-                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                 }
-                ProgressView(value: g.fraction)
-                    .tint(g.fraction > 0.9 ? .red : g.fraction > 0.75 ? .orange : .accentColor)
+                Text(g.name).font(.callout).lineLimit(1)
+                peerBadge(for: g)
+                Spacer(minLength: 8)
+                Text(String(format: "%.1f / %.0f GB", g.usedMB / 1024, g.totalMB / 1024))
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            }
+            ProgressView(value: g.fraction)
+                .tint(g.fraction > 0.9 ? .red : g.fraction > 0.75 ? .orange : .accentColor)
+        }
+        .padding(.leading, peerColors.isEmpty ? 0 : 11)
+        // As an overlay the bar takes the height of the row; a Shape in the row
+        // itself has no height of its own and stretches it instead.
+        .overlay(alignment: .leading) {
+            if let color = peerColors[g.peerGroupID] {
+                RoundedRectangle(cornerRadius: 1.5).fill(color).frame(width: 3)
             }
         }
         .help(rowTooltip(g))
