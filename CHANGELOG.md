@@ -3,6 +3,17 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Improved
+- **Models quantized to about one bit write answers faster.** Their lookup table was read from constant memory four times per row instead of being staged once per group of threads: an 8B in IQ1_S gains 50% more tokens per second and a 9B in IQ1_M 14%, with the output unchanged. Measured on a Radeon RX 6700 XT.
+
+### Added
+- **Cache keys at q4_0 can be paired with TurboQuant values.** The combination had no kernel of its own, so it was rejected and attention ran on the processor; it now runs on the card like every other pair.
+
+### Fixed
+- **The TurboQuant warning says which of its reasons applies.** It listed the model, the backend and the type combination in one sentence, and explained only the last.
+
 ## [0.85.6] - 2026-08-21
 
 ### Added

@@ -878,7 +878,6 @@
   "Transport": "",
   "Trending": "",
   "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models.": "",
-  "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo.": "",
   "Turn vision off": "",
   "Turn vision on": "",
   "Turn vision on or off for this model": "",

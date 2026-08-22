@@ -72,15 +72,26 @@ struct SettingsView: View {
         for t in [cacheTypeK, cacheTypeV] where !types.contains(t) { types.append(t) }
         return types
     }
-    private var turboKVIncompatible: Bool {
-        (cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")) &&
-        (ServerSettings.isAppleSilicon ||
-         !ServerSettings.modelSupportsTurboKV(at: modelPath) ||
-         (cacheTypeV.hasPrefix("turbo") && !cacheTypeK.hasPrefix("turbo") &&
-          ServerSettings.modelUsesMLA(at: modelPath)) ||
-         ((cacheTypeK.hasPrefix("turbo") && cacheTypeV == "q4_0") ||
-          (cacheTypeV.hasPrefix("turbo") && cacheTypeK == "q4_0")))
+    /// Why the chosen Turbo combination cannot run, so the warning names the actual cause
+    /// instead of listing every reason Turbo might be unavailable.
+    private var turboKVIncompatibleReason: (es: String, en: String)? {
+        guard turboKVSelected else { return nil }
+        if ServerSettings.isAppleSilicon {
+            return ("TurboQuant KV solo está disponible en tarjetas sin memoria unificada.",
+                    "TurboQuant KV is only available on cards without unified memory.")
+        }
+        if !ServerSettings.modelSupportsTurboKV(at: modelPath) {
+            return ("Este modelo no admite TurboQuant KV: sus cabezas de atención no llegan a un múltiplo de 128.",
+                    "This model does not support TurboQuant KV: its attention heads do not pad to a multiple of 128.")
+        }
+        if cacheTypeV.hasPrefix("turbo") && !cacheTypeK.hasPrefix("turbo") &&
+            ServerSettings.modelUsesMLA(at: modelPath) {
+            return ("Este modelo guarda claves y valores en una sola caché, así que ambos deben llevar el mismo tipo.",
+                    "This model keeps keys and values in a single cache, so both must use the same type.")
+        }
+        return nil
     }
+    private var turboKVIncompatible: Bool { turboKVIncompatibleReason != nil }
     private var turboKVSelected: Bool {
         cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
     }
@@ -543,10 +554,9 @@ struct SettingsView: View {
                     .padding(.vertical, 8)
                     .glassSurface(in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                if turboKVIncompatible {
+                if let reason = turboKVIncompatibleReason {
                     HStack(alignment: .center, spacing: 12) {
-                        Label(loc.t("TurboQuant KV no es compatible con este modelo, backend o combinación. q4_0 no se puede mezclar con Turbo.",
-                                    "TurboQuant KV is not compatible with this model, backend, or combination. q4_0 cannot be mixed with Turbo."),
+                        Label(loc.t(reason.es, reason.en),
                               systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)

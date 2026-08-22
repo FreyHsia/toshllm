@@ -1,0 +1,271 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -8798,16 +8798,22 @@
+ FA_AMD_TURBO("kturbo3_vturbo2", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TURBO("kturbo3_vturbo3", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TURBO("kturbo3_vturbo4", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
+ FA_AMD_TURBO("kturbo4_vq8_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_TURBO("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_TURBO("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TURBO("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TURBO("kturbo4_vturbo4", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TURBO("kq4_0_vturbo2", block_q4_0, 8, dequantize_q4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
++FA_AMD_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
++FA_AMD_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TURBO("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ #undef FA_AMD_TURBO
+ // wave64 (GCN/Vega) parity; nsg=8. Untested on real hardware.
+ #define FA_AMD_TURBO_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_S(128, 8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_WG(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_S(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_S(384, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_WG(512, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
+@@ -8829,16 +8835,22 @@
+ FA_AMD_TURBO_W64("kturbo3_vturbo2", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TURBO_W64("kturbo3_vturbo3", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TURBO_W64("kturbo3_vturbo4", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
+ FA_AMD_TURBO_W64("kturbo4_vq8_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_TURBO_W64("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_TURBO_W64("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TURBO_W64("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TURBO_W64("kturbo4_vturbo4", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TURBO_W64("kq4_0_vturbo2", block_q4_0, 8, dequantize_q4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
++FA_AMD_TURBO_W64("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
++FA_AMD_TURBO_W64("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TURBO_W64("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TURBO_W64("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ #undef FA_AMD_TURBO_W64
+ 
+ #undef FA_AMD_INST_W64
+ #undef FA_AMD_INST_W64_S
+ #undef FA_AMD_INST_W64_WG
+ #undef FA_AMD_PAIR_S
+ #undef FA_AMD_PAIR_Q4
+ #undef FA_AMD_INST_S
+@@ -9064,16 +9076,22 @@
+ FA_AMD_TILE_TURBO("kturbo3_vturbo2", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TILE_TURBO("kturbo3_vturbo3", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TILE_TURBO("kturbo3_vturbo4", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
+ FA_AMD_TILE_TURBO("kturbo4_vq8_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_TILE_TURBO("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_TILE_TURBO("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TILE_TURBO("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TILE_TURBO("kturbo4_vturbo4", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TILE_TURBO("kq4_0_vturbo2", block_q4_0, 8, dequantize_q4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
++FA_AMD_TILE_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
++FA_AMD_TILE_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TILE_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TILE_TURBO("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TILE_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ #undef FA_AMD_TILE_TURBO
+ // wave64 variants: 64-lane simdgroups, 8 queries per threadgroup (512 threads).
+ #define FA_AMD_TILE_INST_W64(dk, nm, kt, nkk, dkf, vt, nkv, dvf) \
+ template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm "_w64")]] kernel flash_attn_ext_tile_amd_t \
+     kernel_flash_attn_ext_tile_amd<dk, 8, kt, nkk, dkf, vt, nkv, dvf, 64>;
+ #define FA_AMD_TILE_PAIR_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_TILE_INST_W64( 64, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_TILE_INST_W64(128, nm, kt, nkk, dkf, vt, nkv, dvf) \
+@@ -9123,16 +9141,22 @@
+ FA_AMD_TILE_TURBO_W64("kturbo3_vturbo2", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo3_vturbo3", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo3_vturbo4", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo4_vq8_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_TILE_TURBO_W64("kturbo4_vturbo4", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TILE_TURBO_W64("kq4_0_vturbo2", block_q4_0, 8, dequantize_q4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
++FA_AMD_TILE_TURBO_W64("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
++FA_AMD_TILE_TURBO_W64("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_TILE_TURBO_W64("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TILE_TURBO_W64("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_TILE_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ #undef FA_AMD_TILE_TURBO_W64
+ #undef FA_AMD_TILE_PAIR_W64
+ #undef FA_AMD_TILE_INST_W64
+ #undef FA_AMD_TILE_PAIR
+ #undef FA_AMD_TILE_INST
+ 
+ // Prefill attention for AMD: BQ queries stay resident while the cache streams in
+ // blocks of BK, so the score matrix never reaches device memory.
+@@ -9452,16 +9476,22 @@
+ FA_AMD_PF_TURBO("kturbo3_vturbo2", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_PF_TURBO("kturbo3_vturbo3", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_PF_TURBO("kturbo3_vturbo4", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
+ FA_AMD_PF_TURBO("kturbo4_vq8_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
+ FA_AMD_PF_TURBO("kturbo4_vf16", block_turbo4_0, 32, dequantize_turbo4_0_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_PF_TURBO("kturbo4_vturbo2", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
+ FA_AMD_PF_TURBO("kturbo4_vturbo3", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
+ FA_AMD_PF_TURBO("kturbo4_vturbo4", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_PF_TURBO("kq4_0_vturbo2", block_q4_0, 8, dequantize_q4_0_t4, block_turbo2_0, 32, dequantize_turbo2_0_t4)
++FA_AMD_PF_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
++FA_AMD_PF_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
++FA_AMD_PF_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_PF_TURBO("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
++FA_AMD_PF_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
+ #undef FA_AMD_PF_TURBO
+ 
+ // vision towers, f16 only like the vec and tile kernels
+ FA_AMD_PF_INST(72, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+ // UNet diffusion heads, f16 only like head 72
+ FA_AMD_PF_INST( 40, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_PF_INST( 80, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_PF_INST(160, 32, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1669,18 +1669,16 @@
+                 memcpy(&max_bias, ((const int32_t *) op->op_params) + 1, sizeof(float));
+                 memcpy(&softcap,  ((const int32_t *) op->op_params) + 2, sizeof(float));
+                 const enum ggml_type kt = op->src[1]->type;
+                 const enum ggml_type vt = op->src[2]->type;
+                 const bool k_turbo = (kt == GGML_TYPE_TURBO2_0 || kt == GGML_TYPE_TURBO3_0 || kt == GGML_TYPE_TURBO4_0);
+                 const bool v_turbo = (vt == GGML_TYPE_TURBO2_0 || vt == GGML_TYPE_TURBO3_0 || vt == GGML_TYPE_TURBO4_0);
+                 const bool k_std = (kt == GGML_TYPE_F16 || kt == GGML_TYPE_Q8_0 || kt == GGML_TYPE_Q4_0 || k_turbo);
+                 const bool v_std = (vt == GGML_TYPE_F16 || vt == GGML_TYPE_Q8_0 || vt == GGML_TYPE_Q4_0 || v_turbo);
+-                const bool pair_ok = !((k_turbo && vt == GGML_TYPE_Q4_0) ||
+-                                       (v_turbo && kt == GGML_TYPE_Q4_0));
+                 const int64_t dk = op->src[0]->ne[0];
+                 // Turbo KV is instantiated for every supported 128-element padded head.
+                 const bool turbo_dk_ok = (!k_turbo && !v_turbo) ||
+                     dk == 128 || dk == 256 || dk == 384 || dk == 512 || dk == 640;
+                 // A NULL mask is bidirectional attention (vision towers); the kernels
+                 // read args.has_mask and treat it as a zero bias.
+                 // dk 72 is vision-only and f16-only: it is not a whole number of
+                 // 32-element quant blocks, so K/V can never be quantized there.
+@@ -1688,17 +1686,17 @@
+                 const bool dk_ok =
+                     dk == 64 || dk == 128 || dk == 256 || dk == 384 || dk == 512 || dk == 640 ||
+                     (dk == 72 && f16_kv) ||
+                     // UNet diffusion heads (SD 1.5): not whole quant blocks, so f16 only
+                     ((dk == 40 || dk == 80 || dk == 160) && f16_kv);
+                 const bool simple =
+                     dk_ok &&
+                     op->src[2]->ne[0] == dk &&
+-                    k_std && v_std && pair_ok && turbo_dk_ok &&
++                    k_std && v_std && turbo_dk_ok &&
+                     max_bias == 0.0f && softcap == 0.0f;
+                 if (simple) {
+                     return true;
+                 }
+                 // MLA (deepseek2): asymmetric head, K=576 (latent+rope), V=512 (latent).
+                 const bool mla_amd =
+                     dk == 576 && op->src[2]->ne[0] == 512 &&
+                     (kt == GGML_TYPE_F16 || kt == GGML_TYPE_Q8_0) && kt == vt &&
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -3202,27 +3202,16 @@
+         case GGML_TYPE_Q4_0: return "q4_0";
+         case GGML_TYPE_TURBO2_0: return "turbo2";
+         case GGML_TYPE_TURBO3_0: return "turbo3";
+         case GGML_TYPE_TURBO4_0: return "turbo4";
+         default:             return nullptr;
+     }
+ }
+ 
+-// The AMD vec FA kernel is instantiated for any standard pair and for the
+-// explicitly generated Turbo pairs. q4_0/Turbo mixed pairs are not generated.
+-static bool ggml_metal_fa_amd_pair_ok(enum ggml_type kt, enum ggml_type vt) {
+-    const bool k_turbo = kt == GGML_TYPE_TURBO2_0 || kt == GGML_TYPE_TURBO3_0 || kt == GGML_TYPE_TURBO4_0;
+-    const bool v_turbo = vt == GGML_TYPE_TURBO2_0 || vt == GGML_TYPE_TURBO3_0 || vt == GGML_TYPE_TURBO4_0;
+-    if ((k_turbo && vt == GGML_TYPE_Q4_0) || (v_turbo && kt == GGML_TYPE_Q4_0)) {
+-        return false;
+-    }
+-    return ggml_metal_fa_amd_type_suffix(kt) != nullptr && ggml_metal_fa_amd_type_suffix(vt) != nullptr;
+-}
+-
+ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+     const int64_t ne00 = op->src[0]->ne[0]; // head size
+     const int64_t ne01 = op->src[0]->ne[1]; // batch size
+ 
+     // use vec kernel if the batch size is small and if the head size is supported
+     return (ne01 < 20) && (ne00 % 32 == 0);
+@@ -3426,17 +3415,17 @@
+     // UNet diffusion heads, f16 only like dk72: SD 1.5 runs 40 at full resolution,
+     // where the score matrix costs 2.7 GB at 768 and does not fit at all at 1024
+     const bool fa_amd_unet = (ne00 == 40 || ne00 == 80 || ne00 == 160) && fa_amd_f16_kv;
+     if (ne00 == ne20 &&
+         (ne00 == 64 || ne00 == 128 || ne00 == 256 || ne00 == 384 || ne00 == 512 || ne00 == 640 ||
+          fa_amd_dk72 || fa_amd_unet)) {
+         const char * ks = ggml_metal_fa_amd_type_suffix(op->src[1]->type);
+         const char * vs = ggml_metal_fa_amd_type_suffix(op->src[2]->type);
+-        if (ks && vs && ggml_metal_fa_amd_pair_ok(op->src[1]->type, op->src[2]->type)) {
++        if (ks && vs) {
+             snprintf(fa_amd_pipeline, sizeof(fa_amd_pipeline), "kernel_flash_attn_ext_vec_amd_dk%d_k%s_v%s%s", (int) ne00, ks, vs,
+                      props_dev->simd_width == 64 ? "_w64" : "");
+         }
+     } else if (ne00 == 576 && ne20 == 512 && op->src[1]->type == op->src[2]->type) {
+         const char * ks = ggml_metal_fa_amd_type_suffix(op->src[1]->type);
+         const char * vs = ggml_metal_fa_amd_type_suffix(op->src[2]->type);
+         if (ks && vs) {
+             snprintf(fa_amd_pipeline, sizeof(fa_amd_pipeline), "kernel_flash_attn_ext_vec_amd_dk576_dv512_k%s_v%s%s",
+@@ -3575,17 +3564,23 @@
+         }
+ 
+         // must match the .metal instantiations: q4_0 dequant caps the pipeline, so those
+         // pairs drop to 24 (dk128 q4_0 keys, dk64 subw=8 with q4_0 in either K or V).
+         int fa_amd_nsg = ne00 == 128 ? 16 : ne00 <= 128 ? 32 : 16;
+         if (props_dev->simd_width == 32) {
+             const bool k_q4 = op->src[1]->type == GGML_TYPE_Q4_0;
+             const bool v_q4 = op->src[2]->type == GGML_TYPE_Q4_0;
+-            if ((ne00 == 128 && k_q4) || (ne00 == 64 && (k_q4 || v_q4))) {
++            // the Turbo macro instantiates every head at 16, and pairing q4_0 with it
++            // leaves the pipeline at 512 threads, so 24 would overrun what it admits
++            const auto is_turbo = [](enum ggml_type t) {
++                return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0;
++            };
++            const bool turbo = is_turbo(op->src[1]->type) || is_turbo(op->src[2]->type);
++            if (!turbo && ((ne00 == 128 && k_q4) || (ne00 == 64 && (k_q4 || v_q4)))) {
+                 fa_amd_nsg = 24;
+             }
+         }
+         if (props_dev->simd_width == 64) {
+             fa_amd_nsg /= 2;
+         }
+ 
+         // one threadgroup per query head leaves most of the GPU idle on models with
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -9897,16 +9897,33 @@
+             for (int64_t batch : {1, 16}) {
+                 test_cases.emplace_back(new test_flash_attn_ext(
+                     head, head, 4, {1, 1}, 113, batch, true, false,
+                     0.0f, 0.0f, GGML_PREC_F32, type, type));
+             }
+         }
+     }
+ 
++    // Turbo mixed with a standard type on the other side: the app offers q8_0 keys with
++    // turbo values, and q4_0 pairs were only added later, so cover both directions.
++    for (ggml_type turbo : {GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0}) {
++        for (ggml_type std_t : {GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
++            for (int64_t head : {128, 384}) {
++                for (int64_t batch : {1, 16}) {
++                    test_cases.emplace_back(new test_flash_attn_ext(
++                        head, head, 4, {1, 1}, 113, batch, true, false,
++                        0.0f, 0.0f, GGML_PREC_F32, std_t, turbo));
++                    test_cases.emplace_back(new test_flash_attn_ext(
++                        head, head, 4, {1, 1}, 113, batch, true, false,
++                        0.0f, 0.0f, GGML_PREC_F32, turbo, std_t));
++                }
++            }
++        }
++    }
++
+     // Directed AMD wave32 coverage. kv=257 makes these cases easy to select as a
+     // compact suite and exercises decode vec, medium-batch tile, and large-batch PF.
+     for (ggml_type type_K : {GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
+         for (ggml_type type_V : {GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
+             for (int64_t head : {64, 128, 256, 512}) {
+                 for (int64_t batch : {1, 16, 32}) {
+                     test_cases.emplace_back(new test_flash_attn_ext(
+                         head, head, 4, {1, 1}, 257, batch, true, false,

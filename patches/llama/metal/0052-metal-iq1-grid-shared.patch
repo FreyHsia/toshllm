@@ -1,0 +1,206 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -11689,16 +11689,26 @@
+ 
+     device const block_iq1_s * x = (device const block_iq1_s *) (src0 + offset0);
+     device const float       * y = (device const float       *) (src1 + offset1);
+ 
+     float yl[32];
+     float sumf[nr0]={0.f};
+ 
+     const int nb32 = nb * (QK_K / 32);
++
++    // the 2048-entry grid is read from constant memory on every inner step, four divergent
++    // loads per row; staging it once per threadgroup is what iq2_s already does
++    threadgroup uint32_t * sgrid = (threadgroup uint32_t *)(shmem);
++    {
++        const int gid = FC_mul_mv_nw*sgitg + tiisg;
++        const int gsz = FC_mul_mv_nw*FC_mul_mv_nsg;
++        for (int i = gid; i < NGRID_IQ1S; i += gsz) sgrid[i] = iq1s_grid_gpu[i];
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
+ 
+     const short ix = tiisg;
+ 
+     device const float * y4 = y + 32 * ix;
+ 
+     for (int ib32 = ix; ib32 < nb32; ib32 += FC_mul_mv_nw) {
+         float sumy = 0;
+         for (short i = 0; i < 32; ++i) {
+@@ -11710,20 +11720,20 @@
+         const int ib  = ib32 % (QK_K / 32);
+ 
+         device const block_iq1_s * xr = x + ibl;
+         device const uint8_t  * qs = xr->qs + 4 * ib;
+         device const uint16_t * qh = xr->qh + ib;
+         device const half     * dh = &xr->d;
+ 
+         for (short row = 0; row < nr0; row++) {
+-            constant uint8_t * grid1 = (constant uint8_t *)(iq1s_grid_gpu + (qs[0] | ((qh[0] << 8) & 0x700)));
+-            constant uint8_t * grid2 = (constant uint8_t *)(iq1s_grid_gpu + (qs[1] | ((qh[0] << 5) & 0x700)));
+-            constant uint8_t * grid3 = (constant uint8_t *)(iq1s_grid_gpu + (qs[2] | ((qh[0] << 2) & 0x700)));
+-            constant uint8_t * grid4 = (constant uint8_t *)(iq1s_grid_gpu + (qs[3] | ((qh[0] >> 1) & 0x700)));
++            threadgroup const uint8_t * grid1 = (threadgroup const uint8_t *)(sgrid + (qs[0] | ((qh[0] << 8) & 0x700)));
++            threadgroup const uint8_t * grid2 = (threadgroup const uint8_t *)(sgrid + (qs[1] | ((qh[0] << 5) & 0x700)));
++            threadgroup const uint8_t * grid3 = (threadgroup const uint8_t *)(sgrid + (qs[2] | ((qh[0] << 2) & 0x700)));
++            threadgroup const uint8_t * grid4 = (threadgroup const uint8_t *)(sgrid + (qs[3] | ((qh[0] >> 1) & 0x700)));
+ 
+             float sum = 0;
+             for (short j = 0; j < 4; ++j) {
+                 sum += yl[j+ 0] * (grid1[j] & 0xf) + yl[j+ 4] * (grid1[j] >> 4)
+                      + yl[j+ 8] * (grid2[j] & 0xf) + yl[j+12] * (grid2[j] >> 4)
+                      + yl[j+16] * (grid3[j] & 0xf) + yl[j+20] * (grid3[j] >> 4)
+                      + yl[j+24] * (grid4[j] & 0xf) + yl[j+28] * (grid4[j] >> 4);
+             }
+@@ -11748,21 +11758,22 @@
+ }
+ 
+ [[host_name("kernel_mul_mv_iq1_s_f32")]]
+ kernel void kernel_mul_mv_iq1_s_f32(
+         constant ggml_metal_kargs_mul_mv & args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
++        threadgroup  char * shmem [[threadgroup(0)]],
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+ 
+-    kernel_mul_mv_iq1_s_f32_impl<N_R0_IQ1_S, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
++    kernel_mul_mv_iq1_s_f32_impl<N_R0_IQ1_S, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
+ template<int nr0, typename args_t>
+ void kernel_mul_mv_iq1_m_f32_impl(
+         args_t args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+@@ -11789,16 +11800,26 @@
+     device const block_iq1_m * x = (device const block_iq1_m *) (src0 + offset0);
+     device const float       * y = (device const float       *) (src1 + offset1);
+ 
+     float yl[32];
+     float sumf[nr0]={0.f};
+ 
+     const int nb32 = nb * (QK_K / 32);
+ 
++    // the 2048-entry grid is read from constant memory on every inner step, four divergent
++    // loads per row; staging it once per threadgroup is what iq2_s already does
++    threadgroup uint32_t * sgrid = (threadgroup uint32_t *)(shmem);
++    {
++        const int gid = FC_mul_mv_nw*sgitg + tiisg;
++        const int gsz = FC_mul_mv_nw*FC_mul_mv_nsg;
++        for (int i = gid; i < NGRID_IQ1S; i += gsz) sgrid[i] = iq1s_grid_gpu[i];
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
+     const short ix = tiisg;
+ 
+     device const float * y4 = y + 32 * ix;
+ 
+     iq1m_scale_t scale;
+ 
+     for (int ib32 = ix; ib32 < nb32; ib32 += FC_mul_mv_nw) {
+         float4 sumy = {0.f};
+@@ -11815,20 +11836,20 @@
+         device const block_iq1_m * xr = x + ibl;
+         device const uint8_t  * qs = xr->qs + 4 * ib;
+         device const uint8_t  * qh = xr->qh + 2 * ib;
+         device const uint16_t * sc = (device const uint16_t *)xr->scales;
+ 
+         for (short row = 0; row < nr0; row++) {
+             scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
+ 
+-            constant uint8_t * grid1 = (constant uint8_t *)(iq1s_grid_gpu + (qs[0] | ((qh[0] << 8) & 0x700)));
+-            constant uint8_t * grid2 = (constant uint8_t *)(iq1s_grid_gpu + (qs[1] | ((qh[0] << 4) & 0x700)));
+-            constant uint8_t * grid3 = (constant uint8_t *)(iq1s_grid_gpu + (qs[2] | ((qh[1] << 8) & 0x700)));
+-            constant uint8_t * grid4 = (constant uint8_t *)(iq1s_grid_gpu + (qs[3] | ((qh[1] << 4) & 0x700)));
++            threadgroup const uint8_t * grid1 = (threadgroup const uint8_t *)(sgrid + (qs[0] | ((qh[0] << 8) & 0x700)));
++            threadgroup const uint8_t * grid2 = (threadgroup const uint8_t *)(sgrid + (qs[1] | ((qh[0] << 4) & 0x700)));
++            threadgroup const uint8_t * grid3 = (threadgroup const uint8_t *)(sgrid + (qs[2] | ((qh[1] << 8) & 0x700)));
++            threadgroup const uint8_t * grid4 = (threadgroup const uint8_t *)(sgrid + (qs[3] | ((qh[1] << 4) & 0x700)));
+ 
+             float2 sum = {0.f};
+             for (short j = 0; j < 4; ++j) {
+                 sum[0] += yl[j+ 0] * (grid1[j] & 0xf) + yl[j+ 4] * (grid1[j] >> 4)
+                         + yl[j+ 8] * (grid2[j] & 0xf) + yl[j+12] * (grid2[j] >> 4);
+                 sum[1] += yl[j+16] * (grid3[j] & 0xf) + yl[j+20] * (grid3[j] >> 4)
+                         + yl[j+24] * (grid4[j] & 0xf) + yl[j+28] * (grid4[j] >> 4);
+             }
+@@ -11857,21 +11878,22 @@
+ }
+ 
+ [[host_name("kernel_mul_mv_iq1_m_f32")]]
+ kernel void kernel_mul_mv_iq1_m_f32(
+         constant ggml_metal_kargs_mul_mv & args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
++        threadgroup  char * shmem [[threadgroup(0)]],
+         uint3  tgpig[[threadgroup_position_in_grid]],
+         ushort tiisg[[thread_index_in_simdgroup]],
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+ 
+-    kernel_mul_mv_iq1_m_f32_impl<N_R0_IQ1_M, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
++    kernel_mul_mv_iq1_m_f32_impl<N_R0_IQ1_M, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
+ template<int NR0, typename args_t>
+ void kernel_mul_mv_iq4_nl_f32_impl(
+         args_t args,
+         device const char * src0,
+         device const char * src1,
+         device       char * dst,
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1163,21 +1163,23 @@
+                 nsg = N_SG_IQ2_S;
+                 nr0 = N_R0_IQ2_S;
+                 smem = 1024*8;
+             } break;
+         case GGML_TYPE_IQ1_S:
+             {
+                 nsg = N_SG_IQ1_S;
+                 nr0 = N_R0_IQ1_S;
++                smem = 2048*4;
+             } break;
+         case GGML_TYPE_IQ1_M:
+             {
+                 nsg = N_SG_IQ1_M;
+                 nr0 = N_R0_IQ1_M;
++                smem = 2048*4;
+             } break;
+         case GGML_TYPE_IQ4_NL:
+             {
+                 nsg = N_SG_IQ4_NL;
+                 nr0 = N_R0_IQ4_NL;
+                 smem = 32*sizeof(float);
+             } break;
+         case GGML_TYPE_IQ4_XS:
+@@ -1499,21 +1501,23 @@
+                 nsg = N_SG_IQ2_S;
+                 nr0 = N_R0_IQ2_S;
+                 smem = 1024*8;
+             } break;
+         case GGML_TYPE_IQ1_S:
+             {
+                 nsg = N_SG_IQ1_S;
+                 nr0 = N_R0_IQ1_S;
++                smem = 2048*4;
+             } break;
+         case GGML_TYPE_IQ1_M:
+             {
+                 nsg = N_SG_IQ1_M;
+                 nr0 = N_R0_IQ1_M;
++                smem = 2048*4;
+             } break;
+         case GGML_TYPE_IQ4_NL:
+             {
+                 nsg = N_SG_IQ4_NL;
+                 nr0 = N_R0_IQ4_NL;
+                 smem = 32*sizeof(float);
+             } break;
+         case GGML_TYPE_IQ4_XS:
