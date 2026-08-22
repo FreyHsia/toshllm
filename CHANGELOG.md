@@ -15,7 +15,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **The reasoning effort list has a "Model default" entry** that leaves the choice to the model instead of sending a level.
 
+- **The machine card counts every GPU and says whether they are linked.** With more than one card it shows how many there are and their combined video memory, and whether they share an Infinity Fabric link. macOS reports that nowhere, and a bridge that is absent or not working changes how a split model moves its data. The server log now names each card's peer group too, so a pasted log identifies its own wiring.
+
 ### Fixed
+- **Video memory was rounded down by a whole gigabyte.** A 12 GB card read as 11 GB and a 32 GB one as 31 GB, in the machine card, both GPU pickers and the log.
+
 - **The reasoning effort list only offers what the model accepts.** Some chat templates take their own set of levels and reject the rest, which arrived as an HTTP 500 in the middle of the answer; the list is now read from the loaded model's template, an unsupported saved choice falls back to the model default, and a rejection explains itself.
 
 - **The TurboQuant warning says which of its reasons applies.** It listed the model, the backend and the type combination in one sentence, and explained only the last.

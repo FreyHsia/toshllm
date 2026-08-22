@@ -367,7 +367,7 @@ struct SettingsView: View {
                 Picker(loc.t("GPU (Metal)", "GPU (Metal)"), selection: $gpuIndex) {
                     Text(loc.t("Predeterminada", "Default")).tag(-1)
                     ForEach(hardware.gpus) { g in
-                        Text("\(g.index): \(g.name) · \(g.vramMB / 1024) GB").tag(g.index)
+                        Text("\(g.index): \(g.name) · \(g.vramGB) GB").tag(g.index)
                     }
                 }
                 .infoTip(loc.t("Qué GPU usa el servidor si tienes varias. 'Predeterminada' deja elegir a Metal.",
@@ -395,7 +395,7 @@ struct SettingsView: View {
                                 Button(loc.t("Todas", "All")) { gpuListCSV = "" }
                                 Divider()
                                 ForEach(hardware.gpus) { g in
-                                    Toggle("\(g.name) · \(g.vramMB / 1024) GB", isOn: Binding(
+                                    Toggle("\(g.name) · \(g.vramGB) GB", isOn: Binding(
                                         get: { splitSelection.contains(g.index) },
                                         set: { _ in toggleSplitGPU(g.index) }))
                                 }

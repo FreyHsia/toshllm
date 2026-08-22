@@ -100,8 +100,14 @@ struct DashboardView: View {
                 loc.t("\(hardware.physicalCores) núcleos / \(hardware.logicalCores) hilos",
                       "\(hardware.physicalCores) cores / \(hardware.logicalCores) threads"))
             row("memorychip", String(format: "%.0f GB RAM", hardware.ramGB))
-            if let gpu = hardware.bestGPU {
-                row("rectangle.on.rectangle", "\(gpu.name) · \(gpu.vramMB / 1024) GB VRAM")
+            if hardware.splitEligibleGPUs.count > 1 {
+                row("rectangle.on.rectangle", gpuSummary)
+                    .help(gpuListTooltip)
+                row("link", peerLinkSummary)
+                    .help(loc.t("Las GPUs unidas por un enlace Infinity Fabric comparten un grupo de pares en Metal, y solo así pueden copiarse activaciones directamente en vez de pasar por la RAM. macOS no lo muestra en ningún sitio: si el puente no está o no funciona, cada tarjeta aparece en su propio grupo.",
+                            "GPUs joined by an Infinity Fabric link share a Metal peer group, which is what lets them copy activations directly instead of going through system RAM. macOS shows this nowhere: if the bridge is missing or not working, each card ends up in its own group."))
+            } else if let gpu = hardware.bestGPU {
+                row("rectangle.on.rectangle", "\(gpu.name) · \(gpu.vramGB) GB VRAM")
             }
             if !hardware.model.isEmpty { row("desktopcomputer", hardware.model) }
             if !hardware.osVersion.isEmpty { row("apple.logo", hardware.osVersion) }
@@ -442,6 +448,35 @@ struct DashboardView: View {
         case .quality:  return (loc.t("Máxima calidad", "Top quality"), "sparkles", .purple)
         case .coding:   return (loc.t("Programación", "Coding"), "chevron.left.forwardslash.chevron.right", .orange)
         }
+    }
+
+    private var gpuSummary: String {
+        let gpus = hardware.splitEligibleGPUs
+        let total = Int(hardware.combinedVramGB.rounded())
+        return loc.t("\(gpus.count) GPUs · \(total) GB de VRAM en total",
+                     "\(gpus.count) GPUs · \(total) GB VRAM total")
+    }
+
+    private var gpuListTooltip: String {
+        let list = hardware.gpus
+            .map { "\($0.name) · \($0.vramGB) GB\($0.isExternal ? " · eGPU" : "")" }
+            .joined(separator: "\n")
+        return loc.t("VRAM que reporta Metal, no la nominal de la caja. Solo se suma cuando repartes un modelo entre varias GPUs; un modelo que no reparta debe caber en una sola.\n\n\(list)",
+                     "VRAM as Metal reports it, not the number on the box. It only adds up when you split a model across several GPUs; a model that is not split has to fit in one.\n\n\(list)")
+    }
+
+    private var peerLinkSummary: String {
+        let groups = hardware.peerGroups
+        guard let first = groups.first else {
+            return loc.t("Infinity Fabric: sin enlace", "Infinity Fabric: no link")
+        }
+        if groups.count == 1 {
+            return loc.t("Infinity Fabric: \(first.count) GPUs enlazadas",
+                         "Infinity Fabric: \(first.count) GPUs linked")
+        }
+        let sizes = groups.map { String($0.count) }.joined(separator: " + ")
+        return loc.t("Infinity Fabric: \(groups.count) grupos · \(sizes) GPUs",
+                     "Infinity Fabric: \(groups.count) groups · \(sizes) GPUs")
     }
 
     private func row(_ icon: String, _ text: String) -> some View {

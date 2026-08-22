@@ -103,7 +103,7 @@ struct GPUSelectionMenu: View {
             Button(loc.t("Predeterminada", "Default")) { gpuIndex = -1; gpuList = [] }
             Divider()
             ForEach(hardware.gpus) { g in
-                Toggle("\(g.name) · \(g.vramMB / 1024) GB", isOn: Binding(
+                Toggle("\(g.name) · \(g.vramGB) GB", isOn: Binding(
                     get: { selection.contains(g.index) },
                     set: { _ in toggle(g.index) }))
             }

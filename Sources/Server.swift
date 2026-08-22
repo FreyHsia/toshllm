@@ -16,7 +16,13 @@ struct GPUDevice: Identifiable, Hashable {
     let vramMB: Int
     var isExternal: Bool = false   // eGPU (MTLDeviceLocation.external)
     var isIntegrated: Bool = false // iGPU (MTLDevice.isLowPower); never auto-selected
+    /// Metal peer group: 0 when the card has no Infinity Fabric link, shared with
+    /// the other members when it has one.
+    var peerGroupID: UInt64 = 0
+    var peerCount: Int = 0
     var id: Int { index }
+    /// Rounded, since Metal reports a working set a little off the nominal size.
+    var vramGB: Int { Int((Double(vramMB) / 1024).rounded()) }
 }
 
 struct ServerSettings {
@@ -1188,7 +1194,9 @@ final class ServerController: ObservableObject {
             GPUDevice(index: i, name: dev.name,
                       vramMB: Int(dev.recommendedMaxWorkingSetSize / 1_048_576),
                       isExternal: dev.location == .external,
-                      isIntegrated: dev.isLowPower)
+                      isIntegrated: dev.isLowPower,
+                      peerGroupID: dev.peerGroupID,
+                      peerCount: Int(dev.peerCount))
         }
     }
 
@@ -1298,8 +1306,13 @@ final class ServerController: ObservableObject {
         }
         let engine: String
         engine = settings.serverBinary == ServerSettings.defaultBinary ? "bundled (official)" : "external"
+        // Device order changes between boots, so an index alone does not identify a
+        // card in a pasted log; the peer group does identify who it is linked to.
         let gpus = availableGPUs().map {
-            "    [\($0.index)] \($0.name) · \($0.vramMB / 1024) GB\($0.isExternal ? " · EXTERNAL/eGPU" : "")\($0.isIntegrated ? " · iGPU (not auto-selected)" : "")"
+            let peer = $0.peerGroupID == 0
+                ? " · no peer group"
+                : " · peer group \($0.peerGroupID) (\($0.peerCount) GPUs)"
+            return "    [\($0.index)] \($0.name) · \($0.vramGB) GB\(peer)\($0.isExternal ? " · EXTERNAL/eGPU" : "")\($0.isIntegrated ? " · iGPU (not auto-selected)" : "")"
         }.joined(separator: "\n")
         let envKeys = ["GGML_METAL_VRAM_RESERVE_MB",
                        "GGML_METAL_DEVICE_INDEX", "GGML_METAL_DEVICES", "GGML_METAL_DEVICE_LIST",

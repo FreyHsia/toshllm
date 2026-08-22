@@ -22,8 +22,25 @@ struct HardwareInfo {
     /// Total VRAM across the split-eligible GPUs (iGPUs are never auto-selected).
     /// Only meaningful for a multi-GPU layer split.
     var combinedVramGB: Double {
+        Double(splitEligibleGPUs.reduce(0) { $0 + $1.vramMB }) / 1024
+    }
+
+    var splitEligibleGPUs: [GPUDevice] {
         let eligible = gpus.filter { !$0.isIntegrated }
-        return Double((eligible.isEmpty ? gpus : eligible).reduce(0) { $0 + $1.vramMB }) / 1024
+        return eligible.isEmpty ? gpus : eligible
+    }
+
+    /// GPUs joined by an Infinity Fabric link, as Metal groups them: the dies of one
+    /// Duo, or several modules once the bridge is in place. A card with no link
+    /// reports group 0, so a group is the only evidence the link is really there.
+    var peerGroups: [[GPUDevice]] { Self.peerGroups(of: gpus) }
+
+    static func peerGroups(of gpus: [GPUDevice]) -> [[GPUDevice]] {
+        Dictionary(grouping: gpus.filter { $0.peerGroupID != 0 }, by: \.peerGroupID)
+            .values
+            .filter { $0.count > 1 }
+            .map { $0.sorted { $0.index < $1.index } }
+            .sorted { $0.count == $1.count ? $0[0].index < $1[0].index : $0.count > $1.count }
     }
 
     static func detect() -> HardwareInfo {
