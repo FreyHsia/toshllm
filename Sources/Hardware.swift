@@ -30,17 +30,14 @@ struct HardwareInfo {
         return eligible.isEmpty ? gpus : eligible
     }
 
-    /// GPUs joined by an Infinity Fabric link, as Metal groups them: the dies of one
-    /// Duo, or several modules once the bridge is in place. A card with no link
-    /// reports group 0, so a group is the only evidence the link is really there.
+    /// GPUs joined by an Infinity Fabric link, internal to a Duo or across a bridge.
+    /// A card with no link reports group 0, so a group is the only evidence of one.
     var peerGroups: [[GPUDevice]] { Self.peerGroups(of: gpus) }
 
     static func peerGroups(of gpus: [GPUDevice]) -> [[GPUDevice]] {
-        Dictionary(grouping: gpus.filter { $0.peerGroupID != 0 }, by: \.peerGroupID)
-            .values
-            .filter { $0.count > 1 }
-            .map { $0.sorted { $0.index < $1.index } }
-            .sorted { $0.count == $1.count ? $0[0].index < $1[0].index : $0.count > $1.count }
+        let members = Dictionary(grouping: gpus.filter { $0.peerGroupID != 0 }, by: \.peerGroupID)
+        return GPUPeerTopology.groupIDs(gpus.map { ($0.index, $0.peerGroupID) })
+            .compactMap { members[$0]?.sorted { $0.index < $1.index } }
     }
 
     static func detect() -> HardwareInfo {
@@ -371,5 +368,30 @@ enum Estimator {
         // GQA f16 heuristic when the geometry is unreadable
         let perK = spec.paramsB >= 25 ? 0.10 : spec.paramsB >= 12 ? 0.08 : 0.05
         return perK * Double(ctx) / 1024
+    }
+}
+
+/// Shared so a row's letter in the GPU list matches the machine card beside it.
+enum GPUPeerTopology {
+    static func groupIDs(_ items: [(index: Int, groupID: UInt64)]) -> [UInt64] {
+        let linked = items.filter { $0.groupID != 0 }
+        let byGroup = Dictionary(grouping: linked, by: \.groupID).filter { $0.value.count > 1 }
+        return byGroup.keys.sorted { left, right in
+            let a = byGroup[left]!, b = byGroup[right]!
+            let firstA = a.map(\.index).min() ?? 0, firstB = b.map(\.index).min() ?? 0
+            return a.count == b.count ? firstA < firstB : a.count > b.count
+        }
+    }
+
+    static func labels(_ items: [(index: Int, groupID: UInt64)]) -> [UInt64: String] {
+        groupIDs(items).enumerated().reduce(into: [:]) { out, pair in
+            out[pair.element] = letter(pair.offset)
+        }
+    }
+
+    private static func letter(_ position: Int) -> String {
+        position < 26
+            ? String(UnicodeScalar(UInt8(65 + position)))
+            : String(position + 1)
     }
 }

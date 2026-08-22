@@ -23,6 +23,7 @@ struct DashboardView: View {
     @AppStorage(SettingsKeys.embeddings) private var embeddings = false
     @AppStorage(SettingsKeys.uiMcpProxy) private var uiMcpProxy = false
     @State private var showNotes = false
+    @State private var showGPUDetail = false
     @AppStorage(SettingsKeys.routerMode) private var routerMode = false
     @AppStorage(SettingsKeys.routerModelsMax) private var routerModelsMax = 1
 
@@ -101,11 +102,20 @@ struct DashboardView: View {
                       "\(hardware.physicalCores) cores / \(hardware.logicalCores) threads"))
             row("memorychip", String(format: "%.0f GB RAM", hardware.ramGB))
             if hardware.splitEligibleGPUs.count > 1 {
-                row("rectangle.on.rectangle", gpuSummary)
-                    .help(gpuListTooltip)
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .frame(width: 18).foregroundStyle(.secondary)
+                    Text(gpuCountSummary).font(.callout).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button(loc.t("Detalle", "Details")) { showGPUDetail.toggle() }
+                        .buttonStyle(.plain).font(.caption.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .popover(isPresented: $showGPUDetail, arrowEdge: .bottom) { gpuDetailPopover }
+                }
+                .help(gpuListTooltip)
                 row("link", peerLinkSummary)
-                    .help(loc.t("Las GPUs unidas por un enlace Infinity Fabric comparten un grupo de pares en Metal, y solo así pueden copiarse activaciones directamente en vez de pasar por la RAM. macOS no lo muestra en ningún sitio: si el puente no está o no funciona, cada tarjeta aparece en su propio grupo.",
-                            "GPUs joined by an Infinity Fabric link share a Metal peer group, which is what lets them copy activations directly instead of going through system RAM. macOS shows this nowhere: if the bridge is missing or not working, each card ends up in its own group."))
+                    .help(loc.t("Las GPUs unidas por un enlace Infinity Fabric comparten un grupo de pares en Metal, y solo así pueden copiarse activaciones directamente en vez de pasar por la RAM. La memoria del grupo es la que un modelo repartido recorre sin pasar por el sistema. macOS no lo muestra en ningún sitio: si el puente no está o no funciona, cada tarjeta aparece en su propio grupo.",
+                            "GPUs joined by an Infinity Fabric link share a Metal peer group, which is what lets them copy activations directly instead of going through system RAM. The memory of a group is what a split model reaches without going through the system. macOS shows this nowhere: if the bridge is missing or not working, each card ends up in its own group."))
             } else if let gpu = hardware.bestGPU {
                 row("rectangle.on.rectangle", "\(gpu.name) · \(gpu.vramGB) GB VRAM")
             }
@@ -450,11 +460,51 @@ struct DashboardView: View {
         }
     }
 
-    private var gpuSummary: String {
+    private var gpuModelRows: [String] {
         let gpus = hardware.splitEligibleGPUs
-        let total = Int(hardware.combinedVramGB.rounded())
-        return loc.t("\(gpus.count) GPUs · \(total) GB de VRAM en total",
-                     "\(gpus.count) GPUs · \(total) GB VRAM total")
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        var vram: [String: Int] = [:]
+        for gpu in gpus {
+            if counts[gpu.name] == nil { order.append(gpu.name) }
+            counts[gpu.name, default: 0] += 1
+            vram[gpu.name] = gpu.vramGB
+        }
+        return order.map { name -> String in
+            let count = counts[name] ?? 1, gb = vram[name] ?? 0
+            return count == 1
+                ? "\(name) · \(gb) GB"
+                : loc.t("\(count) × \(name) · \(gb) GB c/u", "\(count) × \(name) · \(gb) GB each")
+        }
+    }
+
+    /// Summed from the rounded per-card figures so the panel adds up on screen.
+    private var gpuCountSummary: String {
+        let gpus = hardware.splitEligibleGPUs
+        let total = gpus.reduce(0) { $0 + $1.vramGB }
+        return loc.t("\(gpus.count) GPUs · \(total) GB de VRAM", "\(gpus.count) GPUs · \(total) GB VRAM")
+    }
+
+    private var gpuDetailPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(loc.t("GPUs detectadas", "Detected GPUs")).font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(gpuModelRows, id: \.self) { Text($0).font(.callout) }
+            }
+            if !hardware.peerGroups.isEmpty {
+                Divider()
+                Text(loc.t("Enlaces Infinity Fabric", "Infinity Fabric links")).font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(peerLinkRows, id: \.self) { Text($0).font(.callout) }
+                }
+            }
+            Divider()
+            Text(loc.t("Memoria según la reporta Metal, que no tiene por qué ser la nominal de la caja. Solo se suma cuando repartes un modelo entre varias GPUs; uno que no reparta debe caber en una sola.",
+                       "Memory as Metal reports it, which need not match the number on the box. It only adds up when you split a model across several GPUs; one that is not split has to fit in a single card."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 380, alignment: .leading)
     }
 
     private var gpuListTooltip: String {
@@ -465,18 +515,41 @@ struct DashboardView: View {
                      "VRAM as Metal reports it, not the number on the box. It only adds up when you split a model across several GPUs; a model that is not split has to fit in one.\n\n\(list)")
     }
 
+    /// The memory behind a link is what a split model moves without touching RAM.
     private var peerLinkSummary: String {
         let groups = hardware.peerGroups
-        guard let first = groups.first else {
-            return loc.t("Infinity Fabric: sin enlace", "Infinity Fabric: no link")
+        guard !groups.isEmpty else {
+            return loc.t("Infinity Fabric: sin enlace entre tarjetas",
+                         "Infinity Fabric: no link between cards")
         }
-        if groups.count == 1 {
-            return loc.t("Infinity Fabric: \(first.count) GPUs enlazadas",
-                         "Infinity Fabric: \(first.count) GPUs linked")
+        if let only = groups.first, groups.count == 1 {
+            let total = only.reduce(0) { $0 + $1.vramGB }
+            return loc.t("Infinity Fabric: \(only.count) GPUs enlazadas · \(total) GB",
+                         "Infinity Fabric: \(only.count) GPUs linked · \(total) GB")
         }
-        let sizes = groups.map { String($0.count) }.joined(separator: " + ")
-        return loc.t("Infinity Fabric: \(groups.count) grupos · \(sizes) GPUs",
-                     "Infinity Fabric: \(groups.count) groups · \(sizes) GPUs")
+        let totals = groups.map { String($0.reduce(0) { $0 + $1.vramGB }) }.joined(separator: " + ")
+        return loc.t("Infinity Fabric: \(groups.count) enlaces · \(totals) GB",
+                     "Infinity Fabric: \(groups.count) links · \(totals) GB")
+    }
+
+    private var peerLinkRows: [String] {
+        let groups = hardware.peerGroups
+        guard !groups.isEmpty else {
+            return [loc.t("Infinity Fabric: sin enlace entre tarjetas",
+                          "Infinity Fabric: no link between cards")]
+        }
+        let labels = GPUPeerTopology.labels(hardware.gpus.map { ($0.index, $0.peerGroupID) })
+        return groups.map { members in
+            let total = members.reduce(0) { $0 + $1.vramGB }
+            let prefix = groups.count == 1
+                ? "Infinity Fabric"
+                : "Fabric " + (labels[members[0].peerGroupID] ?? "?")
+            let names = Set(members.map(\.name))
+            let what = names.count == 1
+                ? "\(members.count) × \(members[0].name)"
+                : loc.t("\(members.count) GPUs", "\(members.count) GPUs")
+            return "\(prefix): \(what) · \(total) GB"
+        }
     }
 
     private func row(_ icon: String, _ text: String) -> some View {
@@ -505,18 +578,71 @@ struct GPUsCard: View {
         }
     }
 
+    private var peerLabels: [UInt64: String] {
+        GPUPeerTopology.labels(vram.gpus.map { ($0.id, $0.peerGroupID) })
+    }
+
     @ViewBuilder private func gpuRow(_ g: GPUStat) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(g.name).font(.callout).lineLimit(1)
-                Spacer(minLength: 8)
-                Text(String(format: "%.1f / %.0f GB", g.usedMB / 1024, g.totalMB / 1024))
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            // Reads as a block even if Metal lists a group's members apart.
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(peerColors[g.peerGroupID] ?? .clear)
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("#\(g.id)")
+                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    Text(g.name).font(.callout).lineLimit(1)
+                    peerBadge(for: g)
+                    Spacer(minLength: 8)
+                    Text(String(format: "%.1f / %.0f GB", g.usedMB / 1024, g.totalMB / 1024))
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                }
+                ProgressView(value: g.fraction)
+                    .tint(g.fraction > 0.9 ? .red : g.fraction > 0.75 ? .orange : .accentColor)
             }
-            ProgressView(value: g.fraction)
-                .tint(g.fraction > 0.9 ? .red : g.fraction > 0.75 ? .orange : .accentColor)
         }
-        .help(loc.t("VRAM en uso de \(g.name).", "VRAM in use on \(g.name)."))
+        .help(rowTooltip(g))
+    }
+
+    private var peerColors: [UInt64: Color] {
+        let palette: [Color] = [.accentColor, .teal, .orange, .purple, .pink]
+        let ids = GPUPeerTopology.groupIDs(vram.gpus.map { ($0.id, $0.peerGroupID) })
+        return ids.enumerated().reduce(into: [:]) { out, pair in
+            out[pair.element] = palette[pair.offset % palette.count]
+        }
+    }
+
+    @ViewBuilder private func peerBadge(for g: GPUStat) -> some View {
+        let labels = peerLabels
+        // Nothing on unlinked cards: the row tooltip spells that out.
+        if let label = labels[g.peerGroupID] {
+            capsule(labels.count > 1 ? "Fabric \(label)" : "Fabric",
+                    icon: "link", tint: peerColors[g.peerGroupID] ?? .accentColor)
+        }
+    }
+
+    private func capsule(_ text: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 8, weight: .semibold))
+            Text(text).font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(tint.opacity(0.14), in: Capsule())
+    }
+
+    private func rowTooltip(_ g: GPUStat) -> String {
+        let vramUse = loc.t("VRAM en uso de \(g.name).", "VRAM in use on \(g.name).")
+        let labels = peerLabels
+        guard !labels.isEmpty else { return vramUse }
+        guard let label = labels[g.peerGroupID] else {
+            return vramUse + loc.t(" Sin enlace Infinity Fabric: sus copias pasan por la RAM del sistema.",
+                                   " No Infinity Fabric link: its copies go through system RAM.")
+        }
+        let peers = vram.gpus.filter { $0.peerGroupID == g.peerGroupID }.count
+        return vramUse + loc.t(" Enlazada por Infinity Fabric con otras \(peers - 1) GPUs (grupo \(label)), así que se copian activaciones entre ellas sin pasar por la RAM.",
+                               " Linked by Infinity Fabric to \(peers - 1) other GPUs (group \(label)), so they copy activations between themselves without going through RAM.")
     }
 }
 

@@ -13,6 +13,7 @@ struct GPUStat: Identifiable, Sendable {
     let name: String
     let usedMB: Double
     let totalMB: Double
+    var peerGroupID: UInt64 = 0
     var freeMB: Double { max(0, totalMB - usedMB) }
     var fraction: Double { totalMB > 0 ? min(usedMB / totalMB, 1) : 0 }
 }
@@ -53,7 +54,8 @@ final class VRAMMonitor: ObservableObject {
         MTLCopyAllDevices().enumerated().map { i, dev in
             let totalMB = Double(dev.recommendedMaxWorkingSetSize) / 1_048_576
             let usedMB = usedBytes(forRegistryID: dev.registryID).map { $0 / 1_048_576 } ?? 0
-            return GPUStat(id: i, name: dev.name, usedMB: usedMB, totalMB: totalMB)
+            return GPUStat(id: i, name: dev.name, usedMB: usedMB, totalMB: totalMB,
+                           peerGroupID: dev.peerGroupID)
         }
     }
 
