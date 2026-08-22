@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.7] - 2026-08-22
 
 ### Improved
 - **Models quantized to about one bit write answers faster.** Their lookup table was read from constant memory four times per row instead of being staged once per group of threads: an 8B in IQ1_S gains 50% more tokens per second and a 9B in IQ1_M 14%, with the output unchanged. Measured on a Radeon RX 6700 XT.
