@@ -353,6 +353,7 @@ private struct AgentRunContext {
 final class ChatStore: ObservableObject {
     nonisolated static func reasoningBudget(for effort: String) -> Int? {
         switch effort {
+        case "minimal": 128
         case "low": 512
         case "medium": 2_048
         case "high": 8_192
@@ -950,10 +951,12 @@ final class ChatStore: ObservableObject {
                     // prefills <think>): 0 forces the reasoning block to close now.
                     body["thinking_budget_tokens"] = 0
                 } else {
-                    body["chat_template_kwargs"] = [
-                        "enable_thinking": true,
-                        "reasoning_effort": sampling.reasoningEffort,
-                    ]
+                    var kwargs: [String: Any] = ["enable_thinking": true]
+                    // "default" leaves the value out so the template picks its own.
+                    if sampling.reasoningEffort != "default" {
+                        kwargs["reasoning_effort"] = sampling.reasoningEffort
+                    }
+                    body["chat_template_kwargs"] = kwargs
                     if let budget = Self.reasoningBudget(for: sampling.reasoningEffort) {
                         body["thinking_budget_tokens"] = budget
                     }
@@ -1652,6 +1655,10 @@ final class ChatStore: ObservableObject {
            let m = err["message"] as? String {
             message = m
         }
+        if message.lowercased().contains("reasoning effort")
+            || message.lowercased().contains("reasoning_effort") {
+            return "El modelo no acepta ese esfuerzo de razonamiento; elige otro o «Predeterminado del modelo» en los ajustes del chat. El motor respondió: \(message.prefix(200)) / the model does not accept that reasoning effort; pick another one or “Model default” in the chat settings. The engine answered: \(message.prefix(200))"
+        }
         if message.lowercased().contains("context") {
             return "Contexto lleno: el mensaje, los archivos adjuntos y el historial juntos superan el contexto. Sube el contexto en Ajustes, adjunta menos o inicia un chat nuevo / context full: your message, attached files and history together exceed the context. Raise the context size in Settings, attach less, or start a new chat"
         }
@@ -1977,8 +1984,47 @@ struct NativeChatView: View {
         contextLimit > 0 && Double(maxTokens) / Double(contextLimit) > 0.5
     }
 
+    /// Levels the loaded model's template validates; the usual four when it
+    /// validates nothing or the template could not be read.
+    private var reasoningEffortLevels: [String] {
+        let detected = modelModalities?.reasoning?.levels ?? []
+        return detected.isEmpty ? ["low", "medium", "high", "max"] : detected
+    }
+
+    private func reasoningEffortIsSupported(_ effort: String) -> Bool {
+        effort == "off" || effort == "default" || reasoningEffortLevels.contains(effort)
+    }
+
+    /// A level the model would reject never reaches the request: the template
+    /// raises and the server answers HTTP 500.
+    private func supportedReasoningEffort(_ effort: String) -> String {
+        if reasoningEffortIsSupported(effort) { return effort }
+        return ReasoningEffortDetector.closest(to: effort, in: reasoningEffortLevels) ?? "default"
+    }
+
+    private var effectiveReasoningEffort: String { supportedReasoningEffort(reasoningEffort) }
+
+    private var modelDefaultEffortLabel: String {
+        let label = loc.t("Predeterminado del modelo", "Model default")
+        guard let value = modelModalities?.reasoning?.modelDefault, !value.isEmpty else { return label }
+        return label + " · " + value
+    }
+
+    private func reasoningEffortLabel(_ level: String) -> String {
+        switch level {
+        case "none", "no_think": loc.t("Sin razonamiento", "No reasoning")
+        case "minimal": loc.t("Mínimo · sin presupuesto", "Minimal · no budget")
+        case "low": loc.t("Bajo · 512 tokens", "Low · 512 tokens")
+        case "medium": loc.t("Medio · 2.048 tokens", "Medium · 2,048 tokens")
+        case "high": loc.t("Alto · 8.192 tokens", "High · 8,192 tokens")
+        case "xhigh": loc.t("Muy alto · sin presupuesto", "Very high · no budget")
+        case "max": loc.t("Máximo · sin presupuesto", "Maximum · no budget")
+        default: level
+        }
+    }
+
     private var samplingSettings: ChatSamplingSettings {
-        ChatSamplingSettings(reasoningEffort: reasoningEffort,
+        ChatSamplingSettings(reasoningEffort: effectiveReasoningEffort,
                              topP: topP, minP: minP, topK: topK,
                              repeatPenalty: repeatPenalty, repeatLastN: repeatLastN, seed: seed,
                              dynatempRange: dynatempRange, dynatempExponent: dynatempExponent,
@@ -2770,17 +2816,21 @@ struct NativeChatView: View {
 
             Picker(selection: $reasoningEffort) {
                 Text(loc.t("Desactivado", "Off")).tag("off")
-                Text(loc.t("Bajo · 512 tokens", "Low · 512 tokens")).tag("low")
-                Text(loc.t("Medio · 2.048 tokens", "Medium · 2,048 tokens")).tag("medium")
-                Text(loc.t("Alto · 8.192 tokens", "High · 8,192 tokens")).tag("high")
-                Text(loc.t("Máximo · sin presupuesto", "Maximum · no budget")).tag("max")
+                Text(modelDefaultEffortLabel).tag("default")
+                ForEach(reasoningEffortLevels, id: \.self) { level in
+                    Text(reasoningEffortLabel(level)).tag(level)
+                }
             } label: {
                 Label(loc.t("Esfuerzo de razonamiento", "Reasoning effort"), systemImage: "brain")
             }
             .disabled(modelModalities?.thinking == false)
             .onChange(of: reasoningEffort) { _, value in thinkingEnabled = value != "off" }
-            .infoTip(loc.t("Los modelos razonadores piensan antes de responder (esos tokens cuentan dentro del límite de respuesta). Al desactivarlo se envía enable_thinking:false y /no_think; algunos modelos entrenados solo para razonar (p. ej. R1) pueden seguir pensando de todos modos.",
-                        "Reasoning models think before answering (those tokens count toward the response limit). Turning it off sends enable_thinking:false and /no_think; some reasoning-only models (e.g. R1) may still think regardless."))
+            .onChange(of: modelModalities?.reasoning) { _, _ in
+                let supported = supportedReasoningEffort(reasoningEffort)
+                if supported != reasoningEffort { reasoningEffort = supported }
+            }
+            .infoTip(loc.t("Los modelos razonadores piensan antes de responder (esos tokens cuentan dentro del límite de respuesta). La lista muestra los niveles que acepta la plantilla del modelo cargado, y «Predeterminado del modelo» deja que la elija él. Al desactivarlo se envía enable_thinking:false y /no_think; algunos modelos entrenados solo para razonar (p. ej. R1) pueden seguir pensando de todos modos.",
+                        "Reasoning models think before answering (those tokens count toward the response limit). The list shows the levels the loaded model's template accepts, and “Model default” lets the model choose. Turning it off sends enable_thinking:false and /no_think; some reasoning-only models (e.g. R1) may still think regardless."))
 
             Toggle(isOn: $showSystemMessage) {
                 Label(loc.t("Mostrar prompt de sistema", "Show system prompt"),

@@ -13,7 +13,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Mistral Small 4 runs its attention on the card.** Its 320-wide keys had no kernel, so every layer's attention fell back to the processor.
 
+- **The reasoning effort list has a "Model default" entry** that leaves the choice to the model instead of sending a level.
+
 ### Fixed
+- **The reasoning effort list only offers what the model accepts.** Some chat templates take their own set of levels and reject the rest, which arrived as an HTTP 500 in the middle of the answer; the list is now read from the loaded model's template, an unsupported saved choice falls back to the model default, and a rejection explains itself.
+
 - **The TurboQuant warning says which of its reasons applies.** It listed the model, the backend and the type combination in one sentence, and explained only the last.
 
 ## [0.85.6] - 2026-08-21
