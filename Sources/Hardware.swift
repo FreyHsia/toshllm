@@ -15,7 +15,7 @@ struct HardwareInfo {
     let arch: String
     let model: String        // e.g. "Mac Pro (MacPro7,1)"
     let osVersion: String    // e.g. "macOS 15.5 Sequoia"
-    let gpus: [GPUDevice]
+    var gpus: [GPUDevice]
 
     var bestGPU: GPUDevice? { gpus.max(by: { $0.vramMB < $1.vramMB }) }
     var vramGB: Double { Double(bestGPU?.vramMB ?? 0) / 1024 }

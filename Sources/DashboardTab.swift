@@ -23,7 +23,6 @@ struct DashboardView: View {
     @AppStorage(SettingsKeys.embeddings) private var embeddings = false
     @AppStorage(SettingsKeys.uiMcpProxy) private var uiMcpProxy = false
     @State private var showNotes = false
-    @State private var showGPUDetail = false
     @AppStorage(SettingsKeys.routerMode) private var routerMode = false
     @AppStorage(SettingsKeys.routerModelsMax) private var routerModelsMax = 1
 
@@ -38,7 +37,7 @@ struct DashboardView: View {
                     // fill the width instead of stacking in one tall column.
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 16, alignment: .top)],
                               spacing: 16) {
-                        hardwareCard
+                        MachineCard()
                         GPUsCard()
                         serverCard
                         // Array(...) not the ArraySlice from dropFirst(): a slice keeps its
@@ -92,40 +91,6 @@ struct DashboardView: View {
         }
     }
 
-    private var hardwareCard: some View {
-        Card(title: loc.t("Tu equipo", "Your machine"), icon: "desktopcomputer", fill: true) {
-            row("cpu", hardware.cpuBrand
-                .replacingOccurrences(of: "(R)", with: "")
-                .replacingOccurrences(of: "(TM)", with: ""))
-            row("square.grid.3x3",
-                loc.t("\(hardware.physicalCores) núcleos / \(hardware.logicalCores) hilos",
-                      "\(hardware.physicalCores) cores / \(hardware.logicalCores) threads"))
-            row("memorychip", String(format: "%.0f GB RAM", hardware.ramGB))
-            if hardware.splitEligibleGPUs.count > 1 {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.on.rectangle")
-                        .frame(width: 18).foregroundStyle(.secondary)
-                    Text(gpuCountSummary).font(.callout).lineLimit(1)
-                    Spacer(minLength: 8)
-                    Button(loc.t("Detalle", "Details")) { showGPUDetail.toggle() }
-                        .buttonStyle(.plain).font(.caption.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .popover(isPresented: $showGPUDetail, arrowEdge: .bottom) { gpuDetailPopover }
-                }
-                .help(gpuListTooltip)
-                row("link", peerLinkSummary)
-                    .help(loc.t("Las GPUs unidas por un enlace Infinity Fabric comparten un grupo de pares en Metal, y solo así pueden copiarse activaciones directamente en vez de pasar por la RAM. La memoria del grupo es la que un modelo repartido recorre sin pasar por el sistema. macOS no lo muestra en ningún sitio: si el puente no está o no funciona, cada tarjeta aparece en su propio grupo.",
-                            "GPUs joined by an Infinity Fabric link share a Metal peer group, which is what lets them copy activations directly instead of going through system RAM. The memory of a group is what a split model reaches without going through the system. macOS shows this nowhere: if the bridge is missing or not working, each card ends up in its own group."))
-            } else if let gpu = hardware.bestGPU {
-                row("rectangle.on.rectangle", "\(gpu.name) · \(gpu.vramGB) GB VRAM")
-            }
-            if !hardware.model.isEmpty { row("desktopcomputer", hardware.model) }
-            if !hardware.osVersion.isEmpty { row("apple.logo", hardware.osVersion) }
-            row("bolt.fill", ServerSettings.isAppleSilicon
-                ? loc.t("Backend: Metal (Apple Silicon)", "Backend: Metal (Apple Silicon)")
-                : loc.t("Backend: Metal (build AMD parcheado)", "Backend: Metal (patched AMD build)"))
-        }
-    }
 
     // Networking is a launch flag, so restart the running primary to apply it now.
     private func setDiscoverable(_ on: Bool) {
@@ -460,8 +425,63 @@ struct DashboardView: View {
         }
     }
 
+    private func row(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).frame(width: 18).foregroundStyle(.secondary)
+            Text(text).font(.callout).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Its own view so the 3s device poll it watches re-renders only this card. The GPU
+/// list can grow after launch: macOS wakes the cards one by one.
+struct MachineCard: View {
+    @EnvironmentObject var loc: Localizer
+    @EnvironmentObject var vram: VRAMMonitor
+    @State private var machine = hardware
+    @State private var showGPUDetail = false
+
+    var body: some View {
+        Card(title: loc.t("Tu equipo", "Your machine"), icon: "desktopcomputer", fill: true) {
+            row("cpu", machine.cpuBrand
+                .replacingOccurrences(of: "(R)", with: "")
+                .replacingOccurrences(of: "(TM)", with: ""))
+            row("square.grid.3x3",
+                loc.t("\(machine.physicalCores) núcleos / \(machine.logicalCores) hilos",
+                      "\(machine.physicalCores) cores / \(machine.logicalCores) threads"))
+            row("memorychip", String(format: "%.0f GB RAM", machine.ramGB))
+            if machine.splitEligibleGPUs.count > 1 {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .frame(width: 18).foregroundStyle(.secondary)
+                    Text(gpuCountSummary).font(.callout).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button(loc.t("Detalle", "Details")) { showGPUDetail.toggle() }
+                        .buttonStyle(.plain).font(.caption.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .popover(isPresented: $showGPUDetail, arrowEdge: .bottom) { gpuDetailPopover }
+                }
+                .help(gpuListTooltip)
+                row("link", peerLinkSummary)
+                    .help(loc.t("Las GPUs unidas por un enlace Infinity Fabric comparten un grupo de pares en Metal, y solo así pueden copiarse activaciones directamente en vez de pasar por la RAM. La memoria del grupo es la que un modelo repartido recorre sin pasar por el sistema. macOS no lo muestra en ningún sitio: si el puente no está o no funciona, cada tarjeta aparece en su propio grupo.",
+                            "GPUs joined by an Infinity Fabric link share a Metal peer group, which is what lets them copy activations directly instead of going through system RAM. The memory of a group is what a split model reaches without going through the system. macOS shows this nowhere: if the bridge is missing or not working, each card ends up in its own group."))
+            } else if let gpu = machine.bestGPU {
+                row("rectangle.on.rectangle", "\(gpu.name) · \(gpu.vramGB) GB VRAM")
+            }
+            if !machine.model.isEmpty { row("desktopcomputer", machine.model) }
+            if !machine.osVersion.isEmpty { row("apple.logo", machine.osVersion) }
+            row("bolt.fill", ServerSettings.isAppleSilicon
+                ? loc.t("Backend: Metal (Apple Silicon)", "Backend: Metal (Apple Silicon)")
+                : loc.t("Backend: Metal (build AMD parcheado)", "Backend: Metal (patched AMD build)"))
+        }
+        .onChange(of: vram.gpus.count) { _, _ in
+            machine.gpus = ServerController.availableGPUs()
+        }
+    }
+
     private var gpuModelRows: [String] {
-        let gpus = hardware.splitEligibleGPUs
+        let gpus = machine.splitEligibleGPUs
         var order: [String] = []
         var counts: [String: Int] = [:]
         var vram: [String: Int] = [:]
@@ -480,7 +500,7 @@ struct DashboardView: View {
 
     /// Summed from the rounded per-card figures so the panel adds up on screen.
     private var gpuCountSummary: String {
-        let gpus = hardware.splitEligibleGPUs
+        let gpus = machine.splitEligibleGPUs
         let total = gpus.reduce(0) { $0 + $1.vramGB }
         return loc.t("\(gpus.count) GPUs · \(total) GB de VRAM", "\(gpus.count) GPUs · \(total) GB VRAM")
     }
@@ -491,7 +511,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(gpuModelRows, id: \.self) { Text($0).font(.callout) }
             }
-            if !hardware.peerGroups.isEmpty {
+            if !machine.peerGroups.isEmpty {
                 Divider()
                 Text(loc.t("Enlaces Infinity Fabric", "Infinity Fabric links")).font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
@@ -508,7 +528,7 @@ struct DashboardView: View {
     }
 
     private var gpuListTooltip: String {
-        let list = hardware.gpus
+        let list = machine.gpus
             .map { "\($0.name) · \($0.vramGB) GB\($0.isExternal ? " · eGPU" : "")" }
             .joined(separator: "\n")
         return loc.t("VRAM que reporta Metal, no la nominal de la caja. Solo se suma cuando repartes un modelo entre varias GPUs; un modelo que no reparta debe caber en una sola.\n\n\(list)",
@@ -517,7 +537,7 @@ struct DashboardView: View {
 
     /// The memory behind a link is what a split model moves without touching RAM.
     private var peerLinkSummary: String {
-        let groups = hardware.peerGroups
+        let groups = machine.peerGroups
         guard !groups.isEmpty else {
             return loc.t("Infinity Fabric: sin enlace entre tarjetas",
                          "Infinity Fabric: no link between cards")
@@ -533,12 +553,12 @@ struct DashboardView: View {
     }
 
     private var peerLinkRows: [String] {
-        let groups = hardware.peerGroups
+        let groups = machine.peerGroups
         guard !groups.isEmpty else {
             return [loc.t("Infinity Fabric: sin enlace entre tarjetas",
                           "Infinity Fabric: no link between cards")]
         }
-        let labels = GPUPeerTopology.labels(hardware.gpus.map { ($0.index, $0.peerGroupID) })
+        let labels = GPUPeerTopology.labels(machine.gpus.map { ($0.index, $0.peerGroupID) })
         return groups.map { members in
             let total = members.reduce(0) { $0 + $1.vramGB }
             let prefix = groups.count == 1
@@ -551,6 +571,7 @@ struct DashboardView: View {
             return "\(prefix): \(what) · \(total) GB"
         }
     }
+
 
     private func row(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 8) {
