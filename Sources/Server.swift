@@ -20,6 +20,8 @@ struct GPUDevice: Identifiable, Hashable {
     /// the other members when it has one.
     var peerGroupID: UInt64 = 0
     var peerCount: Int = 0
+    /// Metal exposes bf16 only from the Metal 3 family up; older cards abort on a bf16 weight.
+    var supportsBF16: Bool = true
     var id: Int { index }
     /// Rounded, since Metal reports a working set a little off the nominal size.
     var vramGB: Int { Int((Double(vramMB) / 1024).rounded()) }
@@ -265,6 +267,7 @@ struct ServerSettings {
         let mmproj = loadVision ? Self.mmprojPath(forModel: modelPath) : nil
         if let mmproj {
             args += ["--mmproj", mmproj]
+            if Self.projectorNeedsCPU(mmproj) { args.append("--no-mmproj-offload") }
             if imageMaxTokens > 0 { args += ["--image-max-tokens", String(imageMaxTokens)] }
         }
         if jinja || mmproj != nil { args.append("--jinja") }
@@ -406,6 +409,7 @@ struct ServerSettings {
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
             if let mmproj {
                 lines.append("mmproj = \(mmproj)")
+                if Self.projectorNeedsCPU(mmproj) { lines.append("mmproj-offload = false") }
                 if imageMaxTokens > 0 { lines.append("image-max-tokens = \(imageMaxTokens)") }
             }
             if jinja || mmproj != nil { lines.append("jinja = true") }
@@ -1155,6 +1159,14 @@ struct ServerSettings {
         return dflashDraftPath(forModel: modelPath)
     }
 
+    /// A bf16 projector aborts the engine on a card without the Metal 3 family: the loader
+    /// puts the weight in device memory and the scheduler then refuses to run it there.
+    /// Keeping the tower on the CPU costs image-encode time and keeps vision working.
+    nonisolated static func projectorNeedsCPU(_ mmproj: String) -> Bool {
+        guard GGUFMetadataCache.tensorFlags(at: mmproj).hasBF16Tensor else { return false }
+        return ServerController.availableGPUs().contains { !$0.isIntegrated && !$0.supportsBF16 }
+    }
+
     nonisolated static func mmprojPath(forModel modelPath: String) -> String? {
         guard !modelPath.isEmpty else { return nil }
         let url = URL(fileURLWithPath: modelPath)
@@ -1409,7 +1421,8 @@ final class ServerController: ObservableObject {
                       isExternal: dev.location == .external,
                       isIntegrated: dev.isLowPower,
                       peerGroupID: dev.peerGroupID,
-                      peerCount: Int(dev.peerCount))
+                      peerCount: Int(dev.peerCount),
+                      supportsBF16: dev.supportsFamily(.metal3))
         }
     }
 
@@ -1671,8 +1684,15 @@ final class ServerController: ObservableObject {
         if tail.contains("quantized v cache") {
             return "El KV cuantizado requiere Flash Attention: activa el kernel AMD o usa FA estándar / quantized KV requires Flash Attention: enable the AMD kernel or use standard FA"
         }
-        if tail.contains("nextn") || tail.contains("draft-mtp") || tail.contains("mtp") {
-            return "Este modelo no trae cabezal MTP: desactiva 'Aceleración MTP' o descarga la variante -MTP- / model has no MTP head: disable 'MTP acceleration' or download the -MTP- variant"
+        // The tensor named in the abort says whether it is the projector or the model itself.
+        if tail.contains("pre-allocated tensor") && tail.contains("cannot run the operation") {
+            return tail.contains("pre-allocated tensor (v.")
+                ? "El proyector de visión usa un formato que esta tarjeta no ejecuta (normalmente BF16): descarga el mmproj en F16 / the vision projector uses a format this card cannot run (usually BF16): download the F16 mmproj"
+                : "Un tensor del modelo usa un formato que esta tarjeta no ejecuta (normalmente BF16): usa un GGUF en F16 o cuantizado / a model tensor uses a format this card cannot run (usually BF16): use an F16 or quantized GGUF"
+        }
+        // The engine's own wording. Matching a bare "mtp" also matched every file named -MTP-.
+        if tail.contains("doesn't contain mtp layers") || tail.contains("failed to create mtp context") {
+            return "Este modelo no trae cabezal MTP: descarga la variante -MTP- / model has no MTP head: download the -MTP- variant"
         }
         if tail.contains("invalid ggml type") || tail.contains("should be in [0,") {
             return "Cuantización no soportada por el motor (formato de un fork, p. ej. Prism ML): usa un GGUF con quant estándar (Q4_K_M, Q8_0, Q2_0_g64…) / quantization not supported by the engine (a fork's format, e.g. Prism ML): use a GGUF with a standard quant (Q4_K_M, Q8_0, Q2_0_g64…)"

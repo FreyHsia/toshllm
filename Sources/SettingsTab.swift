@@ -148,7 +148,11 @@ struct SettingsView: View {
     private var dynamicMoeSlotBinding: Binding<Int> {
         Binding(
             get: { effectiveDynamicMoeSlots },
-            set: { dynamicMoeSlots = $0 })
+            set: { v in
+                guard let info = dynamicMoeModelInfo else { dynamicMoeSlots = v; return }
+                let floor = min(max(info.activeExpertCount, 1), info.expertCount)
+                dynamicMoeSlots = min(max(v, floor), info.expertCount)
+            })
     }
     private func gibLabel(_ bytes: UInt64) -> String {
         String(format: "%.2f GiB", Double(bytes) / 1_073_741_824)
@@ -564,10 +568,19 @@ struct SettingsView: View {
                             }
                         } else {
                             if let info = dynamicMoeModelInfo {
-                                Stepper(loc.t("Ranuras en VRAM: K\(effectiveDynamicMoeSlots) de \(info.expertCount)",
-                                              "VRAM slots: K\(effectiveDynamicMoeSlots) of \(info.expertCount)"),
-                                        value: dynamicMoeSlotBinding,
-                                        in: info.activeExpertCount...info.expertCount)
+                                HStack {
+                                    Text(loc.t("Ranuras en VRAM (K, de \(info.expertCount))",
+                                               "VRAM slots (K, of \(info.expertCount))"))
+                                    Spacer()
+                                    TextField("", value: dynamicMoeSlotBinding,
+                                              format: .number.grouping(.never))
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 64)
+                                        .multilineTextAlignment(.trailing)
+                                    Stepper("", value: dynamicMoeSlotBinding,
+                                            in: info.activeExpertCount...info.expertCount)
+                                        .labelsHidden()
+                                }
                                     .infoTip(loc.t("K es por capa. El mínimo es el número de expertos activos por token (top-\(info.activeExpertCount)) y el máximo es el total real del GGUF (\(info.expertCount)).",
                                                         "K is per layer. The minimum is the experts active per token (top-\(info.activeExpertCount)); the maximum is the GGUF's real total (\(info.expertCount))."))
                                 if let plan = dynamicMoeSlotPlan {
@@ -600,8 +613,8 @@ struct SettingsView: View {
                         }
                         Label(dynamicMoePolicy == "auto"
                                 ? loc.t("Auto: normal o K=top-k · prefetch4", "Auto: normal or K=top-k · prefetch4")
-                                : loc.t("Configuración efectiva: cache · ncmoe 1 · mlock · NCB8",
-                                        "Effective configuration: cache · ncmoe 1 · mlock · NCB8"),
+                                : loc.t("Configuración efectiva: cache · mlock · NCB8",
+                                        "Effective configuration: cache · mlock · NCB8"),
                               systemImage: "flask.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)

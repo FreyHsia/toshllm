@@ -21,6 +21,8 @@ struct GGUFMetadata: Sendable {
 struct GGUFTensorFlags: Sendable {
     let hasNextNTensor: Bool
     let hasTurboQuantTensor: Bool
+    /// Metal refuses bf16 on cards without the family that provides it, weights included.
+    let hasBF16Tensor: Bool
 }
 
 enum GGUFMetadataCache {
@@ -61,7 +63,7 @@ enum GGUFMetadataCache {
 
     static func tensorFlags(at path: String) -> GGUFTensorFlags {
         guard let key = fileKey(for: path) else {
-            return GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false)
+            return GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false)
         }
 
         lock.lock()
@@ -141,7 +143,7 @@ enum GGUFMetadataCache {
     }
 
     private static func parseTensorFlags(at path: String) -> GGUFTensorFlags {
-        let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false)
+        let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false)
         guard let data = readPrefix(at: path, limit: 32 * 1024 * 1024) else { return empty }
         var cursor = GGUFDataCursor(data: data)
         guard cursor.readBytes(count: 4) == Data([0x47, 0x47, 0x55, 0x46]),
@@ -157,6 +159,7 @@ enum GGUFMetadataCache {
 
         var hasNextN = false
         var hasTurboQuant = false
+        var hasBF16 = false
         for _ in 0..<tensorCount {
             guard let name = cursor.readString(maxLength: 1 << 20),
                   let dimensions = cursor.readUInt32(), dimensions <= 8 else { return empty }
@@ -165,9 +168,11 @@ enum GGUFMetadataCache {
                   cursor.readUInt64() != nil else { return empty }
             hasNextN = hasNextN || name.contains(".nextn.")
             hasTurboQuant = hasTurboQuant || tensorType == 45 || tensorType == 46
+            hasBF16 = hasBF16 || tensorType == 30
         }
 
-        return GGUFTensorFlags(hasNextNTensor: hasNextN, hasTurboQuantTensor: hasTurboQuant)
+        return GGUFTensorFlags(hasNextNTensor: hasNextN, hasTurboQuantTensor: hasTurboQuant,
+                               hasBF16Tensor: hasBF16)
     }
 }
 

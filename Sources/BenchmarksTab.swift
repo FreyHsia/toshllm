@@ -219,8 +219,12 @@ struct BenchmarksView: View {
                                     Stepper("", value: $cfg.ncmoe, in: 0...99).labelsHidden()
                                 }
                             }
-                            .help(loc.t("Solo modelos MoE: capas cuyos expertos corren en CPU. Se siembra con el valor recomendado para tu hardware; subirlo descarga más a CPU, bajarlo arriesga saturar la VRAM.",
-                                        "MoE models only: layers whose experts run on the CPU. Seeded with the value recommended for your hardware; raising offloads more to CPU, lowering risks saturating VRAM."))
+                            .disabled(cfg.effectiveDynamicMoe)
+                            .help(cfg.effectiveDynamicMoe
+                                  ? loc.t("No aplica con Dynamic MoE: la caché fija el reparto y el motor ignora este valor.",
+                                          "Does not apply with Dynamic MoE: the cache sets the split and the engine ignores this value.")
+                                  : loc.t("Solo modelos MoE: capas cuyos expertos corren en CPU. Se siembra con el valor recomendado para tu hardware; subirlo descarga más a CPU, bajarlo arriesga saturar la VRAM.",
+                                          "MoE models only: layers whose experts run on the CPU. Seeded with the value recommended for your hardware; raising offloads more to CPU, lowering risks saturating VRAM."))
                         }
                         if benchAdvanced {
                             field("Prompt · -p") {
@@ -276,7 +280,11 @@ struct BenchmarksView: View {
                     chip("pp\(cfg.benchPPClamped)/tg\(cfg.benchTGClamped)",
                          active: cfg.benchPPClamped != 512 || cfg.benchTGClamped != 128)
                     if cfg.benchDepthClamped > 0 { chip("d\(cfg.benchDepthClamped)", active: true) }
-                    chip("ncmoe \(cfg.ncmoe)", active: cfg.ncmoe > 0)
+                    if cfg.effectiveDynamicMoe {
+                        chip("dMoE K\(cfg.effectiveDynamicMoeSlots)", active: true)
+                    } else {
+                        chip("ncmoe \(cfg.ncmoe)", active: cfg.ncmoe > 0)
+                    }
                     chip("K:\(cfg.cacheTypeK)", active: cfg.cacheTypeK != "f16")
                     chip("V:\(cfg.cacheTypeV)", active: cfg.cacheTypeV != "f16")
                     chip(engineName, active: cfg.serverBinary != ServerSettings.defaultBinary)
@@ -321,7 +329,8 @@ struct BenchmarksView: View {
                 Button { rememberWorkload(); bench.sweep(settings: cfg) } label: {
                     Label(loc.t("Buscar óptimo", "Find optimum"), systemImage: "scope")
                 }
-                .disabled(cfg.modelPath.isEmpty || cfg.ncmoe == 0 || server.state == .running || server.state == .starting)
+                .disabled(cfg.modelPath.isEmpty || cfg.ncmoe == 0 || cfg.effectiveDynamicMoe
+                          || server.state == .running || server.state == .starting)
                 .help(loc.t("Solo modelos MoE: busca el ncmoe mínimo seguro y recomienda tres pasos por encima para dejar margen de VRAM. Muestra cada medición temporalmente y solo guarda el óptimo.",
                             "MoE models only: finds the lowest safe ncmoe and recommends three steps above it for VRAM headroom. Shows each measurement temporarily and saves only the optimum."))
                 Button { rememberWorkload(); bench.runReal(settings: cfg) } label: {
