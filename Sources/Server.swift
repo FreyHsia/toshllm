@@ -25,6 +25,16 @@ struct GPUDevice: Identifiable, Hashable {
     var vramGB: Int { Int((Double(vramMB) / 1024).rounded()) }
 }
 
+enum DynamicMoeAutoRoute: Equatable {
+    case cache
+    case normalDense
+    case normalFitsVRAM
+    case normalInsufficientRAM
+    case normalUnsupportedGPU
+    case normalMissingModel
+    case normalSplitOrRouter
+}
+
 struct ServerSettings {
     var serverBinary: String
     var modelPath: String
@@ -81,6 +91,7 @@ struct ServerSettings {
     var dynamicMoe: Bool = false
     var dynamicMoeSlots: Int = 8
     var dynamicMoePrefetch: Int = 4
+    var dynamicMoePolicy: String = "cache" // cache | auto
     /// Router mode (`--models-preset`): one process auto-loads/unloads whichever
     /// model a request's "model" field names, instead of the fixed `modelPath`.
     var routerMode: Bool = false
@@ -518,6 +529,7 @@ struct ServerSettings {
         // no-ops for dense models anyway.
         if effectiveDynamicMoe {
             env["TOSH_MOE_MODE"] = "cache"
+            if dynamicMoePolicy == "auto" { env["TOSH_MOE_AUTO"] = "1" }
             env["TOSH_MOE_SLOTS"] = String(effectiveDynamicMoeSlots)
             env["TOSH_MOE_CPU_BANK"] = "1"
             env["GGML_SCHED_PREFETCH_EXPERTS"] = String(effectiveDynamicMoePrefetch)
@@ -625,6 +637,7 @@ struct ServerSettings {
             dynamicMoe: bool(SettingsKeys.dynamicMoe, false),
             dynamicMoeSlots: int(SettingsKeys.dynamicMoeSlots, 8),
             dynamicMoePrefetch: int(SettingsKeys.dynamicMoePrefetch, 4),
+            dynamicMoePolicy: d.string(forKey: SettingsKeys.dynamicMoePolicy) ?? "cache",
             routerMode: bool(SettingsKeys.routerMode, false),
             routerModelsMax: int(SettingsKeys.routerModelsMax, 1),
             persistCache: bool(SettingsKeys.persistCache, false),
@@ -684,9 +697,60 @@ struct ServerSettings {
     /// Router presets load models independently and cannot carry the per-tensor
     /// override required by this prototype, so keep the experiment fixed-model only.
     var dynamicMoeUIUnlocked: Bool { extraArgTokens.env["TOSH_MOE_UI"] == "1" }
-    var effectiveDynamicMoe: Bool { dynamicMoe && dynamicMoeUIUnlocked && !routerMode }
-    var effectiveDynamicMoeSlots: Int { min(max(dynamicMoeSlots, 8), 256) }
-    var effectiveDynamicMoePrefetch: Int { min(max(dynamicMoePrefetch, 0), 16) }
+    var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
+        guard !modelPath.isEmpty,
+              let size = try? FileManager.default.attributesOfItem(atPath: modelPath)[.size] as? NSNumber else {
+            return .normalMissingModel
+        }
+        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
+        let gpu = selected.max { $0.vramMB < $1.vramMB }
+        return Self.resolveDynamicMoeAuto(
+            isMoE: Self.modelIsMoE(at: modelPath),
+            modelBytes: size.uint64Value,
+            gpuVRAMMB: gpu?.vramMB ?? 0,
+            reserveMB: vramReserveMB,
+            physicalRAMBytes: ProcessInfo.processInfo.physicalMemory,
+            hasDiscreteGPU: gpu?.isIntegrated == false,
+            splitOrRouter: isSplitting || routerMode)
+    }
+    var effectiveDynamicMoe: Bool {
+        guard dynamicMoe && dynamicMoeUIUnlocked else { return false }
+        if dynamicMoePolicy == "auto" { return dynamicMoeAutoRoute == .cache }
+        return !routerMode && !isSplitting
+    }
+    var effectiveDynamicMoeSlots: Int {
+        dynamicMoePolicy == "auto" ? 8 : min(max(dynamicMoeSlots, 8), 256)
+    }
+    var effectiveDynamicMoePrefetch: Int {
+        dynamicMoePolicy == "auto" ? 4 : min(max(dynamicMoePrefetch, 0), 16)
+    }
+
+    static func resolveDynamicMoeAuto(
+        isMoE: Bool,
+        modelBytes: UInt64,
+        gpuVRAMMB: Int,
+        reserveMB: Int,
+        physicalRAMBytes: UInt64,
+        hasDiscreteGPU: Bool,
+        splitOrRouter: Bool
+    ) -> DynamicMoeAutoRoute {
+        guard !splitOrRouter else { return .normalSplitOrRouter }
+        guard isMoE else { return .normalDense }
+        guard modelBytes > 0 else { return .normalMissingModel }
+        guard hasDiscreteGPU, gpuVRAMMB > 0 else { return .normalUnsupportedGPU }
+
+        // Besides the user's reserve, leave 512 MiB for compute/KV allocations. A GGUF
+        // that fits below this line gains nothing from duplicating its expert bank in RAM.
+        let mib = UInt64(1024 * 1024)
+        let usableVRAM = UInt64(max(0, gpuVRAMMB - reserveMB - 512)) * mib
+        guard modelBytes > usableVRAM else { return .normalFitsVRAM }
+
+        // Dynamic MoE pins the quantized expert bank. Keep the model plus 25% and 4 GiB
+        // for the OS/app/KV; if total RAM cannot provide that, normal ncmoe is safer.
+        let ramHeadroom = max(modelBytes / 4, UInt64(4) * 1024 * 1024 * 1024)
+        guard physicalRAMBytes >= modelBytes + ramHeadroom else { return .normalInsufficientRAM }
+        return .cache
+    }
 
     /// Resolves DFlash against the same physical GPU selection and memory reserve
     /// that will be passed to the engine. A nil plan means metadata or hardware is

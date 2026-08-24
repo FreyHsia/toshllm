@@ -597,6 +597,51 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertNil(s.environment["TOSH_MOE_MODE"])
     }
 
+    func testDynamicMoeAutoSelectsCacheOnlyWhenItProvidesAUsefulFit() {
+        let gib = UInt64(1024 * 1024 * 1024)
+        func route(
+            isMoE: Bool = true,
+            modelGB: UInt64 = 12,
+            vramMB: Int = 12_288,
+            reserveMB: Int = 1_024,
+            ramGB: UInt64 = 32,
+            hasDiscreteGPU: Bool = true,
+            splitOrRouter: Bool = false
+        ) -> DynamicMoeAutoRoute {
+            ServerSettings.resolveDynamicMoeAuto(
+                isMoE: isMoE,
+                modelBytes: modelGB * gib,
+                gpuVRAMMB: vramMB,
+                reserveMB: reserveMB,
+                physicalRAMBytes: ramGB * gib,
+                hasDiscreteGPU: hasDiscreteGPU,
+                splitOrRouter: splitOrRouter)
+        }
+
+        // 12 GiB does not fit in 12 GiB VRAM after the 1 GiB user reserve and
+        // 512 MiB runtime margin, while 32 GiB RAM can safely pin its bank.
+        XCTAssertEqual(route(), .cache)
+        XCTAssertEqual(route(modelGB: 8), .normalFitsVRAM)
+        XCTAssertEqual(route(ramGB: 14), .normalInsufficientRAM)
+        XCTAssertEqual(route(isMoE: false), .normalDense)
+        XCTAssertEqual(route(hasDiscreteGPU: false), .normalUnsupportedGPU)
+        XCTAssertEqual(route(splitOrRouter: true), .normalSplitOrRouter)
+        XCTAssertEqual(ServerSettings.resolveDynamicMoeAuto(
+            isMoE: true, modelBytes: 0, gpuVRAMMB: 12_288, reserveMB: 1_024,
+            physicalRAMBytes: 32 * gib, hasDiscreteGPU: true, splitOrRouter: false),
+                       .normalMissingModel)
+    }
+
+    func testDynamicMoeAutoUsesTheMeasuredK8Recipe() {
+        var s = makeSettings()
+        s.dynamicMoePolicy = "auto"
+        s.dynamicMoeSlots = 114
+        s.dynamicMoePrefetch = 16
+
+        XCTAssertEqual(s.effectiveDynamicMoeSlots, 8)
+        XCTAssertEqual(s.effectiveDynamicMoePrefetch, 4)
+    }
+
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {
         var settings = makeSettings()
         settings.jinja = false

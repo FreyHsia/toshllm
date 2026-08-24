@@ -22,6 +22,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.dynamicMoe) private var dynamicMoe = false
     @AppStorage(SettingsKeys.dynamicMoeSlots) private var dynamicMoeSlots = 8
     @AppStorage(SettingsKeys.dynamicMoePrefetch) private var dynamicMoePrefetch = 4
+    @AppStorage(SettingsKeys.dynamicMoePolicy) private var dynamicMoePolicy = "cache"
     @AppStorage(SettingsKeys.persistCache) private var persistCache = false
     @AppStorage(SettingsKeys.port) private var port = 8080
     @AppStorage(SettingsKeys.ngl) private var ngl = 99
@@ -129,6 +130,36 @@ struct SettingsView: View {
     private var amdFlashActive: Bool { faAmd }
     private var dynamicMoeUIUnlocked: Bool {
         ShellWords.split(extraArgs).contains("TOSH_MOE_UI=1")
+    }
+    private var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
+        ServerSettings.fromDefaults().dynamicMoeAutoRoute
+    }
+    private var dynamicMoeIsEffective: Bool {
+        dynamicMoe && dynamicMoeUIUnlocked
+            && (dynamicMoePolicy != "auto" || dynamicMoeAutoRoute == .cache)
+    }
+    private var dynamicMoeAutoMessage: String {
+        switch dynamicMoeAutoRoute {
+        case .cache:
+            loc.t("Auto eligió caché dinámica: el modelo no cabe con margen en VRAM y hay RAM suficiente.",
+                  "Auto selected dynamic cache: the model does not fit in VRAM with headroom and enough RAM is available.")
+        case .normalDense:
+            loc.t("Auto eligió normal: el modelo no es MoE.", "Auto selected normal: the model is not MoE.")
+        case .normalFitsVRAM:
+            loc.t("Auto eligió normal: el modelo cabe en VRAM con el margen configurado.",
+                  "Auto selected normal: the model fits in VRAM with the configured headroom.")
+        case .normalInsufficientRAM:
+            loc.t("Auto eligió normal: no hay RAM física suficiente para fijar el banco de expertos.",
+                  "Auto selected normal: there is not enough physical RAM to pin the expert bank.")
+        case .normalUnsupportedGPU:
+            loc.t("Auto eligió normal: se necesita una GPU discreta compatible.",
+                  "Auto selected normal: a compatible discrete GPU is required.")
+        case .normalMissingModel:
+            loc.t("Auto espera un modelo válido para decidir.", "Auto is waiting for a valid model before deciding.")
+        case .normalSplitOrRouter:
+            loc.t("Auto eligió normal: Dynamic MoE aún no admite split ni router.",
+                  "Auto selected normal: Dynamic MoE does not support split or router yet.")
+        }
     }
 
     private var engineSelection: Binding<String> {
@@ -472,32 +503,47 @@ struct SettingsView: View {
                         }), in: 0...99)
                     .infoTip(loc.t("Solo modelos MoE: capas cuyos 'expertos' viven en RAM y los procesa el CPU. Se ajusta solo al elegir modelo; súbelo si la VRAM se satura, bájalo si te sobra. (Deshabilitado en modelos densos, donde el motor lo ignora.)",
                                 "MoE models only: layers whose 'experts' live in RAM and run on the CPU. Auto-set when picking a model; raise if VRAM saturates, lower if you have headroom. (Disabled on dense models, where the engine ignores it.)"))
-                    .disabled(!modelIsMoE || (dynamicMoe && dynamicMoeUIUnlocked))
+                    .disabled(!modelIsMoE || dynamicMoeIsEffective)
                 if engineSelection.wrappedValue != "custom" && dynamicMoeUIUnlocked {
-                    Toggle(loc.t("Dynamic MoE K8 (experimental)", "Dynamic MoE K8 (experimental)"),
+                    Toggle(loc.t("Dynamic MoE (experimental)", "Dynamic MoE (experimental)"),
                            isOn: $dynamicMoe)
                         .disabled(!modelIsMoE)
                         .infoTip(loc.t("Mantiene todos los expertos cuantizados en RAM y una caché pequeña en VRAM. Está apagado por defecto. Al activarlo usa ncmoe 1, mlock y el override Metal requeridos; desactívalo para volver al camino normal con el mismo binario.",
                                     "Keeps all quantized experts in RAM and a small cache in VRAM. It is off by default. Enabling it applies ncmoe 1, mlock, and the required Metal override; turn it off to return to the normal path with the same binary."))
                     if dynamicMoe {
-                        Picker(loc.t("Ranuras de expertos en VRAM", "Expert slots in VRAM"),
-                               selection: $dynamicMoeSlots) {
-                            ForEach([8, 16, 32, 64, 114], id: \.self) { value in
-                                Text("K\(value)").tag(value)
-                            }
+                        Picker(loc.t("Política", "Policy"), selection: $dynamicMoePolicy) {
+                            Text(loc.t("Automática", "Automatic")).tag("auto")
+                            Text(loc.t("Caché manual", "Manual cache")).tag("cache")
                         }
-                        .infoTip(loc.t("K8 es el mínimo medido y usa menos VRAM. Más ranuras mejoran principalmente la generación, pero aumentan la memoria; K114 ya no cumple el objetivo de menor VRAM.",
-                                    "K8 is the measured minimum and uses the least VRAM. More slots mainly improve generation but increase memory; K114 no longer meets the lower-VRAM goal."))
-                        Picker(loc.t("Prefetch de Dynamic MoE", "Dynamic MoE prefetch"),
-                               selection: $dynamicMoePrefetch) {
-                            ForEach([0, 1, 2, 3, 4, 5, 6, 8, 12, 16], id: \.self) { value in
-                                Text("\(value)").tag(value)
+                        .infoTip(loc.t("Auto usa el camino normal si el modelo cabe en VRAM o falta RAM; si no, activa K8/prefetch4. Caché manual permite ajustar ambos valores.",
+                                    "Auto uses the normal path when the model fits in VRAM or RAM is insufficient; otherwise it enables K8/prefetch4. Manual cache lets you tune both values."))
+                        if dynamicMoePolicy == "auto" {
+                            Label(dynamicMoeAutoMessage,
+                                  systemImage: dynamicMoeAutoRoute == .cache ? "bolt.horizontal.fill" : "checkmark.shield")
+                                .font(.caption)
+                                .foregroundStyle(dynamicMoeAutoRoute == .cache ? .orange : .secondary)
+                        } else {
+                            Picker(loc.t("Ranuras de expertos en VRAM", "Expert slots in VRAM"),
+                                   selection: $dynamicMoeSlots) {
+                                ForEach([8, 16, 32, 64, 114], id: \.self) { value in
+                                    Text("K\(value)").tag(value)
+                                }
                             }
+                            .infoTip(loc.t("K8 es el mínimo medido y usa menos VRAM. Más ranuras mejoran principalmente la generación, pero aumentan la memoria; K114 ya no cumple el objetivo de menor VRAM.",
+                                        "K8 is the measured minimum and uses the least VRAM. More slots mainly improve generation but increase memory; K114 no longer meets the lower-VRAM goal."))
+                            Picker(loc.t("Prefetch de Dynamic MoE", "Dynamic MoE prefetch"),
+                                   selection: $dynamicMoePrefetch) {
+                                ForEach([0, 1, 2, 3, 4, 5, 6, 8, 12, 16], id: \.self) { value in
+                                    Text("\(value)").tag(value)
+                                }
+                            }
+                            .infoTip(loc.t("Número de bancos anticipados durante el prompt. Cuatro fue el óptimo medido para K8; los demás valores sirven para repetir el barrido desde Benchmarks.",
+                                        "Number of banks prefetched during prompt processing. Four was the measured optimum for K8; the other values let you repeat the sweep from Benchmarks."))
                         }
-                        .infoTip(loc.t("Número de bancos anticipados durante el prompt. Cuatro fue el óptimo medido para K8; los demás valores sirven para repetir el barrido desde Benchmarks.",
-                                    "Number of banks prefetched during prompt processing. Four was the measured optimum for K8; the other values let you repeat the sweep from Benchmarks."))
-                        Label(loc.t("Configuración efectiva: cache · ncmoe 1 · mlock · NCB8",
-                                    "Effective configuration: cache · ncmoe 1 · mlock · NCB8"),
+                        Label(dynamicMoePolicy == "auto"
+                                ? loc.t("Auto: normal o cache K8 · prefetch4", "Auto: normal or K8 cache · prefetch4")
+                                : loc.t("Configuración efectiva: cache · ncmoe 1 · mlock · NCB8",
+                                        "Effective configuration: cache · ncmoe 1 · mlock · NCB8"),
                               systemImage: "flask.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)

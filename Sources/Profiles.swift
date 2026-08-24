@@ -34,6 +34,7 @@ struct Profile: Codable, Identifiable {
     var dynamicMoe: Bool? = nil
     var dynamicMoeSlots: Int? = nil
     var dynamicMoePrefetch: Int? = nil
+    var dynamicMoePolicy: String? = nil
     var persistCache: Bool? = nil
     var multiGPU: Bool? = nil
     var forcePrivateBuffers: Bool? = nil
@@ -155,6 +156,7 @@ final class ProfileStore: ObservableObject {
         if let v = p.dynamicMoe { d.set(v, forKey: SettingsKeys.dynamicMoe) }
         if let v = p.dynamicMoeSlots { d.set(v, forKey: SettingsKeys.dynamicMoeSlots) }
         if let v = p.dynamicMoePrefetch { d.set(v, forKey: SettingsKeys.dynamicMoePrefetch) }
+        if let v = p.dynamicMoePolicy { d.set(v, forKey: SettingsKeys.dynamicMoePolicy) }
         if let v = p.persistCache { d.set(v, forKey: SettingsKeys.persistCache) }
         if let v = p.multiGPU { d.set(v, forKey: SettingsKeys.multiGPU) }
         if let v = p.forcePrivateBuffers { d.set(v, forKey: SettingsKeys.forcePrivateBuffers) }
@@ -214,7 +216,8 @@ extension ServerSettings {
                 engine: engineTag, cacheRAM: cacheRAM, reasoningInline: reasoningInline,
                 parallelSlots: parallelSlots, faAmd: faAmd,
                 dynamicMoe: dynamicMoe, dynamicMoeSlots: dynamicMoeSlots,
-                dynamicMoePrefetch: dynamicMoePrefetch, persistCache: persistCache,
+                dynamicMoePrefetch: dynamicMoePrefetch, dynamicMoePolicy: dynamicMoePolicy,
+                persistCache: persistCache,
                 multiGPU: multiGPU, forcePrivateBuffers: forcePrivateBuffers,
                 cacheReuse: cacheReuse, loadVision: loadVision,
                 localNetworkDiscovery: localNetworkDiscovery,
@@ -238,6 +241,7 @@ extension ServerSettings {
         if let v = p.dynamicMoe { dynamicMoe = v }
         if let v = p.dynamicMoeSlots { dynamicMoeSlots = v }
         if let v = p.dynamicMoePrefetch { dynamicMoePrefetch = v }
+        if let v = p.dynamicMoePolicy { dynamicMoePolicy = v }
         if let v = p.persistCache { persistCache = v }
         if let v = p.multiGPU { multiGPU = v }
         if let v = p.forcePrivateBuffers { forcePrivateBuffers = v }

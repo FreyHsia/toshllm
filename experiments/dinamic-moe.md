@@ -159,8 +159,18 @@ GGML_METAL_NCB=8
 
 Quitar `TOSH_MOE_UI=1` o apagar el toggle elimina la receta experimental y devuelve el mismo
 binario al camino normal. Router/multi-modelo queda excluido porque su preset todavía no puede
-transportar el override por tensor. `auto` y el `hybrid` CPU/GPU real siguen pendientes; el
-panel privado expone solamente `cache`, que es la ruta correcta y medida.
+transportar el override por tensor. El panel privado ofrece `auto` y `cache` manual. La rama
+`hybrid` CPU/GPU real sigue pendiente y no se expone.
+
+En `auto`, ToshLLM selecciona la ruta antes de iniciar el proceso. Si el modelo ya cabe en la
+VRAM útil, usa llama.cpp normal. Si es un MoE que no cabe, hay GPU dedicada compatible y la RAM
+total puede alojar el banco con margen, activa la receta medida K8/prefetch4. Ante modelo denso,
+RAM insuficiente, GPU no compatible, router o multi-GPU, conserva la ruta normal.
+
+Dynamic MoE no calcula un número de "capas de expertos" equivalente a `ncmoe`. Participan todas
+las capas MoE y cada capa dispone de K ranuras reutilizables en VRAM; el banco completo permanece
+en RAM. El `--n-cpu-moe 1` de la receta es un requisito de colocación del cargador para habilitar
+la fuente en RAM, no significa que solo una capa use Dynamic MoE.
 
 ### Estados visibles
 
@@ -208,7 +218,7 @@ La aplicación Swift establecerá estas variables al iniciar `llama-server`.
 | `trace` | Registra expertos sin cambiar la ejecución |
 | `cache` | Caché dinámica en VRAM, sin rama CPU/GPU concurrente |
 | `hybrid` | Caché y ejecución simultánea CPU/GPU |
-| `auto` | Selección automática según modelo y hardware |
+| `auto` | Política de la aplicación: selecciona `off` o la receta `cache` K8/prefetch4 |
 
 El toggle de la interfaz activará inicialmente:
 
@@ -905,32 +915,27 @@ Esta función deberá implementarse después de estabilizar Dynamic MoE.
 
 # 7. Selección automática del modo
 
-Cuando el usuario active el toggle, ToshLLM deberá seguir este proceso:
+La primera política automática implementada sigue este proceso conservador:
 
 ```text
-1. Detectar arquitectura del modelo.
-2. Confirmar que es MoE.
-3. Verificar cuantización.
-4. Calcular memoria necesaria.
-5. Cargar perfil del hardware.
-6. Calibrar si no existe perfil.
-7. Estimar caché disponible.
-8. Estimar rendimiento tradicional.
-9. Estimar rendimiento dinámico.
-10. Activar la mejor ruta.
+1. Confirmar que el archivo existe y es MoE mediante metadatos GGUF.
+2. Rechazar temporalmente router y reparto multi-GPU.
+3. Confirmar una GPU dedicada seleccionada.
+4. Restar a la VRAM la reserva del usuario y 512 MiB para cómputo/KV.
+5. Si el GGUF cabe en esa VRAM útil, conservar la ruta normal.
+6. Exigir en RAM el tamaño del GGUF más un margen del mayor entre 25 % y 4 GiB.
+7. Si se cumplen las condiciones, activar `cache` con K8/prefetch4; si no, conservar la ruta normal.
 ```
 
 Ejemplo:
 
 ```text
 Modelo: Qwen MoE
-Tamaño total: 21.4 GB
-VRAM disponible: 10.8 GB
-Caché dinámica posible: 6.2 GB
-Expertos cubiertos: 31 %
-Ancho de banda RAM → VRAM: 12.4 GB/s
-Ancho de banda CPU MoE: 29.7 GB/s
-Modo seleccionado: Hybrid
+Tamaño GGUF: 11.44 GiB
+VRAM nominal: 12 GiB
+Reserva: 1 GiB + 512 MiB de ejecución
+RAM: suficiente para fijar el banco
+Modo seleccionado: cache K8/prefetch4
 ```
 
 Si el modelo entra completamente en VRAM:
@@ -939,6 +944,10 @@ Si el modelo entra completamente en VRAM:
 Dynamic MoE no es necesario.
 Se utilizará la ruta GPU tradicional.
 ```
+
+La calibración por ancho de banda y la selección de un futuro modo híbrido permanecen como una
+fase posterior. No forman parte de esta primera política `auto` para evitar elegir una ruta aún
+no validada.
 
 ---
 
@@ -1280,22 +1289,22 @@ Solución:
 [x] Crear toggle experimental (oculto tras `TOSH_MOE_UI=1`).
 [x] Implementar TOSH_MOE_MODE=off.
 [x] Confirmar ruta original sin regresiones.
-[ ] Detectar modelos MoE.
+[x] Detectar modelos MoE.
 [ ] Registrar expertos seleccionados.
 [ ] Crear trazas.
 [ ] Construir simulador LRU.
 [ ] Medir localidad real.
 [ ] Implementar benchmark CPU/RAM/PCIe/GPU.
 [ ] Crear perfiles persistentes.
-[ ] Implementar slots lógicos.
-[ ] Implementar caché Metal secuencial.
-[ ] Validar decode.
+[x] Implementar slots lógicos.
+[x] Implementar caché Metal secuencial.
+[x] Validar decode en la configuración de referencia.
 [ ] Implementar política q*.
 [ ] Implementar rama CPU.
 [ ] Fusionar CPU y GPU.
 [ ] Validar logits.
-[ ] Añadir fallback.
-[ ] Exponer a usuarios avanzados.
+[x] Añadir selección preventiva/fallback normal en `auto`.
+[x] Exponer de forma privada a usuarios avanzados (`TOSH_MOE_UI=1`).
 [ ] Implementar doble buffer de prefill.
 [ ] Implementar memoria elástica.
 [ ] Añadir arquitecturas y cuantizaciones.
