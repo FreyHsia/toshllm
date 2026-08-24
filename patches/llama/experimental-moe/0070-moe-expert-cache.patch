@@ -524,8 +524,7 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -567,16 +567,30 @@
-     uint64_t nb10;
+@@ -568,16 +568,31 @@
      uint64_t nb11;
      uint64_t nb12;
      int32_t  ne0;
@@ -533,7 +532,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-me
      uint64_t nb1;
      int32_t  nr0;
  } ggml_metal_kargs_mul_mv_id;
-+
+ 
 +typedef struct {
 +    int32_t n_used;
 +    int32_t n_tokens;
@@ -546,8 +545,9 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-me
 +typedef struct {
 +    uint32_t row_u4;
 +    int32_t  max_fetch;
++    int32_t  n_chunks;
 +} ggml_metal_kargs_moe_fetch;
- 
++
  // NORM
  // RMS_NORM
  typedef struct {
@@ -555,6 +555,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-me
      int32_t  ne00_t;
      uint64_t nb1;
      uint64_t nb2;
+     uint64_t nb3;
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
@@ -773,9 +774,9 @@ diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -1,9 +1,17 @@
+@@ -1,10 +1,18 @@
  #include "ggml-metal-ops.h"
-+
+ 
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#include "tosh-moe.h"
 +#else
@@ -783,7 +784,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +static inline const void * tosh_moe_ram_of(const void *)   { return nullptr; }
 +static inline bool tosh_moe_should_route(const void *, int) { return false; }
 +#endif
- 
++
  #include "ggml.h"
  #include "ggml-impl.h"
  #include "ggml-backend-impl.h"
@@ -791,7 +792,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  #include "ggml-metal-impl.h"
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
-@@ -2950,17 +2958,107 @@
+ 
+@@ -2950,17 +2958,115 @@
  
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
@@ -862,13 +864,21 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +            ggml_metal_op_concurrency_reset(ctx);
 +        }
 +
++        // a whole expert is megabytes: one threadgroup per row leaves the device idle
++        static const int n_chunks = []() {
++            const char * s = getenv("TOSH_MOE_FETCH_CHUNKS");
++            const int v = s ? atoi(s) : 16;
++            return v > 0 ? v : 1;
++        }();
++
 +        ggml_metal_kargs_moe_fetch fa = {
 +            /*.row_u4    =*/ (uint32_t) (nb02/16),
 +            /*.max_fetch =*/ max_fetch,
++            /*.n_chunks  =*/ n_chunks,
 +        };
-+
-+        auto pf = ggml_metal_library_compile_pipeline(lib, "tosh_moe_fetch", "tosh_moe_fetch", nullptr);
  
++        auto pf = ggml_metal_library_compile_pipeline(lib, "tosh_moe_fetch", "tosh_moe_fetch", nullptr);
++
 +        ggml_metal_buffer_id b = bid_state;
 +        ggml_metal_encoder_set_pipeline(enc, pf);
 +        ggml_metal_encoder_set_bytes (enc, &fa, sizeof(fa), 0);
@@ -880,7 +890,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +        ggml_metal_encoder_set_buffer(enc, b, 4);
 +        b.offs = bid_state.offs + tosh_moe_off_n_indices(n_expert, n_slots, max_fetch)*i32;
 +        ggml_metal_encoder_set_buffer(enc, b, 5);
-+        ggml_metal_encoder_dispatch_threadgroups(enc, max_fetch, 1, 1, 256, 1, 1);
++        ggml_metal_encoder_dispatch_threadgroups(enc, max_fetch*n_chunks, 1, 1, 256, 1, 1);
 +
 +        ggml_metal_op_concurrency_reset(ctx);
 +
@@ -1509,7 +1519,7 @@ diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-lru.metal
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,167 @@
 +#include <metal_stdlib>
 +using namespace metal;
 +
@@ -1644,6 +1654,7 @@ new file mode 100644
 +struct tosh_fetch_args {
 +    uint32_t row_u4;     // row size in uint4 units
 +    int32_t  max_fetch;
++    int32_t  n_chunks;   // threadgroups per row: one is far too few for a whole expert
 +};
 +
 +kernel void tosh_moe_fetch(
@@ -1657,7 +1668,8 @@ new file mode 100644
 +        uint tid   [[thread_position_in_threadgroup]],
 +        uint ntg   [[threads_per_threadgroup]]) {
 +
-+    const int32_t i = (int32_t) tgpig;
++    const int32_t i     = (int32_t) (tgpig / (uint) args.n_chunks);
++    const uint    chunk = tgpig % (uint) args.n_chunks;
 +    if (i >= *n_indices) {
 +        return;
 +    }
@@ -1671,7 +1683,7 @@ new file mode 100644
 +    device       uint4 * d = slots + (uint64_t) dst*args.row_u4;
 +    device const uint4 * s = host  + (uint64_t) src*args.row_u4;
 +
-+    for (uint j = tid; j < args.row_u4; j += ntg) {
++    for (uint j = chunk*ntg + tid; j < args.row_u4; j += ntg*(uint) args.n_chunks) {
 +        d[j] = s[j];
 +    }
 +}
