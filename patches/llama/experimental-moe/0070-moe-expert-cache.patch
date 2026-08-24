@@ -1595,7 +1595,7 @@ diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-lru.metal
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,155 @@
 +#include <metal_stdlib>
 +using namespace metal;
 +
@@ -1712,6 +1712,44 @@ new file mode 100644
 +    }
 +
 +    (void) red;
++}
++
++// Brings the rows the LRU just scheduled from the host bank into their slots. Only the
++// missing ones travel, so the window the device touches stays small no matter how big the
++// bank is.
++struct tosh_fetch_args {
++    uint32_t row_u4;     // row size in uint4 units
++    int32_t  max_fetch;
++};
++
++kernel void tosh_moe_fetch(
++        constant tosh_fetch_args & args        [[buffer(0)]],
++        device       uint4       * slots       [[buffer(1)]],
++        device const uint4       * host        [[buffer(2)]],
++        device const int32_t     * evict_slots [[buffer(3)]],
++        device const int32_t     * src_indices [[buffer(4)]],
++        device const int32_t     * n_indices   [[buffer(5)]],
++        uint tgpig [[threadgroup_position_in_grid]],
++        uint tid   [[thread_position_in_threadgroup]],
++        uint ntg   [[threads_per_threadgroup]]) {
++
++    const int32_t i = (int32_t) tgpig;
++    if (i >= *n_indices) {
++        return;
++    }
++
++    const int32_t dst = evict_slots[i];
++    const int32_t src = src_indices[i];
++    if (dst < 0 || src < 0) {
++        return;
++    }
++
++    device       uint4 * d = slots + (uint64_t) dst*args.row_u4;
++    device const uint4 * s = host  + (uint64_t) src*args.row_u4;
++
++    for (uint j = tid; j < args.row_u4; j += ntg) {
++        d[j] = s[j];
++    }
 +}
 diff --git a/tests/test-tosh-moe-cache.cpp b/tests/test-tosh-moe-cache.cpp
 new file mode 100644
