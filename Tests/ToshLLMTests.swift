@@ -612,11 +612,11 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(s.environment["TOSH_MOE_CPU_BANK"], "1")
         XCTAssertEqual(s.environment["GGML_SCHED_PREFETCH_EXPERTS"], "7")
         XCTAssertEqual(s.environment["GGML_METAL_NCB"], "8")
-        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--n-cpu-moe")! + 1], "1")
+        XCTAssertFalse(s.arguments.contains("--n-cpu-moe"), "the cache decides the split on its own")
         XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--load-mode")! + 1], "mlock")
         XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "-ot")! + 1],
                        ServerSettings.dynamicMoeTensorOverride)
-        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ncmoe")! + 1], "1")
+        XCTAssertFalse(s.benchmarkArguments.contains("-ncmoe"))
         XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ot")! + 1],
                        ServerSettings.dynamicMoeTensorOverride)
 

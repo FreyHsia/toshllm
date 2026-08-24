@@ -3,6 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **The server log says what Dynamic MoE actually ran with.** It printed the MoE-on-CPU value you had saved while the cache was running with a different one; it now reports the cache and its slots, and stops passing a CPU-expert count the cache does not use.
+
 ## [0.85.8] - 2026-08-24
 
 ### Added

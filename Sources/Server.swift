@@ -256,8 +256,7 @@ struct ServerSettings {
             "--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1",
             "--port", String(port),
         ]
-        let moeCPU = effectiveDynamicMoe ? 1 : ncmoe
-        if moeCPU > 0 { args += ["--n-cpu-moe", String(moeCPU)] }
+        if !effectiveDynamicMoe && ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
         let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
         if effectiveDynamicMoe {
@@ -404,7 +403,7 @@ struct ServerSettings {
                                           reserveMB: vramReserveMB)
             var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
                          "ctx-size = \(modelCtx)", "threads = \(threads)", "flash-attn = \(faValue)"]
-            if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
+            if !effectiveDynamicMoe, let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
             if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
             if let mmproj {
@@ -477,8 +476,7 @@ struct ServerSettings {
         let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
-        let moeCPU = effectiveDynamicMoe ? 1 : ncmoe
-        if moeCPU > 0 { args += ["-ncmoe", String(moeCPU)] }
+        if !effectiveDynamicMoe && ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
         if effectiveDynamicMoe { args += ["-ot", Self.dynamicMoeTensorOverride] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
@@ -1553,6 +1551,9 @@ final class ServerController: ObservableObject {
         let envLine = (envKeys + userKeys)
             .compactMap { k in env[k].map { "\(k)=\($0)" } }
             .joined(separator: " ")
+        let moeLine = settings.effectiveDynamicMoe
+            ? "ncmoe=0 dynamic-moe=K\(settings.effectiveDynamicMoeSlots)"
+            : "ncmoe=\(settings.ncmoe)"
         var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
         if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
         return """
@@ -1563,7 +1564,7 @@ final class ServerController: ObservableObject {
          GPUs detected:
         \(gpus.isEmpty ? "    (none)" : gpus)
          GPU select: \(gpuSel) | force-VRAM-buffers: \(env["GGML_METAL_SHARED_BUFFERS_DISABLE"] == "1" ? "yes" : "no")
-         settings: ngl=\(settings.ngl) ncmoe=\(settings.ncmoe) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
+         settings: ngl=\(settings.ngl) \(moeLine) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
          dflash : \(settings.routerMode ? "per-model router plan" : settings.dflashPlanSummary)
          env: \(envLine)
          args: \(redact(settings.arguments).joined(separator: " "))
