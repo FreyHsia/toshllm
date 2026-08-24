@@ -33,6 +33,36 @@ enum DynamicMoeAutoRoute: Equatable {
     case normalUnsupportedGPU
     case normalMissingModel
     case normalSplitOrRouter
+    case normalMissingMetadata
+    case normalInsufficientVRAM
+    case normalNoCacheBenefit
+}
+
+struct DynamicMoeModelInfo: Equatable {
+    let layerCount: Int
+    let expertCount: Int
+    let activeExpertCount: Int
+}
+
+struct DynamicMoeSlotPlan: Equatable {
+    let model: DynamicMoeModelInfo
+    /// Smallest cache that can hold every expert selected by one decoded token.
+    let minimumSlots: Int
+    /// Largest valid K for this architecture, regardless of memory pressure.
+    let maximumSlots: Int
+    /// Largest K estimated to fit after fixed weights, runtime and transfer buffers.
+    let recommendedMaximumSlots: Int
+    let automaticSlots: Int
+    let estimatedBytesPerSlot: UInt64
+    let estimatedFixedVRAMBytes: UInt64
+
+    func clamped(_ slots: Int) -> Int {
+        min(max(slots, minimumSlots), maximumSlots)
+    }
+
+    func estimatedVRAMBytes(slots: Int) -> UInt64 {
+        estimatedFixedVRAMBytes + UInt64(clamped(slots)) * estimatedBytesPerSlot
+    }
 }
 
 struct ServerSettings {
@@ -546,6 +576,12 @@ struct ServerSettings {
         // KEY=VALUE tokens from Extra arguments become env vars (e.g. the GCN/Vega
         // wave64 safe-mode flag). Applied last so the user can override the above.
         for (k, v) in extraArgTokens.env { env[k] = v }
+        // K is structural: a value larger than the GGUF's expert dimension makes
+        // the backend skip cache creation. Keep the model-derived/clamped value even
+        // when an old Extra arguments recipe still contains TOSH_MOE_SLOTS.
+        if effectiveDynamicMoe {
+            env["TOSH_MOE_SLOTS"] = String(effectiveDynamicMoeSlots)
+        }
         return env.compactMapValues { $0 }
     }
 
@@ -698,31 +734,108 @@ struct ServerSettings {
     /// override required by this prototype, so keep the experiment fixed-model only.
     var dynamicMoeUIUnlocked: Bool { extraArgTokens.env["TOSH_MOE_UI"] == "1" }
     var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
-        guard !modelPath.isEmpty,
-              let size = try? FileManager.default.attributesOfItem(atPath: modelPath)[.size] as? NSNumber else {
+        guard !modelPath.isEmpty, let size = GGUFFile.totalSize(at: modelPath) else {
             return .normalMissingModel
         }
         let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
         let gpu = selected.max { $0.vramMB < $1.vramMB }
-        return Self.resolveDynamicMoeAuto(
+        let base = Self.resolveDynamicMoeAuto(
             isMoE: Self.modelIsMoE(at: modelPath),
-            modelBytes: size.uint64Value,
+            modelBytes: size,
             gpuVRAMMB: gpu?.vramMB ?? 0,
             reserveMB: vramReserveMB,
             physicalRAMBytes: ProcessInfo.processInfo.physicalMemory,
             hasDiscreteGPU: gpu?.isIntegrated == false,
             splitOrRouter: isSplitting || routerMode)
+        guard base == .cache else { return base }
+        guard let info = dynamicMoeModelInfo else { return .normalMissingMetadata }
+        guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
+        guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
+        return .cache
     }
     var effectiveDynamicMoe: Bool {
-        guard dynamicMoe && dynamicMoeUIUnlocked else { return false }
+        guard dynamicMoe && dynamicMoeUIUnlocked,
+              Self.modelIsMoE(at: modelPath), dynamicMoeModelInfo != nil else { return false }
         if dynamicMoePolicy == "auto" { return dynamicMoeAutoRoute == .cache }
         return !routerMode && !isSplitting
     }
     var effectiveDynamicMoeSlots: Int {
-        dynamicMoePolicy == "auto" ? 8 : min(max(dynamicMoeSlots, 8), 256)
+        if dynamicMoePolicy == "auto" {
+            return dynamicMoeSlotPlan(prefetch: 4)?.automaticSlots ?? 0
+        }
+        if let info = dynamicMoeModelInfo {
+            let minimum = min(max(info.activeExpertCount, 1), info.expertCount)
+            return min(max(dynamicMoeSlots, minimum), info.expertCount)
+        }
+        return min(max(dynamicMoeSlots, 1), 256)
     }
     var effectiveDynamicMoePrefetch: Int {
         dynamicMoePolicy == "auto" ? 4 : min(max(dynamicMoePrefetch, 0), 16)
+    }
+
+    var dynamicMoeModelInfo: DynamicMoeModelInfo? {
+        let layers = Int(Self.ggufUInt32("block_count", at: modelPath) ?? 0)
+        let experts = Int(Self.ggufUInt32("expert_count", at: modelPath) ?? 0)
+        let active = Int(Self.ggufUInt32("expert_used_count", at: modelPath) ?? 0)
+        guard layers > 0, experts > 0, active > 0, active <= experts else { return nil }
+        return DynamicMoeModelInfo(layerCount: layers, expertCount: experts,
+                                   activeExpertCount: active)
+    }
+
+    func dynamicMoeSlotPlan(prefetch: Int? = nil) -> DynamicMoeSlotPlan? {
+        guard let info = dynamicMoeModelInfo,
+              let size = GGUFFile.totalSize(at: modelPath) else {
+            return nil
+        }
+        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
+        guard let gpu = selected.max(by: { $0.vramMB < $1.vramMB }), !gpu.isIntegrated else { return nil }
+        return Self.resolveDynamicMoeSlots(
+            modelBytes: size, model: info, gpuVRAMMB: gpu.vramMB,
+            reserveMB: vramReserveMB, prefetch: prefetch ?? effectiveDynamicMoePrefetch)
+    }
+
+    static func resolveDynamicMoeSlots(
+        modelBytes: UInt64,
+        model: DynamicMoeModelInfo,
+        gpuVRAMMB: Int,
+        reserveMB: Int,
+        prefetch: Int
+    ) -> DynamicMoeSlotPlan? {
+        guard modelBytes > 0, model.layerCount > 0, model.expertCount > 0,
+              model.activeExpertCount > 0, model.activeExpertCount <= model.expertCount,
+              gpuVRAMMB > reserveMB else { return nil }
+
+        let mib = UInt64(1024 * 1024)
+        let gib = UInt64(1024) * mib
+        // The 1.3 GiB shared/non-MoE estimate is the same conservative split used by
+        // ToshLLM's ncmoe planner. The remainder is the quantized expert pool.
+        let sharedBytes = min(modelBytes, UInt64(Double(gib) * 1.3))
+        let expertBytes = modelBytes - sharedBytes
+        guard expertBytes > 0 else { return nil }
+        let bytesPerSlot = max(UInt64(1),
+            UInt64(ceil(Double(expertBytes) / Double(model.expertCount))))
+
+        // One full widest bank is staging; each prefetch slot can hold another. A
+        // gate_up bank is approximately 2/3 of one layer's three expert matrices.
+        let widestBankBytes = UInt64(ceil(
+            Double(expertBytes) / Double(model.layerCount) * (2.0 / 3.0)))
+        let transferBuffers = widestBankBytes * UInt64(max(0, min(prefetch, 16)) + 1)
+        let runtimeBytes = UInt64(512) * mib
+        let fixedBytes = sharedBytes + runtimeBytes + transferBuffers
+        let availableBytes = UInt64(max(0, gpuVRAMMB - reserveMB)) * mib
+        let budgetSlots = availableBytes > fixedBytes
+            ? Int((availableBytes - fixedBytes) / bytesPerSlot) : 0
+        let recommendedMaximum = min(model.expertCount, max(0, budgetSlots))
+        guard recommendedMaximum >= model.activeExpertCount else { return nil }
+
+        return DynamicMoeSlotPlan(
+            model: model,
+            minimumSlots: model.activeExpertCount,
+            maximumSlots: model.expertCount,
+            recommendedMaximumSlots: recommendedMaximum,
+            automaticSlots: model.activeExpertCount,
+            estimatedBytesPerSlot: bytesPerSlot,
+            estimatedFixedVRAMBytes: fixedBytes)
     }
 
     static func resolveDynamicMoeAuto(

@@ -134,6 +134,23 @@ struct SettingsView: View {
     private var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
         ServerSettings.fromDefaults().dynamicMoeAutoRoute
     }
+    private var dynamicMoeModelInfo: DynamicMoeModelInfo? {
+        ServerSettings.fromDefaults().dynamicMoeModelInfo
+    }
+    private var dynamicMoeSlotPlan: DynamicMoeSlotPlan? {
+        ServerSettings.fromDefaults().dynamicMoeSlotPlan()
+    }
+    private var effectiveDynamicMoeSlots: Int {
+        ServerSettings.fromDefaults().effectiveDynamicMoeSlots
+    }
+    private var dynamicMoeSlotBinding: Binding<Int> {
+        Binding(
+            get: { effectiveDynamicMoeSlots },
+            set: { dynamicMoeSlots = $0 })
+    }
+    private func gibLabel(_ bytes: UInt64) -> String {
+        String(format: "%.2f GiB", Double(bytes) / 1_073_741_824)
+    }
     private var dynamicMoeIsEffective: Bool {
         dynamicMoe && dynamicMoeUIUnlocked
             && (dynamicMoePolicy != "auto" || dynamicMoeAutoRoute == .cache)
@@ -159,6 +176,15 @@ struct SettingsView: View {
         case .normalSplitOrRouter:
             loc.t("Auto eligió normal: Dynamic MoE aún no admite split ni router.",
                   "Auto selected normal: Dynamic MoE does not support split or router yet.")
+        case .normalMissingMetadata:
+            loc.t("Auto eligió normal: el GGUF no declara capas, expertos totales y expertos activos.",
+                  "Auto selected normal: the GGUF does not declare layers, total experts, and active experts.")
+        case .normalInsufficientVRAM:
+            loc.t("Auto eligió normal: ni la caché mínima de expertos cabe con los márgenes configurados.",
+                  "Auto selected normal: even the minimum expert cache does not fit with the configured headroom.")
+        case .normalNoCacheBenefit:
+            loc.t("Auto eligió normal: todos los expertos de la capa están activos y la caché no reduciría VRAM.",
+                  "Auto selected normal: every expert in the layer is active, so the cache would not reduce VRAM.")
         }
     }
 
@@ -515,22 +541,46 @@ struct SettingsView: View {
                             Text(loc.t("Automática", "Automatic")).tag("auto")
                             Text(loc.t("Caché manual", "Manual cache")).tag("cache")
                         }
-                        .infoTip(loc.t("Auto usa el camino normal si el modelo cabe en VRAM o falta RAM; si no, activa K8/prefetch4. Caché manual permite ajustar ambos valores.",
-                                    "Auto uses the normal path when the model fits in VRAM or RAM is insufficient; otherwise it enables K8/prefetch4. Manual cache lets you tune both values."))
+                        .infoTip(loc.t("Auto usa el camino normal si el modelo cabe en VRAM o falta RAM; si no, usa K igual al top-k real del GGUF y prefetch4. Caché manual permite ajustar ambos valores dentro del rango válido del modelo.",
+                                    "Auto uses the normal path when the model fits in VRAM or RAM is insufficient; otherwise K matches the GGUF's real top-k with prefetch4. Manual cache lets you tune both values within the model's valid range."))
                         if dynamicMoePolicy == "auto" {
                             Label(dynamicMoeAutoMessage,
                                   systemImage: dynamicMoeAutoRoute == .cache ? "bolt.horizontal.fill" : "checkmark.shield")
                                 .font(.caption)
                                 .foregroundStyle(dynamicMoeAutoRoute == .cache ? .orange : .secondary)
-                        } else {
-                            Picker(loc.t("Ranuras de expertos en VRAM", "Expert slots in VRAM"),
-                                   selection: $dynamicMoeSlots) {
-                                ForEach([8, 16, 32, 64, 114], id: \.self) { value in
-                                    Text("K\(value)").tag(value)
-                                }
+                            if dynamicMoeAutoRoute == .cache, let plan = dynamicMoeSlotPlan {
+                                Label(loc.t("Auto usa K\(plan.automaticSlots) de \(plan.maximumSlots) expertos por capa (top-\(plan.minimumSlots)); estimado \(gibLabel(plan.estimatedVRAMBytes(slots: plan.automaticSlots))) de VRAM.",
+                                            "Auto uses K\(plan.automaticSlots) of \(plan.maximumSlots) experts per layer (top-\(plan.minimumSlots)); estimated \(gibLabel(plan.estimatedVRAMBytes(slots: plan.automaticSlots))) VRAM."),
+                                      systemImage: "memorychip")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
-                            .infoTip(loc.t("K8 es el mínimo medido y usa menos VRAM. Más ranuras mejoran principalmente la generación, pero aumentan la memoria; K114 ya no cumple el objetivo de menor VRAM.",
-                                        "K8 is the measured minimum and uses the least VRAM. More slots mainly improve generation but increase memory; K114 no longer meets the lower-VRAM goal."))
+                        } else {
+                            if let info = dynamicMoeModelInfo {
+                                Stepper(loc.t("Ranuras en VRAM: K\(effectiveDynamicMoeSlots) de \(info.expertCount)",
+                                              "VRAM slots: K\(effectiveDynamicMoeSlots) of \(info.expertCount)"),
+                                        value: dynamicMoeSlotBinding,
+                                        in: info.activeExpertCount...info.expertCount)
+                                    .infoTip(loc.t("K es por capa. El mínimo es el número de expertos activos por token (top-\(info.activeExpertCount)) y el máximo es el total real del GGUF (\(info.expertCount)).",
+                                                        "K is per layer. The minimum is the experts active per token (top-\(info.activeExpertCount)); the maximum is the GGUF's real total (\(info.expertCount))."))
+                                if let plan = dynamicMoeSlotPlan {
+                                    let overBudget = effectiveDynamicMoeSlots > plan.recommendedMaximumSlots
+                                    Label(loc.t("Estimación: \(gibLabel(plan.estimatedVRAMBytes(slots: effectiveDynamicMoeSlots))) · máximo recomendado K\(plan.recommendedMaximumSlots).",
+                                                "Estimate: \(gibLabel(plan.estimatedVRAMBytes(slots: effectiveDynamicMoeSlots))) · recommended maximum K\(plan.recommendedMaximumSlots)."),
+                                          systemImage: overBudget ? "exclamationmark.triangle.fill" : "memorychip")
+                                        .font(.caption)
+                                        .foregroundStyle(overBudget ? .orange : .secondary)
+                                } else {
+                                    Label(loc.t("La caché mínima top-\(info.activeExpertCount) supera el presupuesto estimado; el modo manual permite probarla, pero puede agotar la VRAM.",
+                                                "The minimum top-\(info.activeExpertCount) cache exceeds the estimated budget; manual mode still allows testing it, but it may exhaust VRAM."),
+                                          systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption).foregroundStyle(.orange)
+                                }
+                            } else {
+                                Label(loc.t("Este GGUF no declara los metadatos necesarios para calcular K de forma segura.",
+                                            "This GGUF does not declare the metadata needed to calculate K safely."),
+                                      systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
                             Picker(loc.t("Prefetch de Dynamic MoE", "Dynamic MoE prefetch"),
                                    selection: $dynamicMoePrefetch) {
                                 ForEach([0, 1, 2, 3, 4, 5, 6, 8, 12, 16], id: \.self) { value in
@@ -541,7 +591,7 @@ struct SettingsView: View {
                                         "Number of banks prefetched during prompt processing. Four was the measured optimum for K8; the other values let you repeat the sweep from Benchmarks."))
                         }
                         Label(dynamicMoePolicy == "auto"
-                                ? loc.t("Auto: normal o cache K8 · prefetch4", "Auto: normal or K8 cache · prefetch4")
+                                ? loc.t("Auto: normal o K=top-k · prefetch4", "Auto: normal or K=top-k · prefetch4")
                                 : loc.t("Configuración efectiva: cache · ncmoe 1 · mlock · NCB8",
                                         "Effective configuration: cache · ncmoe 1 · mlock · NCB8"),
                               systemImage: "flask.fill")

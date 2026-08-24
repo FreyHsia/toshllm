@@ -148,7 +148,7 @@ panel. Al hacerlo, servidor y Benchmarks comparten automáticamente la receta me
 
 ```text
 TOSH_MOE_MODE=cache
-TOSH_MOE_SLOTS=8            # configurable: 8, 16, 32, 64, 114
+TOSH_MOE_SLOTS=8            # ejemplo Qwen top-8; rango real top-k...expert_count
 TOSH_MOE_CPU_BANK=1
 GGML_SCHED_PREFETCH_EXPERTS=4  # configurable en el panel
 GGML_METAL_NCB=8
@@ -164,7 +164,8 @@ transportar el override por tensor. El panel privado ofrece `auto` y `cache` man
 
 En `auto`, ToshLLM selecciona la ruta antes de iniciar el proceso. Si el modelo ya cabe en la
 VRAM útil, usa llama.cpp normal. Si es un MoE que no cabe, hay GPU dedicada compatible y la RAM
-total puede alojar el banco con margen, activa la receta medida K8/prefetch4. Ante modelo denso,
+total puede alojar el banco con margen, activa `K=expert_used_count` y prefetch4. Esto produce K8
+en el Qwen de referencia, K4 en GPT-OSS 20B y se limita siempre por el `expert_count` real. Ante modelo denso,
 RAM insuficiente, GPU no compatible, router o multi-GPU, conserva la ruta normal.
 
 Dynamic MoE no calcula un número de "capas de expertos" equivalente a `ncmoe`. Participan todas
@@ -218,7 +219,7 @@ La aplicación Swift establecerá estas variables al iniciar `llama-server`.
 | `trace` | Registra expertos sin cambiar la ejecución |
 | `cache` | Caché dinámica en VRAM, sin rama CPU/GPU concurrente |
 | `hybrid` | Caché y ejecución simultánea CPU/GPU |
-| `auto` | Política de la aplicación: selecciona `off` o la receta `cache` K8/prefetch4 |
+| `auto` | Política de la aplicación: selecciona `off` o `cache` con K=top-k/prefetch4 |
 
 El toggle de la interfaz activará inicialmente:
 
@@ -924,7 +925,8 @@ La primera política automática implementada sigue este proceso conservador:
 4. Restar a la VRAM la reserva del usuario y 512 MiB para cómputo/KV.
 5. Si el GGUF cabe en esa VRAM útil, conservar la ruta normal.
 6. Exigir en RAM el tamaño del GGUF más un margen del mayor entre 25 % y 4 GiB.
-7. Si se cumplen las condiciones, activar `cache` con K8/prefetch4; si no, conservar la ruta normal.
+7. Calcular el rango `expert_used_count <= K <= expert_count` y verificar que el mínimo cabe.
+8. Si se cumplen las condiciones, activar `cache` con K=top-k/prefetch4; si no, conservar la ruta normal.
 ```
 
 Ejemplo:
@@ -935,7 +937,7 @@ Tamaño GGUF: 11.44 GiB
 VRAM nominal: 12 GiB
 Reserva: 1 GiB + 512 MiB de ejecución
 RAM: suficiente para fijar el banco
-Modo seleccionado: cache K8/prefetch4
+Modo seleccionado: cache K8/prefetch4 (top-8 en este GGUF)
 ```
 
 Si el modelo entra completamente en VRAM:

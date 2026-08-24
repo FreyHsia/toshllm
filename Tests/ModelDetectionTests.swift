@@ -29,6 +29,31 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertTrue(fallback.isMoE, "Filename detection remains a fallback for unreadable files")
     }
 
+    func testDynamicMoeReadsLayerTotalAndActiveExpertCounts() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("renamed-qwen.gguf")
+        try writeGGUF(to: url, uint32: [
+            "qwen35moe.block_count": 40,
+            "qwen35moe.expert_count": 256,
+            "qwen35moe.expert_used_count": 8,
+        ])
+
+        var settings = ServerSettings(
+            serverBinary: "/usr/bin/true", modelPath: url.path, port: 8080,
+            ngl: 99, ncmoe: 24, ctx: 16_384, threads: 6, flashAttn: "auto",
+            noMmap: true, jinja: true, vramReserveMB: 1_024, gpuIndex: -1,
+            extraArgs: "", cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
+        XCTAssertEqual(settings.dynamicMoeModelInfo,
+                       DynamicMoeModelInfo(layerCount: 40, expertCount: 256,
+                                           activeExpertCount: 8))
+
+        settings.dynamicMoeSlots = 300
+        XCTAssertEqual(settings.effectiveDynamicMoeSlots, 256)
+        settings.dynamicMoeSlots = 4
+        XCTAssertEqual(settings.effectiveDynamicMoeSlots, 8)
+    }
+
     func testBenchmarkFamilyTreatsValidArchitectureWithoutExpertsAsDense() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -145,6 +170,7 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertEqual(models[0].sizeBytes, 24)
         XCTAssertEqual(models[0].partURLs.count, 2)
         XCTAssertTrue(models[0].name.contains("00001-of-00002"))
+        XCTAssertEqual(GGUFFile.totalSize(at: models[0].url.path), 24)
     }
 
     func testEmbeddedNameKeepsFilenameSizeAndDropsRepositoryOwner() throws {

@@ -549,6 +549,29 @@ final class ServerSettingsTests: XCTestCase {
                        cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
     }
 
+    private func writeMinimalMoEGGUF(_ url: URL) throws {
+        var data = Data("GGUF".utf8)
+        func u32(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func u64(_ value: UInt64) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func string(_ value: String) {
+            u64(UInt64(value.utf8.count)); data.append(contentsOf: value.utf8)
+        }
+        let values: [(String, UInt32)] = [
+            ("qwen35moe.block_count", 40),
+            ("qwen35moe.expert_count", 256),
+            ("qwen35moe.expert_used_count", 8),
+        ]
+        u32(3); u64(0); u64(UInt64(values.count))
+        for (key, value) in values {
+            string(key); u32(4); u32(value)
+        }
+        try data.write(to: url)
+    }
+
     func testBaseArguments() {
         let args = makeSettings().arguments
         XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "none")
@@ -565,8 +588,13 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "--cache-reuse")! + 1], "256")
     }
 
-    func testDynamicMoeIsCompiledButRequiresPrivateUIFlagAndToggle() {
+    func testDynamicMoeIsCompiledButRequiresPrivateUIFlagAndToggle() throws {
+        let model = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tosh-dynamic-moe-\(UUID().uuidString).gguf")
+        try writeMinimalMoEGGUF(model)
+        defer { try? FileManager.default.removeItem(at: model) }
         var s = makeSettings()
+        s.modelPath = model.path
         s.dynamicMoe = true
         s.dynamicMoeSlots = 16
         s.dynamicMoePrefetch = 7
@@ -576,7 +604,7 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertFalse(s.arguments.contains("-ot"))
         XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--n-cpu-moe")! + 1], "24")
 
-        s.extraArgs = "TOSH_MOE_UI=1"
+        s.extraArgs = "TOSH_MOE_UI=1 TOSH_MOE_SLOTS=999"
 
         XCTAssertTrue(s.effectiveDynamicMoe)
         XCTAssertEqual(s.environment["TOSH_MOE_MODE"], "cache")
@@ -632,14 +660,40 @@ final class ServerSettingsTests: XCTestCase {
                        .normalMissingModel)
     }
 
-    func testDynamicMoeAutoUsesTheMeasuredK8Recipe() {
-        var s = makeSettings()
-        s.dynamicMoePolicy = "auto"
-        s.dynamicMoeSlots = 114
-        s.dynamicMoePrefetch = 16
+    func testDynamicMoeSlotsFollowEachModelsMetadataAndVRAMBudget() throws {
+        let gib = UInt64(1024 * 1024 * 1024)
+        func plan(gb: Double, layers: Int, experts: Int, active: Int) throws -> DynamicMoeSlotPlan {
+            try XCTUnwrap(ServerSettings.resolveDynamicMoeSlots(
+                modelBytes: UInt64(gb * Double(gib)),
+                model: DynamicMoeModelInfo(layerCount: layers, expertCount: experts,
+                                           activeExpertCount: active),
+                gpuVRAMMB: 12_288, reserveMB: 1_024, prefetch: 4))
+        }
 
-        XCTAssertEqual(s.effectiveDynamicMoeSlots, 8)
-        XCTAssertEqual(s.effectiveDynamicMoePrefetch, 4)
+        let qwen = try plan(gb: 11.44, layers: 40, experts: 256, active: 8)
+        XCTAssertEqual(qwen.automaticSlots, 8)
+        XCTAssertEqual(qwen.minimumSlots, 8)
+        XCTAssertEqual(qwen.maximumSlots, 256)
+        XCTAssertGreaterThanOrEqual(qwen.recommendedMaximumSlots, 114)
+
+        let gptOSS = try plan(gb: 11.0, layers: 24, experts: 32, active: 4)
+        XCTAssertEqual(gptOSS.automaticSlots, 4)
+        XCTAssertEqual(gptOSS.maximumSlots, 32)
+        XCTAssertEqual(gptOSS.clamped(114), 32)
+
+        let olmoe = try plan(gb: 4.5, layers: 16, experts: 64, active: 8)
+        XCTAssertEqual(olmoe.automaticSlots, 8)
+        XCTAssertEqual(olmoe.maximumSlots, 64)
+        XCTAssertEqual(olmoe.clamped(4), 8)
+    }
+
+    func testDynamicMoeAutoRejectsAWorkingSetSmallerThanTopK() {
+        let gib = UInt64(1024 * 1024 * 1024)
+        XCTAssertNil(ServerSettings.resolveDynamicMoeSlots(
+            modelBytes: 11 * gib,
+            model: DynamicMoeModelInfo(layerCount: 24, expertCount: 32,
+                                       activeExpertCount: 16),
+            gpuVRAMMB: 3_072, reserveMB: 1_024, prefetch: 4))
     }
 
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {
