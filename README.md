@@ -176,6 +176,19 @@ The AMD patch lives in [`patches/`](patches/) — chunked staging transfers for 
 Both keep llama.cpp, GGUF and the normal graph; Dynamic MoE is compiled into the bundled engine
 but is **off at runtime and hidden from the UI by default** while its model coverage is measured.
 
+The design is an independent llama.cpp/Metal implementation inspired by the publicly documented
+[FreeToken architecture](https://github.com/FlashML-org/FreeToken) and
+[paper](https://arxiv.org/abs/2608.16157). ToshLLM does not vendor or link the FreeToken runtime or
+source code. FreeToken is distributed under Apache-2.0; if its source is incorporated in the future,
+its license, notices and modification requirements must be retained.
+
+> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the full quantized model addressable in
+> host **RAM**. Budget approximately `model size + max(25% of model size, 4 GiB)` as memory available
+> to the engine, in addition to enough memory for macOS and other applications. For example, an
+> 11.44 GiB GGUF needs about 15.44 GiB available to Dynamic MoE, so a 32 GB system is the practical
+> minimum for this class of model. If this headroom is unavailable, Automatic mode rejects Dynamic
+> MoE and returns to normal `ncmoe` instead of relying on swap.
+
 #### How to enable it
 
 1. Select the bundled engine and a MoE GGUF.
