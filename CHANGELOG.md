@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.85.8] - 2026-08-24
 
 ### Added
 - **Dynamic MoE, a private experiment that runs a MoE model on far less video memory** by keeping every expert in system RAM and a small cache of slots on the card. It is off by default and hidden for internal testing; a 35B in Q2_K_XL ran on 2.78 GiB against the 6 GiB its usual setting needs, and generated faster. Read the [what it is and when it pays](https://github.com/engeldlgado/toshllm#dynamic-moe-bounded-vram-expert-cache-private-experiment) section first, especially the RAM it asks for in exchange.
