@@ -3,6 +3,17 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Conversations exported to Markdown are labelled in the language you picked.** The two headings the file writes were always in Spanish. Reported by [guylough](https://github.com/engeldlgado/toshllm/issues/70).
+
+- **Two Duo cards no longer read as four cards.** A Duo puts two GPUs behind one name, so the machine card counted devices and doubled them; it now says two cards and four GPUs. Reported by [chafey](https://github.com/engeldlgado/toshllm/issues/67).
+
+- **The Infinity Fabric Link switch is only offered when there is a link.** It could be turned on with nothing bridged, which read as if the app had found a bridge. Reported by [chafey](https://github.com/engeldlgado/toshllm/issues/67).
+
+- **TurboQuant cache types no longer stop the server when the model is split by tensors.** The split path did not know how to divide the rotation TurboQuant applies to attention, and the engine aborted while loading. Reported by [chafey](https://github.com/engeldlgado/toshllm/issues/69).
+
 ## [0.85.7] - 2026-08-22
 
 ### Improved

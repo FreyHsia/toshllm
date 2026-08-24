@@ -121,6 +121,8 @@ struct SettingsView: View {
         ServerSettings.mmprojPath(forModel: modelPath) != nil
     }
     private var splitSelection: [Int] { ServerSettings.gpuList(fromCSV: gpuListCSV) }
+    /// macOS exposes the bridge nowhere else: linked GPUs share a Metal peer group.
+    private var hasPeerLink: Bool { !hardware.peerGroups.isEmpty }
     private func toggleSplitGPU(_ i: Int) {
         var sel = Set(splitSelection)
         if sel.contains(i) { sel.remove(i) } else { sel.insert(i) }
@@ -496,9 +498,15 @@ struct SettingsView: View {
                                         "Hands data from one GPU to the other without draining both queues on every copy. It changes nothing when splitting by layers; when splitting by tensors it is most of the generation speed (measured +59% on two GPUs). Turn it off only to diagnose."))
                         Toggle(loc.t("Infinity Fabric Link entre GPUs (experimental)",
                                      "Infinity Fabric Link between GPUs (experimental)"), isOn: $mgpuPeer)
+                            .disabled(!hasPeerLink)
                             .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Acelera el procesamiento del prompt. Repartiendo por tensores se usa solo donde gana, leyendo el prompt, y el traspaso rápido se queda con la generación. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
                                         "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo, or two cards joined by the external bridge), copies activations directly between them instead of through system RAM. Speeds up prompt processing. When splitting by tensors it is used only where it wins, reading the prompt, and the fast hand-off keeps generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
-                        if mgpuPeer && splitMode != "tensor" {
+                        if !hasPeerLink {
+                            Label(loc.t("No se detecta ningún puente entre estas GPUs, así que no hay nada que activar. Metal las pondría en un mismo grupo de pares si lo hubiera.",
+                                        "No bridge is detected between these GPUs, so there is nothing to turn on. Metal would put them in the same peer group if there were one."),
+                                  systemImage: "info.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if mgpuPeer && splitMode != "tensor" {
                             Label(loc.t("Con reparto por capas no hace nada: el puente acelera la reducción que solo existe repartiendo por tensores.",
                                         "With a layer split it does nothing: the bridge speeds up the reduction that only exists when splitting by tensors."),
                                   systemImage: "info.circle")

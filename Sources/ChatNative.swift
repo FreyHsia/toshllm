@@ -1837,10 +1837,12 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func exportText(_ c: Conversation) -> String {
-        c.messages.map { m in
-            let who = m.role == "user" ? "## Tú" : "## Asistente"
-            return "\(who)\n\n\(m.role == "assistant" ? m.parts.body : m.content)"
+    func exportText(_ c: Conversation, _ loc: Localizer) -> String {
+        let user = loc.t("Tú", "You")
+        let assistant = loc.t("Asistente", "Assistant")
+        return c.messages.map { m in
+            let who = m.role == "user" ? user : assistant
+            return "## \(who)\n\n\(m.role == "assistant" ? m.parts.body : m.content)"
         }.joined(separator: "\n\n---\n\n")
     }
 
@@ -4217,14 +4219,14 @@ struct ConversationListView: View {
             Divider()
             Button(loc.t("Copiar conversación", "Copy conversation")) {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(chat.exportText(c), forType: .string)
+                NSPasteboard.general.setString(chat.exportText(c, loc), forType: .string)
             }
             Button(loc.t("Exportar a Markdown…", "Export to Markdown…")) {
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = chat.displayTitle(c)
                     .replacingOccurrences(of: "/", with: "-") + ".md"
                 if panel.runModal() == .OK, let url = panel.url {
-                    try? chat.exportText(c).write(to: url, atomically: true, encoding: .utf8)
+                    try? chat.exportText(c, loc).write(to: url, atomically: true, encoding: .utf8)
                 }
             }
             Button(loc.t("Eliminar", "Delete"), role: .destructive) { chat.delete(c) }

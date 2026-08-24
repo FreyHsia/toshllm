@@ -523,6 +523,7 @@
   "New project: a folder with its own system prompt.": "",
   "No GPU usage data": "",
   "No MCP servers": "",
+  "No bridge is detected between these GPUs, so there is nothing to turn on. Metal would put them in the same peer group if there were one.": "",
   "No chat content": "",
   "No conversations": "",
   "No direct .gguf files": "Nessun file .gguf diretto",
