@@ -1922,3 +1922,49 @@ dentro de la capa, no ajustar colas. La siguiente ruta exacta es un operador MoE
 doble buffer de K expertos, transferencia de la franja siguiente mientras Metal calcula la
 actual y acumulacion unica al final. Debe conservar PPL antes de cualquier optimizacion o
 exposicion.
+
+## Operador por franjas y doble buffer: correcto, pero descartado
+
+Se implemento el operador exacto propuesto, oculto y sin interfaz de usuario. Dividia los 256
+expertos en franjas K8, conservaba los indices originales de cada asignacion y escribia cada
+salida una sola vez. Una segunda variante alternaba dos buffers K8: una cola Metal secundaria
+cargaba la franja siguiente mientras la cola principal calculaba la actual, sincronizadas con
+eventos GPU. El segundo buffer reutilizaba el scratch que ya existe para prefill, por lo que no
+anadia otra reserva material de VRAM.
+
+Qwen3.6-35B-A3B Q2_K_XL, `ncmoe 1`, `mlock`, pp256:
+
+| ruta | prefetch del scheduler | pp256 |
+|---|---:|---:|
+| K8 normal | 4 | **295.37** |
+| franjas K8 seriales | 0 | 203.41 |
+| franjas K8 con doble buffer propio | 0 | 205.32 |
+
+El doble buffer mejoro solo 1.91 pp (+0.9%) sobre las franjas seriales y quedo 30.5% por debajo
+del K8 normal. La ruta fue correcta: K8 normal y doble buffer produjeron el mismo hash exacto
+de logits (`a25e08713286e1af`) sobre el lote pp256. El problema es de rendimiento, no de
+precision: 15 despachos por banco, mapas por franja y barreras A/B cuestan mas de lo que se
+oculta, mientras copia y matmul siguen compitiendo en la misma GPU.
+
+El prototipo, sus kernels, eventos y diagnostico de hash se retiraron. El motor se recompilo
+con la ruta K8 anterior.
+
+## Barrido complementario de prefetch en K8 normal
+
+Se midieron valores no cubiertos por el barrido anterior, manteniendo `ncmoe 1`, `mlock`,
+NCB8, pp256 y tres repeticiones:
+
+| slots de prefetch | pp256 |
+|---:|---:|
+| 0 | 214.78 +/- 8.59 |
+| 1 | 269.29 +/- 26.06 |
+| **4 (control)** | **297.19 +/- 0.60** |
+| 5 | 295.31 +/- 0.59 |
+| 7 | 296.22 +/- 1.31 |
+| 10 | 293.62 +/- 0.97 |
+| 12 | 293.61 +/- 0.42 |
+| 16 | 293.85 +/- 0.18 |
+
+Junto con los valores ya medidos 2, 3, 6 y 8, el optimo sigue siendo cuatro. Menos de cuatro
+no mantiene suficiente trabajo anticipado; por encima de cuatro el enlace ya esta saturado y
+la administracion adicional resta aproximadamente 1-1.2% sin reducir VRAM.
