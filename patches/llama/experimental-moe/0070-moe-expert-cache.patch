@@ -57,6 +57,36 @@ diff --git a/common/arg.cpp b/common/arg.cpp
          std::string tensor_name = override.substr(0, pos);
          std::string buffer_type = override.substr(pos + 1);
  
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -940,16 +940,26 @@
+                 /* static */ std::map<std::string, ggml_backend_buffer_type_t> buft_list;
+                 if (buft_list.empty()) {
+                     // enumerate all the devices and add their buffer types to the list
+                     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+                         auto * dev = ggml_backend_dev_get(i);
+                         auto * buft = ggml_backend_dev_buffer_type(dev);
+                         if (buft) {
+                             buft_list[ggml_backend_buft_name(buft)] = buft;
++                        }
++
++                        // a backend can offer more than its default one
++                        auto * reg = ggml_backend_dev_backend_reg(dev);
++                        auto fn = reg ? (ggml_backend_dev_get_extra_bufts_t)
++                            ggml_backend_reg_get_proc_address(reg, "ggml_backend_dev_get_extra_bufts") : nullptr;
++                        if (fn) {
++                            for (auto ** bufts = fn(dev); bufts && *bufts; ++bufts) {
++                                buft_list[ggml_backend_buft_name(*bufts)] = *bufts;
++                            }
+                         }
+                     }
+                 }
+                 auto override_group_span_len = std::strcspn(value, ",");
+                 bool last_group = false;
+                 do {
+                     if (override_group_span_len == 0) {
+                         // Adds an empty override-tensors for an empty span
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
@@ -392,7 +422,7 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1,10 +1,21 @@
+@@ -1,10 +1,22 @@
  #include "llama-graph.h"
  
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
@@ -403,6 +433,7 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
 +#else
 +static inline const void * tosh_moe_state_of(const void *) { return nullptr; }
 +static inline const void * tosh_moe_ram_of(const void *)   { return nullptr; }
++static inline int tosh_moe_ids_room(int) { return 0; }
 +static inline ggml_tensor * tosh_moe_bank_of(ggml_tensor * t) { return t; }
 +#endif
 +
@@ -414,8 +445,7 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
  
  #include "llama-kv-cache.h"
  #include "llama-kv-cache-iswa.h"
-@@ -2041,16 +2052,35 @@
-         selected_experts = ggml_cast(ctx0, ggml_scale(ctx0, f_sel, 1.0f / float(hparams.n_group_experts)), GGML_TYPE_I32);
+@@ -2042,17 +2054,44 @@
          probs = ggml_reshape_3d(ctx0, probs, 1, hparams.n_expert, n_tokens);
      } else {
          probs = ggml_reshape_3d(ctx0, probs, 1, n_expert, n_tokens);
@@ -423,18 +453,26 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
  
      ggml_tensor * weights = ggml_get_rows(ctx0, probs, selected_experts); // [1, n_expert_used, n_tokens]
      cb(weights, "ffn_moe_weights", il);
-+
+ 
 +    // A batch wide enough to touch most of the bank does not fit the cache, and reads the whole
 +    // thing where it lives instead, which is what the traditional route does anyway.
 +    // A wide batch only fits the cache when every expert has a slot; otherwise the ones left
 +    // over would have nowhere to run, so it reads the bank where it lives instead.
 +    ggml_tensor * moe_first = gate_up_exps ? gate_up_exps : gate_exps;
 +    bool moe_cached = tosh_moe_state_of(moe_first) != nullptr;
++    if (moe_cached) {
++        // the backend writes the remapped routing into a fixed slice of the cache state, so a
++        // batch whose ids do not fit there stays on the plain path
++        ggml_tensor * bank = (ggml_tensor *) tosh_moe_ram_of(moe_first);
++        const int64_t need = (selected_experts->ne[1] - 1)*(int64_t) (selected_experts->nb[1]/sizeof(int32_t))
++            + selected_experts->ne[0];
++        moe_cached = bank && need <= tosh_moe_ids_room((int) bank->ne[2]);
++    }
 +    if (moe_cached && n_tokens > 8) {
 +        ggml_tensor * bank = (ggml_tensor *) tosh_moe_ram_of(moe_first);
 +        moe_cached = bank && moe_first->ne[2] >= bank->ne[2];
 +    }
-+
+ 
 +    ggml_tensor * expert_ids = selected_experts;
 +    if (!moe_cached) {
 +        gate_up_exps = tosh_moe_bank_of(gate_up_exps);
@@ -442,15 +480,17 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
 +        up_exps      = tosh_moe_bank_of(up_exps);
 +        down_exps    = tosh_moe_bank_of(down_exps);
 +    }
- 
- 
++
++
      if (gating_op == LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX_WEIGHT) {
          weights = ggml_reshape_2d(ctx0, weights, n_expert_used, n_tokens);
          weights = ggml_soft_max(ctx0, weights); // [n_expert_used, n_tokens]
          weights = ggml_reshape_3d(ctx0, weights, 1, n_expert_used, n_tokens);
          cb(weights, "ffn_moe_weights_softmax", il);
      }
-@@ -2087,17 +2117,17 @@
+ 
+     if (norm_w) {
+@@ -2087,17 +2126,17 @@
          cb(cur, "ffn_moe_weighted", il);
      }
  
@@ -469,7 +509,7 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
  
          if (gate_up_exps_b) {
              gate_up = ggml_add_id(ctx0, gate_up, gate_up_exps_b, selected_experts);
-@@ -2106,30 +2136,30 @@
+@@ -2106,30 +2145,30 @@
  
          const int64_t n_ff = gate_up->ne[0] / 2;
          cur = ggml_view_3d(ctx0, gate_up, n_ff, gate_up->ne[1], gate_up->ne[2], gate_up->nb[1], gate_up->nb[2], 0);
@@ -502,7 +542,7 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
          if (gate_exps_s) {
              cb(cur, "ffn_moe_gate_scaled", il);
          }
-@@ -2223,17 +2253,17 @@
+@@ -2223,17 +2262,17 @@
                  cur = ggml_relu(ctx0, cur);
                  cur = ggml_sqr(ctx0, cur);
                  cb(cur, "ffn_moe_relu_sqr", il);
@@ -774,9 +814,9 @@ diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -1,10 +1,18 @@
+@@ -1,9 +1,17 @@
  #include "ggml-metal-ops.h"
- 
++
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#include "tosh-moe.h"
 +#else
@@ -784,7 +824,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +static inline const void * tosh_moe_ram_of(const void *)   { return nullptr; }
 +static inline bool tosh_moe_should_route(const void *, int) { return false; }
 +#endif
-+
+ 
  #include "ggml.h"
  #include "ggml-impl.h"
  #include "ggml-backend-impl.h"
@@ -792,8 +832,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  #include "ggml-metal-impl.h"
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
- 
-@@ -2950,17 +2958,115 @@
+@@ -2950,17 +2958,107 @@
  
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
@@ -806,6 +845,9 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +    // A cached bank: pick the experts and pull in what is missing before the matmul reads the
 +    // slots. Both run on this encoder, so the routing never goes back to the host.
 +    if (const ggml_tensor * state = (const ggml_tensor *) tosh_moe_state_of(op->src[0])) {
++        // the graph only routes a batch here when its remapped ids fit the state
++        GGML_ASSERT((int64_t) (ne21 - 1)*(int64_t) (nb21/sizeof(int32_t)) + ne20 <=
++                tosh_moe_ids_room((int) ((const ggml_tensor *) tosh_moe_ram_of(op->src[0]))->ne[2]));
 +        const ggml_tensor * host = (const ggml_tensor *) tosh_moe_ram_of(op->src[0]);
 +
 +        const int n_expert  = (int) host->ne[2];
@@ -814,17 +856,6 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +
 +        const ggml_metal_buffer_id bid_state = ggml_metal_get_buffer_id(state);
 +        const size_t i32 = sizeof(int32_t);
-+
-+        if (getenv("TOSH_MOE_DEBUG")) {
-+            static int said = 0;
-+            if (said < 6) {
-+                said++;
-+                GGML_LOG_WARN("[TOSH] %s: n_active=%d (ne20=%d ne21=%d) n_expert=%d n_slots=%d nb02=%llu nbi1=%llu ruta=%d\n",
-+                        op->src[0]->name, (int) (ne20*ne21), (int) ne20, (int) ne21,
-+                        n_expert, n_slots, (unsigned long long) nb02, (unsigned long long) nb21,
-+                        (int) tosh_moe_should_route(op->src[0], idx));
-+            }
-+        }
 +
 +        if (tosh_moe_should_route(op->src[0], idx)) {
 +            ggml_metal_kargs_moe_lru la = {
@@ -858,7 +889,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +            ggml_metal_encoder_set_buffer(enc, b, 8);
 +            b.offs = bid_state.offs + tosh_moe_off_ids(n_expert, n_slots, max_fetch)*i32;
 +            ggml_metal_encoder_set_buffer(enc, b, 9);
-+            ggml_metal_encoder_set_threadgroup_memory_size(enc, (2*n_expert + 256)*i32, 0);
++            ggml_metal_encoder_set_threadgroup_memory_size(enc, (2*n_expert + 512)*i32, 0);
 +            ggml_metal_encoder_dispatch_threadgroups(enc, 1, 1, 1, 256, 1, 1);
 +
 +            ggml_metal_op_concurrency_reset(ctx);
@@ -876,9 +907,9 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +            /*.max_fetch =*/ max_fetch,
 +            /*.n_chunks  =*/ n_chunks,
 +        };
- 
-+        auto pf = ggml_metal_library_compile_pipeline(lib, "tosh_moe_fetch", "tosh_moe_fetch", nullptr);
 +
++        auto pf = ggml_metal_library_compile_pipeline(lib, "tosh_moe_fetch", "tosh_moe_fetch", nullptr);
+ 
 +        ggml_metal_buffer_id b = bid_state;
 +        ggml_metal_encoder_set_pipeline(enc, pf);
 +        ggml_metal_encoder_set_bytes (enc, &fa, sizeof(fa), 0);
@@ -913,7 +944,7 @@ diff --git a/tosh-moe/tosh-moe.h b/tosh-moe/tosh-moe.h
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe.h
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,126 @@
 +// Experimental MoE expert cache: maps an expert to a physical slot, nothing else.
 +// RAM keeps every expert, so an eviction only drops a copy. The unit is a whole expert of a
 +// layer, all of its tensors together, because a partial one cannot run.
@@ -975,10 +1006,16 @@ new file mode 100644
 +
 +// Layout of the per-layer cache state, packed in one i32 tensor so the kernels can bind it
 +// at offsets instead of needing seven buffers of their own.
-+#define TOSH_MOE_MAX_ACTIVE 4096
++// Widest batch whose remapped routing still fits the state. The ids are padded to one entry
++// per expert, so the room needed is tokens times experts, not tokens times experts used.
++#define TOSH_MOE_MAX_TOKENS 512
++
++static inline int tosh_moe_ids_room(int n_expert) {
++    return TOSH_MOE_MAX_TOKENS*n_expert;
++}
 +
 +static inline int tosh_moe_state_ints(int n_expert, int n_slots, int max_fetch) {
-+    return n_expert + 2*n_slots + 2 + 2*max_fetch + TOSH_MOE_MAX_ACTIVE;
++    return n_expert + 2*n_slots + 2 + 2*max_fetch + tosh_moe_ids_room(n_expert);
 +}
 +static inline int tosh_moe_off_slot_for_id(int n_expert, int n_slots, int max_fetch) { (void) n_expert; (void) n_slots; (void) max_fetch; return 0; }
 +static inline int tosh_moe_off_id_of_slot (int n_expert, int n_slots, int max_fetch) { (void) n_slots; (void) max_fetch; return n_expert; }
@@ -1519,7 +1556,7 @@ diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-lru.metal
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,194 @@
 +#include <metal_stdlib>
 +using namespace metal;
 +
@@ -1552,7 +1589,7 @@ new file mode 100644
 +
 +    threadgroup int32_t * active  = shm;                    // n_expert
 +    threadgroup int32_t * missing = shm + args.n_expert;     // n_expert
-+    threadgroup int32_t * red     = missing + args.n_expert; // ntg, for the argmin
++    threadgroup int32_t * red     = missing + args.n_expert; // 2*ntg, for the argmin
 +
 +    int32_t now = 0;
 +    if (tid == 0) {
@@ -1594,43 +1631,71 @@ new file mode 100644
 +    }
 +    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
 +
-+    // Serial over the fetches, parallel over the slots: each round takes the least
-+    // recently used slot whose expert this step does not need.
-+    if (tid == 0) {
-+        int32_t fetched = 0;
-+        for (int32_t e = 0; e < args.n_expert && fetched < args.max_fetch; e++) {
-+            if (missing[e] == 0) {
-+                continue;
-+            }
++    // Serial over the fetches, which depend on each other, but the search for the least
++    // recently used slot is a threadgroup reduction: on a big bank it is thousands of
++    // comparisons and one thread would walk them alone.
++    threadgroup int32_t * best_u = red;              // ntg
++    threadgroup int32_t * best_s = red + 256;        // ntg
 +
-+            int32_t victim = -1;
-+            int32_t best   = 0;
-+            for (int32_t s = 0; s < args.n_slots; s++) {
-+                const int32_t owner = id_of_slot[s];
-+                if (owner >= 0 && owner < args.n_expert && active[owner] != 0) {
-+                    continue;      // in use this step
-+                }
-+                if (victim < 0 || usage[s] < best) {
-+                    victim = s;
-+                    best   = usage[s];
-+                }
-+            }
-+            if (victim < 0) {
-+                break;             // every slot is needed this step
-+            }
++    int32_t fetched = 0;
++    for (int32_t e = 0; e < args.n_expert && fetched < args.max_fetch; e++) {
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        if (missing[e] == 0) {
++            continue;
++        }
 +
++        int32_t mine_u = INT_MAX;
++        int32_t mine_s = -1;
++        for (uint sl = tid; sl < (uint) args.n_slots; sl += ntg) {
++            const int32_t owner = id_of_slot[sl];
++            if (owner >= 0 && owner < args.n_expert && active[owner] != 0) {
++                continue;          // in use this step
++            }
++            const int32_t u = usage[sl];
++            if (mine_s < 0 || u < mine_u) {
++                mine_u = u;
++                mine_s = (int32_t) sl;
++            }
++        }
++        best_u[tid] = mine_u;
++        best_s[tid] = mine_s;
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        for (uint span = ntg/2; span > 0; span >>= 1) {
++            if (tid < span) {
++                const int32_t os = best_s[tid + span];
++                // ties go to the lower slot, so the result does not depend on the split
++                if (os >= 0 && (best_s[tid] < 0 || best_u[tid + span] < best_u[tid] ||
++                        (best_u[tid + span] == best_u[tid] && os < best_s[tid]))) {
++                    best_u[tid] = best_u[tid + span];
++                    best_s[tid] = os;
++                }
++            }
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++        }
++
++        const int32_t victim = best_s[0];
++        if (victim < 0) {
++            break;                 // every slot is needed this step
++        }
++
++        if (tid == 0) {
 +            const int32_t old = id_of_slot[victim];
 +            if (old >= 0 && old < args.n_expert) {
 +                slot_for_id[old] = -1;
 +            }
 +
-+            id_of_slot[victim]  = e;
-+            slot_for_id[e]      = victim;
-+            usage[victim]       = now;
++            id_of_slot[victim]   = e;
++            slot_for_id[e]       = victim;
++            usage[victim]        = now;
 +            evict_slots[fetched] = victim;
 +            src_indices[fetched] = e;
-+            fetched++;
 +        }
++        fetched++;
++    }
++
++    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
++    if (tid == 0) {
 +        *n_indices = fetched;
 +    }
 +    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
@@ -1645,7 +1710,6 @@ new file mode 100644
 +        ids_out[o] = (e >= 0 && e < args.n_expert) ? slot_for_id[e] : -1;
 +    }
 +
-+    (void) red;
 +}
 +
 +// Brings the rows the LRU just scheduled from the host bank into their slots. Only the
