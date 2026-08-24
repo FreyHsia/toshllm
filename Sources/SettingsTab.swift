@@ -19,6 +19,9 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.serverBinary) private var serverBinary = ""
     @AppStorage(SettingsKeys.faAmd) private var faAmd = ServerSettings.defaultFaAmd
     @AppStorage(SettingsKeys.prefetchExperts) private var prefetchExperts = true
+    @AppStorage(SettingsKeys.dynamicMoe) private var dynamicMoe = false
+    @AppStorage(SettingsKeys.dynamicMoeSlots) private var dynamicMoeSlots = 8
+    @AppStorage(SettingsKeys.dynamicMoePrefetch) private var dynamicMoePrefetch = 4
     @AppStorage(SettingsKeys.persistCache) private var persistCache = false
     @AppStorage(SettingsKeys.port) private var port = 8080
     @AppStorage(SettingsKeys.ngl) private var ngl = 99
@@ -124,6 +127,9 @@ struct SettingsView: View {
     }
     private var kvNeedsFlashAttention: Bool { cacheTypeK != "f16" || cacheTypeV != "f16" }
     private var amdFlashActive: Bool { faAmd }
+    private var dynamicMoeUIUnlocked: Bool {
+        ShellWords.split(extraArgs).contains("TOSH_MOE_UI=1")
+    }
 
     private var engineSelection: Binding<String> {
         Binding(
@@ -135,6 +141,7 @@ struct SettingsView: View {
                     faAmd = ServerSettings.defaultFaAmd
                 } else {
                     faAmd = false
+                    dynamicMoe = false
                 }
             })
     }
@@ -463,9 +470,39 @@ struct SettingsView: View {
                             ncmoe = v
                             ServerSettings.rememberNcmoe(v, forModel: modelPath)
                         }), in: 0...99)
-                    .disabled(!modelIsMoE)
                     .infoTip(loc.t("Solo modelos MoE: capas cuyos 'expertos' viven en RAM y los procesa el CPU. Se ajusta solo al elegir modelo; súbelo si la VRAM se satura, bájalo si te sobra. (Deshabilitado en modelos densos, donde el motor lo ignora.)",
                                 "MoE models only: layers whose 'experts' live in RAM and run on the CPU. Auto-set when picking a model; raise if VRAM saturates, lower if you have headroom. (Disabled on dense models, where the engine ignores it.)"))
+                    .disabled(!modelIsMoE || (dynamicMoe && dynamicMoeUIUnlocked))
+                if engineSelection.wrappedValue != "custom" && dynamicMoeUIUnlocked {
+                    Toggle(loc.t("Dynamic MoE K8 (experimental)", "Dynamic MoE K8 (experimental)"),
+                           isOn: $dynamicMoe)
+                        .disabled(!modelIsMoE)
+                        .infoTip(loc.t("Mantiene todos los expertos cuantizados en RAM y una caché pequeña en VRAM. Está apagado por defecto. Al activarlo usa ncmoe 1, mlock y el override Metal requeridos; desactívalo para volver al camino normal con el mismo binario.",
+                                    "Keeps all quantized experts in RAM and a small cache in VRAM. It is off by default. Enabling it applies ncmoe 1, mlock, and the required Metal override; turn it off to return to the normal path with the same binary."))
+                    if dynamicMoe {
+                        Picker(loc.t("Ranuras de expertos en VRAM", "Expert slots in VRAM"),
+                               selection: $dynamicMoeSlots) {
+                            ForEach([8, 16, 32, 64, 114], id: \.self) { value in
+                                Text("K\(value)").tag(value)
+                            }
+                        }
+                        .infoTip(loc.t("K8 es el mínimo medido y usa menos VRAM. Más ranuras mejoran principalmente la generación, pero aumentan la memoria; K114 ya no cumple el objetivo de menor VRAM.",
+                                    "K8 is the measured minimum and uses the least VRAM. More slots mainly improve generation but increase memory; K114 no longer meets the lower-VRAM goal."))
+                        Picker(loc.t("Prefetch de Dynamic MoE", "Dynamic MoE prefetch"),
+                               selection: $dynamicMoePrefetch) {
+                            ForEach([0, 1, 2, 3, 4, 5, 6, 8, 12, 16], id: \.self) { value in
+                                Text("\(value)").tag(value)
+                            }
+                        }
+                        .infoTip(loc.t("Número de bancos anticipados durante el prompt. Cuatro fue el óptimo medido para K8; los demás valores sirven para repetir el barrido desde Benchmarks.",
+                                    "Number of banks prefetched during prompt processing. Four was the measured optimum for K8; the other values let you repeat the sweep from Benchmarks."))
+                        Label(loc.t("Configuración efectiva: cache · ncmoe 1 · mlock · NCB8",
+                                    "Effective configuration: cache · ncmoe 1 · mlock · NCB8"),
+                              systemImage: "flask.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
                 Stepper(loc.t("Reserva de VRAM: \(vramReserve) MB", "VRAM reserve: \(vramReserve) MB"),
                         value: $vramReserve, in: 256...4096, step: 256)
                     .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
@@ -677,8 +714,8 @@ struct SettingsView: View {
                                 "Serves /v1/embeddings for RAG clients (e.g. Obsidian Copilot), which otherwise get a 501 error. Note: llama-server dedicates the process to embeddings, so enable it with an embedding model; to keep chatting, add a second server on Home with this option."))
                 TextField(loc.t("Argumentos extra", "Extra arguments"), text: $extraArgs)
                     .font(.system(.caption, design: .monospaced))
-                    .infoTip(loc.t("Argumentos adicionales de llama-server separados por espacios (para opciones que la app no expone). Un token con forma CLAVE=VALOR se aplica como variable de entorno del motor, no como argumento. Ej.: en tarjetas AMD GCN/Vega (Vega 56/64, RX 580, Radeon VII) que dan texto corrupto, escribe GGML_METAL_WAVE64_SAFEMODE=1 para forzar salida coherente (más lento).",
-                                "Additional llama-server arguments, space-separated (for options the app doesn't expose). A token shaped like KEY=VALUE is applied as an engine environment variable instead of an argument. E.g. on AMD GCN/Vega cards (Vega 56/64, RX 580, Radeon VII) that produce garbled text, type GGML_METAL_WAVE64_SAFEMODE=1 to force coherent output (slower)."))
+                    .infoTip(loc.t("Argumentos adicionales de llama-server separados por espacios. Un token CLAVE=VALOR se aplica como variable de entorno. Para mostrar la configuración privada de Dynamic MoE escribe TOSH_MOE_UI=1. En tarjetas GCN/Vega con texto corrupto, GGML_METAL_WAVE64_SAFEMODE=1 fuerza la ruta segura.",
+                                "Additional llama-server arguments, space-separated. A KEY=VALUE token is applied as an environment variable. To reveal the private Dynamic MoE settings, enter TOSH_MOE_UI=1. On GCN/Vega cards with corrupted text, GGML_METAL_WAVE64_SAFEMODE=1 forces the safe path."))
                 Text(loc.t("Los cambios se aplican al reiniciar el servidor.",
                            "Changes take effect when the server restarts."))
                     .font(.caption).foregroundStyle(.secondary)

@@ -92,6 +92,9 @@ CMAKE_FLAGS=(
     -DBUILD_SHARED_LIBS=OFF
     -DGGML_METAL=ON
     -DGGML_METAL_EMBED_LIBRARY=ON
+    # Compile the experimental MoE cache into the bundled engine. It remains
+    # inert unless the app explicitly sets TOSH_MOE_MODE at process launch.
+    -DTOSH_ENABLE_DYNAMIC_MOE=ON
     -DGGML_NATIVE=OFF
     -DCMAKE_OSX_ARCHITECTURES="$ARCH"
     # cmake defaults it to the build host, so a macos-26 runner emits binaries dyld

@@ -68,6 +68,9 @@ enum SettingsKeys {
     static let specMTP = "specMTP"
     static let faAmd = "faAmd"
     static let prefetchExperts = "prefetchExperts"
+    static let dynamicMoe = "dynamicMoe"
+    static let dynamicMoeSlots = "dynamicMoeSlots"
+    static let dynamicMoePrefetch = "dynamicMoePrefetch"
     static let routerMode = "routerMode"
     static let routerModelsMax = "routerModelsMax"
     /// Alias of the model the native chat targets in router mode. A runtime
@@ -186,7 +189,8 @@ enum SettingsKeys {
         serverBinary, port, ngl, ncmoe, ctx, threads, flashAttn, noMmap, jinja,
         vramReserve, gpuIndex, gpuList, extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
-        parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts, routerMode, routerModelsMax,
+        parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts,
+        dynamicMoe, dynamicMoeSlots, dynamicMoePrefetch, routerMode, routerModelsMax,
         persistCache, multiGPU, multiGPUCount, splitMode, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,
         menuBarIcon, menuBarGPU, autoStart, updateAutoCheck, appAccent,

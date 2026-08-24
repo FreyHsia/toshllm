@@ -565,6 +565,38 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "--cache-reuse")! + 1], "256")
     }
 
+    func testDynamicMoeIsCompiledButRequiresPrivateUIFlagAndToggle() {
+        var s = makeSettings()
+        s.dynamicMoe = true
+        s.dynamicMoeSlots = 16
+        s.dynamicMoePrefetch = 7
+
+        XCTAssertFalse(s.effectiveDynamicMoe)
+        XCTAssertNil(s.environment["TOSH_MOE_MODE"])
+        XCTAssertFalse(s.arguments.contains("-ot"))
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--n-cpu-moe")! + 1], "24")
+
+        s.extraArgs = "TOSH_MOE_UI=1"
+
+        XCTAssertTrue(s.effectiveDynamicMoe)
+        XCTAssertEqual(s.environment["TOSH_MOE_MODE"], "cache")
+        XCTAssertEqual(s.environment["TOSH_MOE_SLOTS"], "16")
+        XCTAssertEqual(s.environment["TOSH_MOE_CPU_BANK"], "1")
+        XCTAssertEqual(s.environment["GGML_SCHED_PREFETCH_EXPERTS"], "7")
+        XCTAssertEqual(s.environment["GGML_METAL_NCB"], "8")
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--n-cpu-moe")! + 1], "1")
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--load-mode")! + 1], "mlock")
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "-ot")! + 1],
+                       ServerSettings.dynamicMoeTensorOverride)
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ncmoe")! + 1], "1")
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ot")! + 1],
+                       ServerSettings.dynamicMoeTensorOverride)
+
+        s.routerMode = true
+        XCTAssertFalse(s.effectiveDynamicMoe, "router presets cannot carry the tensor override")
+        XCTAssertNil(s.environment["TOSH_MOE_MODE"])
+    }
+
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {
         var settings = makeSettings()
         settings.jinja = false

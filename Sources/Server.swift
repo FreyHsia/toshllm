@@ -76,6 +76,11 @@ struct ServerSettings {
     /// (GGML_SCHED_PREFETCH_EXPERTS) and keep CPU experts unpacked so their
     /// matmuls can offload (GGML_CPU_NO_REPACK).
     var prefetchExperts: Bool = true
+    /// Experimental bounded-VRAM expert cache. Compiled into the bundled engine,
+    /// but completely inert unless this persisted user choice is enabled.
+    var dynamicMoe: Bool = false
+    var dynamicMoeSlots: Int = 8
+    var dynamicMoePrefetch: Int = 4
     /// Router mode (`--models-preset`): one process auto-loads/unloads whichever
     /// model a request's "model" field names, instead of the fixed `modelPath`.
     var routerMode: Bool = false
@@ -178,6 +183,7 @@ struct ServerSettings {
     }
 
     static let defaultFaAmd = true
+    static let dynamicMoeTensorOverride = #"\.ffn_(up|down|gate|gate_up)_(ch|)exps=MTL0"#
     static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3"]
 
     var usesTurboKV: Bool {
@@ -207,8 +213,13 @@ struct ServerSettings {
             "--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1",
             "--port", String(port),
         ]
-        if ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
-        if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { args += ["--load-mode", mode] }
+        let moeCPU = effectiveDynamicMoe ? 1 : ncmoe
+        if moeCPU > 0 { args += ["--n-cpu-moe", String(moeCPU)] }
+        let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
+        if let mode { args += ["--load-mode", mode] }
+        if effectiveDynamicMoe {
+            args += ["-ot", Self.dynamicMoeTensorOverride]
+        }
         // A sibling projector lets the model read images, and needs --jinja.
         let mmproj = loadVision ? Self.mmprojPath(forModel: modelPath) : nil
         if let mmproj {
@@ -244,7 +255,7 @@ struct ServerSettings {
         if reasoningInline { args += ["--reasoning-format", "none"] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
-        if let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
+        if !effectiveDynamicMoe, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
             // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
             // q8_0 halves that footprint at no measurable quality cost for a draft.
             args += ["-md", selection.draft, "--spec-type", "draft-dflash",
@@ -412,9 +423,12 @@ struct ServerSettings {
         // the prompt speed.
         var args = ["-m", modelPath, "-ngl", String(ngl), "-r", "2",
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped)]
-        if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { args += ["--load-mode", mode] }
+        let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
+        if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
-        if ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
+        let moeCPU = effectiveDynamicMoe ? 1 : ncmoe
+        if moeCPU > 0 { args += ["-ncmoe", String(moeCPU)] }
+        if effectiveDynamicMoe { args += ["-ot", Self.dynamicMoeTensorOverride] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
         if kvNeedsFlashAttention || flashAttn == "on" {
@@ -502,7 +516,13 @@ struct ServerSettings {
         if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
-        if prefetchExperts && (ncmoe > 0 || routerMode) {
+        if effectiveDynamicMoe {
+            env["TOSH_MOE_MODE"] = "cache"
+            env["TOSH_MOE_SLOTS"] = String(effectiveDynamicMoeSlots)
+            env["TOSH_MOE_CPU_BANK"] = "1"
+            env["GGML_SCHED_PREFETCH_EXPERTS"] = String(effectiveDynamicMoePrefetch)
+            env["GGML_METAL_NCB"] = "8"
+        } else if prefetchExperts && (ncmoe > 0 || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
             // GPU, so stay below it. Router mode has no single ncmoe to compare.
             let cliff = Self.recalledPrefetchCliff(forModel: modelPath)
@@ -602,6 +622,9 @@ struct ServerSettings {
             specMTP: bool(SettingsKeys.specMTP, false),
             faAmd: bool(SettingsKeys.faAmd, defaultFaAmd),
             prefetchExperts: bool(SettingsKeys.prefetchExperts, true),
+            dynamicMoe: bool(SettingsKeys.dynamicMoe, false),
+            dynamicMoeSlots: int(SettingsKeys.dynamicMoeSlots, 8),
+            dynamicMoePrefetch: int(SettingsKeys.dynamicMoePrefetch, 4),
             routerMode: bool(SettingsKeys.routerMode, false),
             routerModelsMax: int(SettingsKeys.routerModelsMax, 1),
             persistCache: bool(SettingsKeys.persistCache, false),
@@ -657,6 +680,13 @@ struct ServerSettings {
     var effectiveFaAmd: Bool {
         faAmd
     }
+
+    /// Router presets load models independently and cannot carry the per-tensor
+    /// override required by this prototype, so keep the experiment fixed-model only.
+    var dynamicMoeUIUnlocked: Bool { extraArgTokens.env["TOSH_MOE_UI"] == "1" }
+    var effectiveDynamicMoe: Bool { dynamicMoe && dynamicMoeUIUnlocked && !routerMode }
+    var effectiveDynamicMoeSlots: Int { min(max(dynamicMoeSlots, 8), 256) }
+    var effectiveDynamicMoePrefetch: Int { min(max(dynamicMoePrefetch, 0), 16) }
 
     /// Resolves DFlash against the same physical GPU selection and memory reserve
     /// that will be passed to the engine. A nil plan means metadata or hardware is
@@ -1318,6 +1348,8 @@ final class ServerController: ObservableObject {
                        "GGML_METAL_DEVICE_INDEX", "GGML_METAL_DEVICES", "GGML_METAL_DEVICE_LIST",
                        "GGML_METAL_SHARED_BUFFERS_DISABLE", "TOSH_FA_AMD",
                        "GGML_SCHED_PREFETCH_EXPERTS", "GGML_CPU_NO_REPACK",
+                       "TOSH_MOE_UI", "TOSH_MOE_MODE", "TOSH_MOE_SLOTS", "TOSH_MOE_CPU_BANK",
+                       "GGML_METAL_NCB",
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
         let env = settings.environment
         // Include user-provided environment variables in diagnostic logs.
