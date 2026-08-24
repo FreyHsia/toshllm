@@ -239,9 +239,9 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1,9 +1,21 @@
+@@ -1,10 +1,24 @@
  #include "llama-model-loader.h"
-+
+ 
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#include "tosh-moe.h"
 +#else
@@ -250,10 +250,12 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +static inline void         tosh_moe_unbind_all(void)                     {}
 +static inline void         tosh_moe_layer_set(const void *, int, int)    {}
 +static inline void         tosh_moe_bind_state(const void *, const void *) {}
++static inline void         tosh_moe_set_stage(const void *)                {}
++static inline const void * tosh_moe_stage(void)                          { return nullptr; }
 +static inline const void * tosh_moe_host_buft(void)                       { return nullptr; }
 +static inline int          tosh_moe_state_ints(int, int, int)             { return 0; }
 +#endif
- 
++
  #include "ggml-alloc.h"
  #include "ggml.h"
  #include "gguf.h"
@@ -261,7 +263,8 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
  #include "llama.h"
  
  #include <algorithm>
-@@ -533,16 +545,20 @@
+ #include <array>
+@@ -533,16 +547,20 @@
          FILE * file,
          llama_load_mode load_mode,
          bool check_tensors,
@@ -282,7 +285,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
      if (param_overrides_p != nullptr) {
          for (const struct llama_model_kv_override * p = param_overrides_p; p->key[0] != 0; p++) {
              kv_overrides.insert({std::string(p->key), *p});
-@@ -1070,16 +1086,17 @@
+@@ -1070,16 +1088,17 @@
          const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
      auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
          auto it = ctx_map.find(buft);
@@ -300,7 +303,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
              ggml_init_params params = {
                  /*.mem_size   =*/ ctx_size,
                  /*.mem_buffer =*/ NULL,
-@@ -1309,17 +1326,80 @@
+@@ -1309,17 +1328,90 @@
      if (flags & TENSOR_DUPLICATED) {
          ggml_tensor * t = ggml_get_tensor(ctx, tn.str().c_str());
          if (t) {
@@ -333,14 +336,14 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +
 +        const int max_fetch = n_slots;
 +        const int n_state   = tosh_moe_state_ints((int) n_exp, n_slots, max_fetch);
- 
++
 +        ggml_tensor state_meta = {};
 +        state_meta.type  = GGML_TYPE_I32;
 +        state_meta.ne[0] = n_state;
 +        state_meta.ne[1] = state_meta.ne[2] = state_meta.ne[3] = 1;
 +        state_meta.nb[0] = ggml_type_size(GGML_TYPE_I32);
 +        state_meta.nb[1] = state_meta.nb[2] = state_meta.nb[3] = state_meta.nb[0]*n_state;
-+
+ 
 +        int il = -1;
 +        sscanf(ggml_get_name(&t_meta), "blk.%d.", &il);
 +
@@ -364,6 +367,16 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +
 +        tosh_moe_bind(slots, host);
 +        tosh_moe_bind_state(slots, state);
++
++        // one scratch the size of the widest bank, reused by every layer: a batch too wide for
++        // the cache copies its bank here in one go and reads it from the device. The registry
++        // is the source of truth, not a local static, which would survive into the next load.
++        const ggml_tensor * have = (const ggml_tensor *) tosh_moe_stage();
++        if (!have || ggml_nbytes(have) < ggml_nbytes(&t_meta)) {
++            ggml_tensor * stage = ggml_dup_tensor(ctx_for_buft(buft_dev), &t_meta);
++            ggml_set_name(stage, "tosh.moe.stage");
++            tosh_moe_set_stage(stage);
++        }
 +        if (il >= 0) {
 +            tosh_moe_layer_set(slots, il, (int) n_exp);
 +        }
@@ -814,17 +827,19 @@ diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -1,9 +1,17 @@
+@@ -1,10 +1,20 @@
  #include "ggml-metal-ops.h"
-+
+ 
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#include "tosh-moe.h"
 +#else
 +static inline const void * tosh_moe_state_of(const void *) { return nullptr; }
 +static inline const void * tosh_moe_ram_of(const void *)   { return nullptr; }
++static inline const void * tosh_moe_slots_of(const void *) { return nullptr; }
++static inline const void * tosh_moe_stage(void)            { return nullptr; }
 +static inline bool tosh_moe_should_route(const void *, int) { return false; }
 +#endif
- 
++
  #include "ggml.h"
  #include "ggml-impl.h"
  #include "ggml-backend-impl.h"
@@ -832,8 +847,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  #include "ggml-metal-impl.h"
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
-@@ -2950,17 +2958,107 @@
  
+@@ -2951,16 +2961,133 @@
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
      ggml_metal_buffer_id bid_src2 = ggml_metal_get_buffer_id(op->src[2]);
@@ -841,9 +856,36 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  
      const uint32_t r2 = 1;
      const uint32_t r3 = 1;
-+
+ 
 +    // A cached bank: pick the experts and pull in what is missing before the matmul reads the
 +    // slots. Both run on this encoder, so the routing never goes back to the host.
++    // A bank handed over whole, because the batch was too wide for the cache: copy it to the
++    // scratch first. Reading experts scattered from host memory is what makes prefill crawl.
++    // Only banks of small rows gain: those are read scattered from host and the copy makes them
++    // contiguous. A bank of few, large rows already reads well and the copy is pure extra traffic.
++    static const size_t stage_row_max = []() {
++        const char * s = getenv("TOSH_MOE_STAGE_ROW_KIB");
++        return (size_t) (s ? atoi(s) : 1024) << 10;
++    }();
++
++    if (const ggml_tensor * stage = (const ggml_tensor *) (tosh_moe_slots_of(op->src[0]) ? tosh_moe_stage() : nullptr)) {
++        if (ggml_nbytes(op->src[0]) <= ggml_nbytes(stage) && nb02 <= stage_row_max) {
++            const uint32_t n_u4 = (uint32_t) (ggml_nbytes(op->src[0])/16);
++
++            auto ps = ggml_metal_library_compile_pipeline(lib, "tosh_moe_stage", "tosh_moe_stage", nullptr);
++
++            ggml_metal_encoder_set_pipeline(enc, ps);
++            ggml_metal_encoder_set_bytes (enc, (void *) &n_u4, sizeof(n_u4), 0);
++            ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(stage), 1);
++            ggml_metal_encoder_set_buffer(enc, bid_src0, 2);
++            ggml_metal_encoder_dispatch_threadgroups(enc, 512, 1, 1, 256, 1, 1);
++
++            ggml_metal_op_concurrency_reset(ctx);
++
++            bid_src0 = ggml_metal_get_buffer_id(stage);
++        }
++    }
++
 +    if (const ggml_tensor * state = (const ggml_tensor *) tosh_moe_state_of(op->src[0])) {
 +        // the graph only routes a batch here when its remapped ids fit the state
 +        GGML_ASSERT((int64_t) (ne21 - 1)*(int64_t) (nb21/sizeof(int32_t)) + ne20 <=
@@ -909,7 +951,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +        };
 +
 +        auto pf = ggml_metal_library_compile_pipeline(lib, "tosh_moe_fetch", "tosh_moe_fetch", nullptr);
- 
++
 +        ggml_metal_buffer_id b = bid_state;
 +        ggml_metal_encoder_set_pipeline(enc, pf);
 +        ggml_metal_encoder_set_bytes (enc, &fa, sizeof(fa), 0);
@@ -944,7 +986,7 @@ diff --git a/tosh-moe/tosh-moe.h b/tosh-moe/tosh-moe.h
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe.h
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,134 @@
 +// Experimental MoE expert cache: maps an expert to a physical slot, nothing else.
 +// RAM keeps every expert, so an eviction only drops a copy. The unit is a whole expert of a
 +// layer, all of its tensors together, because a partial one cannot run.
@@ -1034,6 +1076,14 @@ new file mode 100644
 +void         tosh_moe_bind(const void * slots, const void * ram);
 +const void * tosh_moe_ram_of(const void * slots);
 +
++// The other way round, for the paths that are handed the bank itself.
++const void * tosh_moe_slots_of(const void * bank);
++
++// One scratch in VRAM, the size of a single layer's bank, reused by every layer: a wide batch
++// copies the bank there in one contiguous read and computes from the device.
++void         tosh_moe_set_stage(const void * stage);
++const void * tosh_moe_stage(void);
++
 +// The bank itself when the tensor is a set of slots, otherwise the tensor unchanged.
 +static inline void * tosh_moe_bank_ptr(void * slots) {
 +    void * host = (void *) tosh_moe_ram_of(slots);
@@ -1075,7 +1125,7 @@ diff --git a/tosh-moe/tosh-moe-cache.cpp b/tosh-moe/tosh-moe-cache.cpp
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-cache.cpp
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,436 @@
 +#include "tosh-moe.h"
 +
 +#include <cstdlib>
@@ -1317,6 +1367,8 @@ new file mode 100644
 +// keyed by pointer, so it has to be dropped when a model goes away or a later load can hit a
 +// freed tensor that happens to land on the same address
 +static std::unordered_map<const void *, const void *> g_bind;
++static std::unordered_map<const void *, const void *> g_slots_of;
++static const void * g_stage;
 +
 +static void tosh_moe_tables_clear(void);
 +static void tosh_moe_layers_clear(void);
@@ -1325,6 +1377,7 @@ new file mode 100644
 +
 +void tosh_moe_bind(const void * slots, const void * ram) {
 +    g_bind[slots] = ram;
++    g_slots_of[ram] = slots;
 +}
 +
 +const void * tosh_moe_ram_of(const void * slots) {
@@ -1334,6 +1387,8 @@ new file mode 100644
 +
 +void tosh_moe_unbind_all(void) {
 +    g_bind.clear();
++    g_slots_of.clear();
++    g_stage = nullptr;
 +    tosh_moe_state_clear();
 +    tosh_moe_layers_clear();
 +    tosh_moe_tables_clear();
@@ -1494,6 +1549,19 @@ new file mode 100644
 +static void tosh_moe_rounds_clear(void) {
 +    g_round.clear();
 +}
++
++const void * tosh_moe_slots_of(const void * bank) {
++    const auto it = g_slots_of.find(bank);
++    return it == g_slots_of.end() ? nullptr : it->second;
++}
++
++void tosh_moe_set_stage(const void * stage) {
++    g_stage = stage;
++}
++
++const void * tosh_moe_stage(void) {
++    return g_stage;
++}
 diff --git a/tosh-moe/tosh-moe-fill.cpp b/tosh-moe/tosh-moe-fill.cpp
 new file mode 100644
 --- /dev/null
@@ -1556,7 +1624,7 @@ diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-lru.metal
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,210 @@
 +#include <metal_stdlib>
 +using namespace metal;
 +
@@ -1749,6 +1817,22 @@ new file mode 100644
 +
 +    for (uint j = chunk*ntg + tid; j < args.row_u4; j += ntg*(uint) args.n_chunks) {
 +        d[j] = s[j];
++    }
++}
++
++// Copies a whole bank from the host into the scratch in one contiguous pass, which is what a
++// batch too wide for the cache needs: reading the experts scattered from host costs far more.
++kernel void tosh_moe_stage(
++        constant uint32_t    & n_u4  [[buffer(0)]],
++        device       uint4   * dst   [[buffer(1)]],
++        device const uint4   * src   [[buffer(2)]],
++        uint tgpig [[threadgroup_position_in_grid]],
++        uint tid   [[thread_position_in_threadgroup]],
++        uint ntg   [[threads_per_threadgroup]],
++        uint ntgs  [[threadgroups_per_grid]]) {
++
++    for (uint i = tgpig*ntg + tid; i < n_u4; i += ntg*ntgs) {
++        dst[i] = src[i];
 +    }
 +}
 diff --git a/tests/test-tosh-moe-cache.cpp b/tests/test-tosh-moe-cache.cpp
