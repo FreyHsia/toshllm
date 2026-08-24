@@ -172,22 +172,11 @@ The AMD patch lives in [`patches/`](patches/) — chunked staging transfers for 
 
 ### Dynamic MoE: bounded-VRAM expert cache (private experiment)
 
-`--n-cpu-moe` and ToshLLM's Dynamic MoE solve the same capacity problem in two different ways.
-Both keep llama.cpp, GGUF and the normal graph; Dynamic MoE is compiled into the bundled engine
-but is **off at runtime and hidden from the UI by default** while its model coverage is measured.
+`--n-cpu-moe` and ToshLLM's Dynamic MoE solve the same capacity problem in two different ways. Both keep llama.cpp, GGUF and the normal graph; Dynamic MoE is compiled into the bundled engine but is **off at runtime and hidden from the UI by default** while its model coverage is measured.
 
-The design is an independent llama.cpp/Metal implementation inspired by the publicly documented
-[FreeToken architecture](https://github.com/FlashML-org/FreeToken) and
-[paper](https://arxiv.org/abs/2608.16157). ToshLLM does not vendor or link the FreeToken runtime or
-source code. FreeToken is distributed under Apache-2.0; if its source is incorporated in the future,
-its license, notices and modification requirements must be retained.
+The design is an independent llama.cpp/Metal implementation inspired by the publicly documented [FreeToken architecture](https://github.com/FlashML-org/FreeToken) and [paper](https://arxiv.org/abs/2608.16157). ToshLLM does not vendor or link the FreeToken runtime or source code. FreeToken is distributed under Apache-2.0; if its source is incorporated in the future, its license, notices and modification requirements must be retained.
 
-> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the full quantized model addressable in
-> host **RAM**. Budget approximately `model size + max(25% of model size, 4 GiB)` as memory available
-> to the engine, in addition to enough memory for macOS and other applications. For example, an
-> 11.44 GiB GGUF needs about 15.44 GiB available to Dynamic MoE, so a 32 GB system is the practical
-> minimum for this class of model. If this headroom is unavailable, Automatic mode rejects Dynamic
-> MoE and returns to normal `ncmoe` instead of relying on swap.
+> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the full quantized model addressable in host **RAM**. Budget approximately `model size + max(25% of model size, 4 GiB)` as memory available to the engine, in addition to enough memory for macOS and other applications. For example, an 11.44 GiB GGUF needs about 15.44 GiB available to Dynamic MoE, so a 32 GB system is the practical minimum for this class of model. If this headroom is unavailable, Automatic mode rejects Dynamic MoE and returns to normal `ncmoe` instead of relying on swap.
 
 #### How to enable it
 
@@ -195,12 +184,9 @@ its license, notices and modification requirements must be retained.
 2. In **Settings → Extra arguments**, add `TOSH_MOE_UI=1`.
 3. The private **Dynamic MoE (experimental)** panel appears. Turn it on.
 4. Choose **Automatic** for the model-aware minimum-VRAM policy, or **Manual cache** to vary K and prefetch.
-5. Use **Benchmarks** to compare prompt processing and generation; it receives exactly the same
-   Dynamic MoE environment, tensor placement and load mode as the server.
+5. Use **Benchmarks** to compare prompt processing and generation; it receives exactly the same Dynamic MoE environment, tensor placement and load mode as the server.
 
-`TOSH_MOE_UI=1` only reveals the controls. Removing it, turning Dynamic MoE off, selecting a custom
-engine, or letting Auto reject the configuration returns the same binary to unmodified llama.cpp
-execution. The feature is not yet used by router or multi-GPU mode.
+`TOSH_MOE_UI=1` only reveals the controls. Removing it, turning Dynamic MoE off, selecting a custom engine, or letting Auto reject the configuration returns the same binary to unmodified llama.cpp execution. The feature is not yet used by router or multi-GPU mode.
 
 #### The normal `ncmoe` architecture
 
@@ -215,8 +201,7 @@ Let:
 - `V` = physical VRAM and `R` = the configured VRAM reserve;
 - `C` and `KV` = compute buffers and KV cache.
 
-Normal llama.cpp places whole expert banks statically. With `N = --n-cpu-moe`, approximately
-`N/L` of the expert pool is processed from host RAM and the rest remains GPU-resident:
+Normal llama.cpp places whole expert banks statically. With `N = --n-cpu-moe`, approximately `N/L` of the expert pool is processed from host RAM and the rest remains GPU-resident:
 
 ```text
 VRAMncmoe ≈ Wshared + Wexp × (1 - N/L) + C + KV
@@ -230,19 +215,11 @@ Bexpert_gpu = max(0, V - R - Wshared - C - KV)
 N ≈ ceil(L × max(0, Wexp - Bexpert_gpu) / Wexp)
 ```
 
-ToshLLM uses that estimate when a model is selected, then the benchmark's **Find optimum** sweep
-measures nearby `ncmoe` values because PCIe bandwidth, CPU memory bandwidth, quantization and the
-driver's real allocations cannot be inferred exactly from the file. Raising `ncmoe` saves VRAM but
-makes more active experts use the CPU path; lowering it does the reverse. `ncmoe 0` means no MoE
-layers are deliberately assigned to CPU and is only viable when the complete placement fits.
+ToshLLM uses that estimate when a model is selected, then the benchmark's **Find optimum** sweep measures nearby `ncmoe` values because PCIe bandwidth, CPU memory bandwidth, quantization and the driver's real allocations cannot be inferred exactly from the file. Raising `ncmoe` saves VRAM but makes more active experts use the CPU path; lowering it does the reverse. `ncmoe 0` means no MoE layers are deliberately assigned to CPU and is only viable when the complete placement fits.
 
 #### The Dynamic MoE architecture
 
-Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer
-only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot;
-selected experts already present execute immediately, and missing rows are fetched through the
-persistent Metal staging/prefetch path before the expert matmul. Routing and slot IDs stay on the
-GPU, so decode does not round-trip through the CPU just to make a cache decision.
+Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot; selected experts already present execute immediately, and missing rows are fetched through the persistent Metal staging/prefetch path before the expert matmul. Routing and slot IDs stay on the GPU, so decode does not round-trip through the CPU just to make a cache decision.
 
 K is **per layer**, not a global model count, and its valid interval comes from that model's GGUF:
 
@@ -250,10 +227,7 @@ K is **per layer**, not a global model count, and its valid interval comes from 
 A ≤ K ≤ E
 ```
 
-This is why K114 is valid for Qwen3.6-35B-A3B (`L=40, E=256, A=8`), but invalid for GPT-OSS 20B
-(`L=24, E=32, A=4`) and OLMoE (`L=16, E=64, A=8`). The panel now reads those values instead of
-offering a fixed list. If a saved K114 is applied to GPT-OSS 20B, runtime clamps it to K32; it can
-never silently request more slots than the tensor actually has.
+This is why K114 is valid for Qwen3.6-35B-A3B (`L=40, E=256, A=8`), but invalid for GPT-OSS 20B (`L=24, E=32, A=4`) and OLMoE (`L=16, E=64, A=8`). The panel now reads those values instead of offering a fixed list. If a saved K114 is applied to GPT-OSS 20B, runtime clamps it to K32; it can never silently request more slots than the tensor actually has.
 
 One slot represents one expert across every MoE layer, so its first-order byte cost is:
 
@@ -261,9 +235,7 @@ One slot represents one expert across every MoE layer, so its first-order byte c
 bytes_per_K ≈ Wexp / E
 ```
 
-For the UI's conservative VRAM estimate ToshLLM uses the same `Wshared ≈ min(W, 1.3 GiB)` split as
-its ncmoe planner. The widest per-layer bank is estimated from the fused gate/up tensors, and one
-such bank is reserved for staging plus one for every prefetch slot `P`:
+For the UI's conservative VRAM estimate ToshLLM uses the same `Wshared ≈ min(W, 1.3 GiB)` split as its ncmoe planner. The widest per-layer bank is estimated from the fused gate/up tensors, and one such bank is reserved for staging plus one for every prefetch slot `P`:
 
 ```text
 Wstage ≈ (2/3) × Wexp / L
@@ -273,18 +245,13 @@ Krecommended = min(E, Kbudget)
 VRAMdynamic(K) ≈ Wfixed + K × (Wexp / E)
 ```
 
-The manual control permits every architecturally valid integer from `A` through `E`, while showing
-a warning above `Krecommended`; that warning is an estimate, not a prohibition, so unusual hardware
-can still be measured. Automatic mode chooses the smallest useful cache:
+The manual control permits every architecturally valid integer from `A` through `E`, while showing a warning above `Krecommended`; that warning is an estimate, not a prohibition, so unusual hardware can still be measured. Automatic mode chooses the smallest useful cache:
 
 ```text
 Kauto = A
 ```
 
-That is K8 for Qwen3.6/OLMoE and K4 for GPT-OSS 20B—not a hard-coded K8. Auto activates the cache
-only when the model does not fit the normal full-GPU budget, `A < E`, the minimum K fits, a discrete
-single GPU is selected, and physical RAM can hold `W` plus `max(25% of W, 4 GiB)` of headroom.
-Otherwise it falls back before launch to normal `ncmoe` execution.
+That is K8 for Qwen3.6/OLMoE and K4 for GPT-OSS 20B—not a hard-coded K8. Auto activates the cache only when the model does not fit the normal full-GPU budget, `A < E`, the minimum K fits, a discrete single GPU is selected, and physical RAM can hold `W` plus `max(25% of W, 4 GiB)` of headroom. Otherwise it falls back before launch to normal `ncmoe` execution.
 
 The memory trade is deliberate:
 
@@ -293,11 +260,7 @@ RAMdynamic  ≈ W + max(0.25 × W, 4 GiB) headroom
 VRAMdynamic ≈ bounded by K instead of by a fixed number of whole MoE layers
 ```
 
-On the reference Qwen3.6-35B-A3B Q2_K run (`40 × 256`, top-8), K8 with four prefetch buffers used
-about **2.78 GiB during prompt processing** and measured **299.28 pp256 / 32.44 tg128**. It beat the
-generation speed of the roughly 6 GiB `ncmoe 24` configuration while prompt processing remained the
-main optimization target. These are model/hardware measurements, not a promise for every MoE; the
-manual panel and shared benchmark path exist specifically to build that coverage before public UI.
+On the reference Qwen3.6-35B-A3B Q2_K run (`40 × 256`, top-8), K8 with four prefetch buffers used about **2.78 GiB during prompt processing** and measured **299.28 pp256 / 32.44 tg128**. It beat the generation speed of the roughly 6 GiB `ncmoe 24` configuration while prompt processing remained the main optimization target. These are model/hardware measurements, not a promise for every MoE; the manual panel and shared benchmark path exist specifically to build that coverage before public UI.
 
 ### Flash Attention (decode)
 
