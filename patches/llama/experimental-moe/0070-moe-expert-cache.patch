@@ -1071,7 +1071,7 @@ diff --git a/tosh-moe/tosh-moe.h b/tosh-moe/tosh-moe.h
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe.h
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,138 @@
 +// Experimental MoE expert cache: maps an expert to a physical slot, nothing else.
 +// RAM keeps every expert, so an eviction only drops a copy. The unit is a whole expert of a
 +// layer, all of its tensors together, because a partial one cannot run.
