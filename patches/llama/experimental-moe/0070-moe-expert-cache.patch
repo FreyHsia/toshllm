@@ -576,20 +576,20 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1,13 +1,20 @@
+@@ -1,14 +1,21 @@
  #import "ggml-metal-device.h"
  
  #import "ggml-impl.h"
  #import "ggml-backend-impl.h"
  #import "ggml-metal-impl.h"
-+
+ 
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#import "tosh-moe.h"
 +#else
 +enum { TOSH_MOE_OFF = 0 };
 +static inline int tosh_moe_mode(void) { return TOSH_MOE_OFF; }
 +#endif
- 
++
  #include <Foundation/Foundation.h>
  
  #include <Metal/Metal.h>
@@ -597,6 +597,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-
  #include <stdatomic.h>
  #include <unistd.h>
  
+ #ifndef TARGET_OS_VISION
 @@ -1087,16 +1094,20 @@
  #endif
              if (getenv("GGML_METAL_SHARED_BUFFERS_DISABLE") != NULL) {
@@ -655,6 +656,28 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-
      } else {
          // use virtual address
          res->all_data = (void *) atomic_fetch_add_explicit(&dev->addr_virt, size_aligned, memory_order_relaxed);
+@@ -2186,17 +2198,20 @@
+ 
+     res->n_buffers = 1;
+ 
+     if (res->all_data != NULL) {
+         res->buffers[0].size  = size;
+         res->buffers[0].metal = nil;
+ 
+         if (size_aligned > 0) {
+-            if (props_dev->use_shared_buffers && shared) {
++            // `shared` already carries the device's answer plus the host-buffer opt-in, and
++            // taking the device flag again here wrapped host memory in a private buffer: the
++            // writes landed in one place and the GPU read the other
++            if (shared) {
+                 res->buffers[0].metal = [res->dev->mtl_device newBufferWithBytesNoCopy:res->all_data
+                                                                   length:size_aligned
+                                                                  options:MTLResourceStorageModeShared
+                                                              deallocator:nil];
+             } else {
+                 res->buffers[0].metal = [res->dev->mtl_device newBufferWithLength:size_aligned options:MTLResourceStorageModePrivate];
+             }
+         }
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
