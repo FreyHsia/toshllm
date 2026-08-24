@@ -296,16 +296,20 @@ struct ServerSettings {
         if reasoningInline { args += ["--reasoning-format", "none"] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
-        if !effectiveDynamicMoe, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
-            // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
-            // q8_0 halves that footprint at no measurable quality cost for a draft.
-            args += ["-md", selection.draft, "--spec-type", "draft-dflash",
-                     "-ngld", String(selection.ngld),
-                     "-ctkd", "q8_0", "-ctvd", "q8_0"]
-        } else if let draft = Self.mtpDraftPath(forModel: modelPath) {
-            args += ["-md", draft, "--spec-type", "draft-mtp"]
-        } else if Self.modelHasMTP(at: modelPath) {
-            args += ["--spec-type", "draft-mtp"]
+        // Speculation decodes several tokens at once and the expert cache only has slots
+        // for one token's experts, so the two cannot run together.
+        if !effectiveDynamicMoe {
+            if let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
+                // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
+                // q8_0 halves that footprint at no measurable quality cost for a draft.
+                args += ["-md", selection.draft, "--spec-type", "draft-dflash",
+                         "-ngld", String(selection.ngld),
+                         "-ctkd", "q8_0", "-ctvd", "q8_0"]
+            } else if let draft = Self.mtpDraftPath(forModel: modelPath) {
+                args += ["-md", draft, "--spec-type", "draft-mtp"]
+            } else if Self.modelHasMTP(at: modelPath) {
+                args += ["--spec-type", "draft-mtp"]
+            }
         }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
@@ -419,7 +423,9 @@ struct ServerSettings {
                 lines.append("slot-save-path = \(slotDir.path)")
             }
             if reasoningInline { lines.append("reasoning-format = none") }
-            if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
+            if effectiveDynamicMoe {
+                // see the speculation note in arguments(): it does not mix with the cache
+            } else if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
                 lines.append("model-draft = \(selection.draft)")
                 lines.append("spec-type = draft-dflash")
                 lines.append("gpu-layers-draft = \(selection.ngld)")

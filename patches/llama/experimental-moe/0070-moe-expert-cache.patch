@@ -528,10 +528,8 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
      ggml_tensor * weights = ggml_get_rows(ctx0, probs, selected_experts); // [1, n_expert_used, n_tokens]
      cb(weights, "ffn_moe_weights", il);
  
-+    // A batch wide enough to touch most of the bank does not fit the cache, and reads the whole
-+    // thing where it lives instead, which is what the traditional route does anyway.
-+    // A wide batch only fits the cache when every expert has a slot; otherwise the ones left
-+    // over would have nowhere to run, so it reads the bank where it lives instead.
++    // Every expert the batch routes to has to get a slot: the pick leaves the ones over the
++    // bank marked -1 and nothing downstream can run them. A bank of every expert always fits.
 +    ggml_tensor * moe_first = gate_up_exps ? gate_up_exps : gate_exps;
 +    bool moe_cached = tosh_moe_state_of(moe_first) != nullptr;
 +    if (moe_cached) {
@@ -542,9 +540,11 @@ diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
 +            + selected_experts->ne[0];
 +        moe_cached = bank && need <= tosh_moe_ids_room((int) bank->ne[2]);
 +    }
-+    if (moe_cached && n_tokens > 8) {
++    if (moe_cached) {
 +        ggml_tensor * bank = (ggml_tensor *) tosh_moe_ram_of(moe_first);
-+        moe_cached = bank && moe_first->ne[2] >= bank->ne[2];
++        const bool whole_bank = bank && moe_first->ne[2] >= bank->ne[2];
++        moe_cached = whole_bank ||
++            n_tokens*n_expert_used <= moe_first->ne[2];
 +    }
  
 +    ggml_tensor * expert_ids = selected_experts;
