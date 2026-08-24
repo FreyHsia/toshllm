@@ -264,22 +264,17 @@ VRAMdynamic ≈ bounded by K instead of by a fixed number of whole MoE layers
 
 The reference system was the development machine: **RX 6700 XT 12 GB**, Core i5-10400 (6c/12t), 32 GB DDR4 and macOS, running Qwen3.6-35B-A3B Q2_K_XL (11.44 GiB, `L=40`, `E=256`, `A=8`). In the short `pp256`/`tg128` sweep, using the same model and binary for every row:
 
-| Mode | Approx. VRAM during PP | pp256 (t/s) | tg128 (t/s) |
-|---|---:|---:|---:|
-| Dynamic K8, all 40 layers, prefetch 4 | **2.78 GiB** | 299.28 ± 1.09 | **32.44 ± 0.45** |
-| 8 complete resident layers + K8 on 32 layers | 4.67 GiB | 346.56 ± 1.57 | **37.14 ± 0.54** |
-| Normal `ncmoe 24` control | ~6 GiB | **352.98 ± 5.09** | ~22–24.5 |
+| Mode | Approx. VRAM during PP | VRAM saved vs `ncmoe 24` | Host RAM footprint | pp256 (t/s) | tg128 (t/s) |
+|---|---:|---:|---:|---:|---:|
+| Dynamic K8, all 40 layers, prefetch 4 | **2.78 GiB** | **~54%** | ~10.5 GiB† | 299.28 ± 1.09 | **32.44 ± 0.45** |
+| 8 complete resident layers + K8 on 32 layers | 4.67 GiB | ~22% | ~10.5 GiB† | 346.56 ± 1.57 | **37.14 ± 0.54** |
+| Normal `ncmoe 24` control | ~6 GiB | baseline | 6.6–6.7 GiB† | **352.98 ± 5.09** | ~22–24.5 |
 
-The K8 configuration therefore used less than half the VRAM of the `ncmoe 24` control and generated faster, while prompt processing remained the main optimization target. The resident-layer alternative recovered about 98.2% of the locally reproduced `ncmoe 24` prompt rate, but exists as an optional higher-VRAM trade-off rather than the minimum-VRAM goal.
+The K8 configuration therefore saved approximately 54% of VRAM against the roughly 6 GiB `ncmoe 24` control and generated faster, while prompt processing remained the main optimization target. The resident-layer alternative saved approximately 22% of VRAM and recovered about 98.2% of the locally reproduced `ncmoe 24` prompt rate, but exists as an optional higher-VRAM trade-off rather than the minimum-VRAM goal.
 
-RAM was captured in a separate matched-context audit on the same RX 6700 XT system (`1456` prompt tokens, `300` generated tokens, context `4096`, `--ignore-eos`). VRAM was held at approximately 6.5 GiB in both routes so the host-memory cost could be isolated:
+K8 does not mean that only 8 of the model's 256 experts exist or that the cache uses half of some fixed capacity. It means **8 reusable VRAM slots per MoE layer**, exactly matching this model's top-8 active experts; all 256 experts per layer remain available from the complete host-RAM bank.
 
-| Mode | Approx. VRAM | Measured physical RAM footprint | Prompt (t/s) | Generation (t/s) |
-|---|---:|---:|---:|---:|
-| Normal `ncmoe 24` | 6.53 GiB | 6.6–6.7 GiB | **325.05** | 21.20 |
-| Dynamic K114/256 | 6.54 GiB | **10.5 GiB** | 301.83 | **43.59** |
-
-This audit measured the central trade directly: Dynamic MoE used about 3.8–3.9 GiB more physical RAM and doubled generation at the same VRAM, with a 7.1% prompt-processing reduction in that longer-context run. K8 uses the same complete host expert bank, so reducing K lowers VRAM rather than the bank's RAM requirement; its RSS was not captured in the same short sweep and is deliberately not presented as a measured value. These figures are model/hardware measurements, not a promise for every MoE, and results from the two workloads should not be cross-compared.
+† The `pp256`/`tg128` speeds and VRAM values were captured together in the short sweep. Physical RAM was captured in a separate matched-context audit on the same RX 6700 XT: 10.5 GiB for the complete Dynamic MoE host-bank route and 6.6–6.7 GiB for `ncmoe 24`. Changing K changes the number of VRAM slots, not the complete host bank, so the Dynamic RAM figure is the expected K8-class footprint, but direct K8 RSS was not recorded in that short sweep and is not claimed as an independently measured K8 value. These figures are specific to this model and hardware, not a promise for every MoE.
 
 ### Flash Attention (decode)
 
