@@ -236,6 +236,23 @@ diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
              int a_layer = -1;
              int b_layer = -1;
              sscanf(a.c_str(), "blk.%d.", &a_layer);
+@@ -115,13 +122,16 @@
+         }
+     };
+ 
+     std::map<ggml_backend_buffer_type_t, ggml_context_ptr, ggml_backend_buft_comparator> ctx_map;
++
++    // The three expert banks of a layer share one cache state during this load.
++    std::map<int, ggml_tensor *> tosh_moe_state_of_layer;
+ 
+     // track tensors that had to be moved for debugging:
+     size_t n_tensors_moved = 0;
+     std::string first_tensor_moved_name;
+     std::string first_tensor_moved_type_name;
+     ggml_backend_buffer_type_t first_moved_from_buft = nullptr;
+     ggml_backend_buffer_type_t first_moved_to_buft = nullptr;
+ 
+     llama_model_loader(
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
@@ -303,7 +320,7 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
              ggml_init_params params = {
                  /*.mem_size   =*/ ctx_size,
                  /*.mem_buffer =*/ NULL,
-@@ -1309,17 +1328,90 @@
+@@ -1309,17 +1328,89 @@
      if (flags & TENSOR_DUPLICATED) {
          ggml_tensor * t = ggml_get_tensor(ctx, tn.str().c_str());
          if (t) {
@@ -324,7 +341,13 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +
 +        ggml_backend_buffer_type_t buft_dev = ggml_backend_dev_buffer_type(ggml_backend_buft_get_device(buft));
 +
-+        ggml_tensor * host = ggml_dup_tensor(ctx, &t_meta);
++        // A CPU-owned bank lets the existing scheduler build real host -> Metal prefetch
++        // splits for wide batches. Decode still wraps these stable pages for direct GPU fetch.
++        ggml_context * host_ctx = ctx;
++        if (getenv("TOSH_MOE_CPU_BANK") != nullptr) {
++            host_ctx = ctx_for_buft(ggml_backend_cpu_buffer_type());
++        }
++        ggml_tensor * host = ggml_dup_tensor(host_ctx, &t_meta);
 +        ggml_set_name(host, ggml_get_name(&t_meta));
 +
 +        ggml_tensor slots_meta = t_meta;
@@ -348,20 +371,13 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 +        sscanf(ggml_get_name(&t_meta), "blk.%d.", &il);
 +
 +        // the banks of a layer share one routing, so they share the state the pick keeps
-+        static std::map<int, ggml_tensor *> state_of_layer;
-+        static int last_model = -1;
-+        if (last_model != (int) (uintptr_t) this) {
-+            last_model = (int) (uintptr_t) this;
-+            state_of_layer.clear();
-+        }
-+
-+        ggml_tensor * state = il >= 0 && state_of_layer.count(il) ? state_of_layer[il] : nullptr;
++        ggml_tensor * state = il >= 0 && tosh_moe_state_of_layer.count(il) ? tosh_moe_state_of_layer[il] : nullptr;
 +        if (!state) {
 +            const std::string state_name = std::string(ggml_get_name(&t_meta)) + ".state";
 +            state = ggml_dup_tensor(ctx_for_buft(buft_dev), &state_meta);
 +            ggml_set_name(state, state_name.c_str());
 +            if (il >= 0) {
-+                state_of_layer[il] = state;
++                tosh_moe_state_of_layer[il] = state;
 +            }
 +        }
 +
@@ -397,13 +413,15 @@ diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1,9 +1,15 @@
+@@ -1,9 +1,17 @@
  #include "llama-model.h"
 +
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
 +#include "tosh-moe.h"
 +#else
 +static inline void tosh_moe_seed_banks(void) {}
++static inline const void * tosh_moe_host_buft(void) { return nullptr; }
++static inline int tosh_moe_slots_want(void) { return 0; }
 +#endif
  
  #include "llama-arch.h"
@@ -413,7 +431,50 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
  #include "llama-mmap.h"
  #include "llama-cparams.h"
  #include "llama-model-loader.h"
-@@ -1689,16 +1695,18 @@
+@@ -27,6 +35,7 @@
+ #include <algorithm>
+ #include <cassert>
+ #include <cfloat>
++#include <cstdlib>
+ #include <cstdint>
+ #include <cstring>
+ #include <cmath>
+@@ -1592,26 +1601,33 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         if (!dev) {
+             // FIXME: workaround for CPU backend buft having a NULL device
+             dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+             if (!dev) {
+                 throw std::runtime_error(format("%s: no CPU backend found", __func__));
+             }
+         }
+         ggml_backend_dev_props props;
+         ggml_backend_dev_get_props(dev, &props);
+         bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
+         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
+ 
++        // Directly mapping the cold bank can save physical RAM, but on discrete GPUs it may
++        // cause severe paging under random expert traffic. Keep it as an internal experiment;
++        // the fast default remains the allocated/pinned host bank.
++        const bool is_bank_buft = (const void *) buft == tosh_moe_host_buft();
++        const bool map_bank     = tosh_moe_slots_want() > 0 && getenv("TOSH_MOE_MMAP_BANK") != nullptr;
++        const bool map_this     = map_bank ? is_bank_buft : is_default_buft;
++
+         std::vector<ggml_backend_buffer_ptr> bufs;
+-        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
++        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && map_this) {
+             GGML_ASSERT(!ml.no_alloc);
+             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
+                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
+                 // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer,
+                 //     then we could just use metal for all layers
+                 // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
+                 void * addr = nullptr;
+                 size_t first, last; // NOLINT
+                 ml.get_mapping_range(&first, &last, &addr, idx, ctx);
+                 if (first >= last) {
+                     continue;
+                 }
+@@ -1689,16 +1705,18 @@
  
      // load tensor data
      for (auto & [ctx, buf_map] : ctx_buf_maps) {
@@ -848,6 +909,30 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
  
+@@ -25,7 +35,23 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
+ 
+     return ggml_metal_buffer_get_id(ctx, t);
+ }
++
++static ggml_metal_buffer_id ggml_metal_get_host_buffer_id(
++        ggml_metal_device_t dev, const ggml_tensor * t) {
++    ggml_backend_buffer_t buffer = t->view_src ? t->view_src->buffer : t->buffer;
++
++    // The canonical CPU buffer type intentionally has no device pointer in ggml. Detect the
++    // property we actually need instead: whether the storage is host-addressable.
++    if (!ggml_backend_buffer_is_host(buffer)) {
++        return ggml_metal_get_buffer_id(t);
++    }
++
++    size_t offs = 0;
++    void * metal = ggml_metal_device_wrap_host(dev, t->data, ggml_nbytes(t), &offs);
++    GGML_ASSERT(metal != nullptr && "failed to wrap the Dynamic MoE CPU bank for Metal");
++    return { metal, offs };
++}
+ 
+ struct ggml_metal_op {
+     ggml_metal_op(
+         ggml_metal_device_t dev,
 @@ -2951,16 +2961,133 @@
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
@@ -956,7 +1041,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +        ggml_metal_encoder_set_pipeline(enc, pf);
 +        ggml_metal_encoder_set_bytes (enc, &fa, sizeof(fa), 0);
 +        ggml_metal_encoder_set_buffer(enc, bid_src0, 1);
-+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(host), 2);
++        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_host_buffer_id(ctx->dev, host), 2);
 +        b.offs = bid_state.offs + tosh_moe_off_evict(n_expert, n_slots, max_fetch)*i32;
 +        ggml_metal_encoder_set_buffer(enc, b, 3);
 +        b.offs = bid_state.offs + tosh_moe_off_src(n_expert, n_slots, max_fetch)*i32;
@@ -1086,8 +1171,12 @@ new file mode 100644
 +
 +// The bank itself when the tensor is a set of slots, otherwise the tensor unchanged.
 +static inline void * tosh_moe_bank_ptr(void * slots) {
-+    void * host = (void *) tosh_moe_ram_of(slots);
-+    return host ? host : slots;
++    const void * host = tosh_moe_ram_of(slots);
++#ifdef __cplusplus
++    return host ? const_cast<void *>(host) : slots;
++#else
++    return host ? (void *) host : slots;
++#endif
 +}
 +void         tosh_moe_unbind_all(void);
 +
@@ -1566,7 +1655,7 @@ diff --git a/tosh-moe/tosh-moe-fill.cpp b/tosh-moe/tosh-moe-fill.cpp
 new file mode 100644
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-fill.cpp
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,59 @@
 +#include "tosh-moe.h"
 +
 +#include "ggml.h"
@@ -1607,8 +1696,14 @@ new file mode 100644
 +            init[tosh_moe_off_id_of_slot(n_expert, n_slots, max_fetch) + s] = -1;
 +        }
 +
++        // A CPU-owned bank is consumed through the scheduler's prefetch path during wide
++        // batches. Do not seed it through Metal's partial tensor-set path: the first decode
++        // token fills all K slots anyway, and avoiding the eager seed also avoids invalid
++        // range lookups on discrete-GPU model buffers.
++        const bool cpu_bank = getenv("TOSH_MOE_CPU_BANK") != nullptr;
++
 +        // start with the first experts already in, so a fresh cache is not one big miss
-+        if (getenv("TOSH_MOE_NO_SEED") == nullptr) {
++        if (!cpu_bank && getenv("TOSH_MOE_NO_SEED") == nullptr) {
 +            const size_t row = host->nb[2];
 +            for (int s = 0; s < n_slots && s < n_expert; s++) {
 +                ggml_backend_tensor_set(slots, (const char *) host->data + (size_t) s*row, (size_t) s*row, row);
