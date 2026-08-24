@@ -9,6 +9,8 @@ struct BenchResult: Codable, Identifiable {
     let date: Date
     let model: String
     let ncmoe: Int
+    /// Cache slots per layer when the run used Dynamic MoE; nil on every other run.
+    var dmoeK: Int?
     let pp: Double
     let tg: Double
     // optional for backward compatibility with older saved results
@@ -54,7 +56,11 @@ struct BenchResult: Codable, Identifiable {
         if let ppN, let tgN, ppN != 512 || tgN != 128 { parts.append("pp\(ppN)/tg\(tgN)") }
         if let depth, depth > 0 { parts.append("d\(depth)") }
         if let accept { parts.append("MTP \(Int((accept * 100).rounded()))%") }
-        if ncmoe > 0 { parts.append("ncmoe \(ncmoe)") }
+        if let dmoeK, dmoeK > 0 {
+            parts.append("dMoE K\(dmoeK)")
+        } else if ncmoe > 0 {
+            parts.append("ncmoe \(ncmoe)")
+        }
         if let ctk, ctk != "f16" { parts.append("K:\(ctk)") }
         if let ctv, ctv != "f16" { parts.append("V:\(ctv)") }
         if let faLabel { parts.append(faLabel) }
@@ -113,7 +119,7 @@ final class BenchmarkController: ObservableObject {
         === ToshLLM benchmark · \(Date().formatted(.iso8601)) ===
         model:  \(model)
         GPU:    \(settings.gpuLabel)
-        engine: \(settings.engineTag)\(settings.ncmoe > 0 ? " · ncmoe \(settings.ncmoe)" : "") · K:\(settings.cacheTypeK) V:\(settings.cacheTypeV)
+        engine: \(settings.engineTag)\(settings.effectiveDynamicMoe ? " · dMoE K\(settings.effectiveDynamicMoeSlots)" : settings.ncmoe > 0 ? " · ncmoe \(settings.ncmoe)" : "") · K:\(settings.cacheTypeK) V:\(settings.cacheTypeV)
         FA:     \(settings.benchmarkFlashAttentionLabel)
         args:   \(settings.benchmarkArguments.joined(separator: " "))
         =========================
@@ -251,7 +257,8 @@ final class BenchmarkController: ObservableObject {
             let accept = reps.compactMap(\.accept).last
             let name = URL(fileURLWithPath: s.modelPath).lastPathComponent
             let engine = s.serverBinary == ServerSettings.defaultBinary ? "bundled" : "externo"
-            history.insert(BenchResult(date: .now, model: name, ncmoe: s.ncmoe, pp: pp, tg: tg,
+            history.insert(BenchResult(date: .now, model: name, ncmoe: s.ncmoe,
+                                       dmoeK: s.effectiveDynamicMoe ? s.effectiveDynamicMoeSlots : nil, pp: pp, tg: tg,
                                        ctk: s.cacheTypeK, ctv: s.cacheTypeV, engine: engine,
                                        fa: s.benchmarkFlashAttentionRoute,
                                        gpu: s.gpuLabel, peer: s.mgpuPeer && s.isSplitting, profile: base.makeProfile(name: name),
@@ -332,7 +339,8 @@ final class BenchmarkController: ObservableObject {
         if let pp = speed(ppTest), let tg = speed(tgTest) {
             let name = URL(fileURLWithPath: settings.modelPath).lastPathComponent
             let engine = settings.serverBinary == ServerSettings.defaultBinary ? "bundled" : "externo"
-            history.insert(BenchResult(date: .now, model: name, ncmoe: settings.ncmoe, pp: pp, tg: tg,
+            history.insert(BenchResult(date: .now, model: name, ncmoe: settings.ncmoe,
+                                       dmoeK: settings.effectiveDynamicMoe ? settings.effectiveDynamicMoeSlots : nil, pp: pp, tg: tg,
                                        ctk: settings.cacheTypeK, ctv: settings.cacheTypeV, engine: engine,
                                        fa: settings.benchmarkFlashAttentionRoute,
                                        gpu: settings.gpuLabel, peer: settings.mgpuPeer && settings.isSplitting, profile: settings.makeProfile(name: name),
@@ -576,7 +584,8 @@ final class BenchmarkController: ObservableObject {
     func recordShared(cfg: ServerSettings, pp: Double, tg: Double) {
         let name = URL(fileURLWithPath: cfg.modelPath).lastPathComponent
         let engine = cfg.serverBinary == ServerSettings.defaultBinary ? "bundled" : "externo"
-        history.insert(BenchResult(date: .now, model: name, ncmoe: cfg.ncmoe, pp: pp, tg: tg,
+        history.insert(BenchResult(date: .now, model: name, ncmoe: cfg.ncmoe,
+                                       dmoeK: cfg.effectiveDynamicMoe ? cfg.effectiveDynamicMoeSlots : nil, pp: pp, tg: tg,
                                    ctk: cfg.cacheTypeK, ctv: cfg.cacheTypeV, engine: engine,
                                    fa: cfg.benchmarkFlashAttentionRoute,
                                    gpu: cfg.gpuLabel, peer: cfg.mgpuPeer && cfg.isSplitting, profile: cfg.makeProfile(name: name),

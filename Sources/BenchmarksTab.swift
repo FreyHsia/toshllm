@@ -94,6 +94,20 @@ struct BenchmarksView: View {
         !cfg.modelPath.isEmpty && ServerSettings.modelIsMoE(at: cfg.modelPath)
     }
 
+    /// K is per layer and bounded by the model: at least the experts a token uses,
+    /// at most the ones the GGUF really has.
+    private var dmoeSlotRange: ClosedRange<Int> {
+        guard let info = cfg.dynamicMoeModelInfo else { return 1...256 }
+        return min(max(info.activeExpertCount, 1), info.expertCount)...info.expertCount
+    }
+    private var dmoeSlotBinding: Binding<Int> {
+        Binding(get: { cfg.effectiveDynamicMoeSlots },
+                set: { v in
+                    let r = dmoeSlotRange
+                    cfg.dynamicMoeSlots = min(max(v, r.lowerBound), r.upperBound)
+                })
+    }
+
     /// Model picker binding that seeds ncmoe on selection: the remembered or
     /// recommended value for MoE models, 0 for dense (never carries over stale).
     private var modelBinding: Binding<String> {
@@ -211,7 +225,18 @@ struct BenchmarksView: View {
                             .help(loc.t("GPU(s) del benchmark: una fija esa GPU, varias reparten el modelo entre ellas; 'Predeterminada' deja que macOS elija. Se registra en el resultado.",
                                         "Benchmark GPU(s): one pins that GPU, several split the model across them; 'Default' lets macOS pick. It's recorded in the result."))
                         }
-                        if isMoEModel {
+                        if isMoEModel && cfg.effectiveDynamicMoe {
+                            field(loc.t("Ranuras dMoE", "dMoE slots")) {
+                                HStack(spacing: 6) {
+                                    TextField("", value: dmoeSlotBinding, format: .number.grouping(.never))
+                                        .textFieldStyle(.roundedBorder).frame(width: 52)
+                                        .multilineTextAlignment(.trailing)
+                                    Stepper("", value: dmoeSlotBinding, in: dmoeSlotRange).labelsHidden()
+                                }
+                            }
+                            .help(loc.t("K por capa: cuántos expertos caben en la caché de VRAM. Es lo que decide esta corrida, así que barrerlo aquí es la forma de encontrar el que más rinde.",
+                                        "K per layer: how many experts fit in the VRAM cache. It is what decides this run, so sweeping it here is how you find the one that pays best."))
+                        } else if isMoEModel {
                             field(loc.t("MoE en CPU", "MoE on CPU")) {
                                 HStack(spacing: 6) {
                                     Text("\(cfg.ncmoe)").font(.body.weight(.semibold).monospacedDigit())
@@ -219,12 +244,8 @@ struct BenchmarksView: View {
                                     Stepper("", value: $cfg.ncmoe, in: 0...99).labelsHidden()
                                 }
                             }
-                            .disabled(cfg.effectiveDynamicMoe)
-                            .help(cfg.effectiveDynamicMoe
-                                  ? loc.t("No aplica con Dynamic MoE: la caché fija el reparto y el motor ignora este valor.",
-                                          "Does not apply with Dynamic MoE: the cache sets the split and the engine ignores this value.")
-                                  : loc.t("Solo modelos MoE: capas cuyos expertos corren en CPU. Se siembra con el valor recomendado para tu hardware; subirlo descarga más a CPU, bajarlo arriesga saturar la VRAM.",
-                                          "MoE models only: layers whose experts run on the CPU. Seeded with the value recommended for your hardware; raising offloads more to CPU, lowering risks saturating VRAM."))
+                            .help(loc.t("Solo modelos MoE: capas cuyos expertos corren en CPU. Se siembra con el valor recomendado para tu hardware; subirlo descarga más a CPU, bajarlo arriesga saturar la VRAM.",
+                                        "MoE models only: layers whose experts run on the CPU. Seeded with the value recommended for your hardware; raising offloads more to CPU, lowering risks saturating VRAM."))
                         }
                         if benchAdvanced {
                             field("Prompt · -p") {
