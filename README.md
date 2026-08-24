@@ -262,7 +262,24 @@ RAMdynamic  ≈ W + max(0.25 × W, 4 GiB) headroom
 VRAMdynamic ≈ bounded by K instead of by a fixed number of whole MoE layers
 ```
 
-On the reference Qwen3.6-35B-A3B Q2_K run (`40 × 256`, top-8), K8 with four prefetch buffers used about **2.78 GiB during prompt processing** and measured **299.28 pp256 / 32.44 tg128**. It beat the generation speed of the roughly 6 GiB `ncmoe 24` configuration while prompt processing remained the main optimization target. These are model/hardware measurements, not a promise for every MoE; the manual panel and shared benchmark path exist specifically to build that coverage before public UI.
+The reference system was the development machine: **RX 6700 XT 12 GB**, Core i5-10400 (6c/12t), 32 GB DDR4 and macOS, running Qwen3.6-35B-A3B Q2_K_XL (11.44 GiB, `L=40`, `E=256`, `A=8`). In the short `pp256`/`tg128` sweep, using the same model and binary for every row:
+
+| Mode | Approx. VRAM during PP | pp256 (t/s) | tg128 (t/s) |
+|---|---:|---:|---:|
+| Dynamic K8, all 40 layers, prefetch 4 | **2.78 GiB** | 299.28 ± 1.09 | **32.44 ± 0.45** |
+| 8 complete resident layers + K8 on 32 layers | 4.67 GiB | 346.56 ± 1.57 | **37.14 ± 0.54** |
+| Normal `ncmoe 24` control | ~6 GiB | **352.98 ± 5.09** | ~22–24.5 |
+
+The K8 configuration therefore used less than half the VRAM of the `ncmoe 24` control and generated faster, while prompt processing remained the main optimization target. The resident-layer alternative recovered about 98.2% of the locally reproduced `ncmoe 24` prompt rate, but exists as an optional higher-VRAM trade-off rather than the minimum-VRAM goal.
+
+RAM was captured in a separate matched-context audit on the same RX 6700 XT system (`1456` prompt tokens, `300` generated tokens, context `4096`, `--ignore-eos`). VRAM was held at approximately 6.5 GiB in both routes so the host-memory cost could be isolated:
+
+| Mode | Approx. VRAM | Measured physical RAM footprint | Prompt (t/s) | Generation (t/s) |
+|---|---:|---:|---:|---:|
+| Normal `ncmoe 24` | 6.53 GiB | 6.6–6.7 GiB | **325.05** | 21.20 |
+| Dynamic K114/256 | 6.54 GiB | **10.5 GiB** | 301.83 | **43.59** |
+
+This audit measured the central trade directly: Dynamic MoE used about 3.8–3.9 GiB more physical RAM and doubled generation at the same VRAM, with a 7.1% prompt-processing reduction in that longer-context run. K8 uses the same complete host expert bank, so reducing K lowers VRAM rather than the bank's RAM requirement; its RSS was not captured in the same short sweep and is deliberately not presented as a measured value. These figures are model/hardware measurements, not a promise for every MoE, and results from the two workloads should not be cross-compared.
 
 ### Flash Attention (decode)
 
