@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Dynamic MoE, a private experiment that runs a MoE model on far less video memory** by keeping every expert in system RAM and a small cache of slots on the card. It is off by default and hidden until you ask for it; a 35B in Q2_K_XL ran on 2.78 GiB against the 6 GiB its usual setting needs, and generated faster. Read the [what it is and when it pays](https://github.com/engeldlgado/toshllm#dynamic-moe-bounded-vram-expert-cache-private-experiment) section first, especially the RAM it asks for in exchange.
+
 ### Improved
 - **Models in BF16 read prompts about 30% faster.** 722 → 949 tokens per second on a 4B and 5211 → 6807 on a 0.6B, with generation speed and answers unchanged. Measured on a Radeon RX 6700 XT.
 
@@ -18,11 +21,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **The Infinity Fabric Link switch is only offered when there is a link.** It could be turned on with nothing bridged, which read as if the app had found a bridge. Reported by [chafey](https://github.com/engeldlgado/toshllm/issues/67).
 
 - **TurboQuant cache types no longer stop the server when the model is split by tensors.** The split path did not know how to divide the rotation TurboQuant applies to attention, and the engine aborted while loading. Reported by [chafey](https://github.com/engeldlgado/toshllm/issues/69).
-
-- **Dynamic MoE (experimental) no longer writes garbled answers.** Any batch of two to eight tokens was sent to a cache that could not hold its experts, which corrupted that part of the conversation for good; speculative decoding is switched off while the cache is on.
-
-### Changed
-- **The Dynamic MoE slot count (experimental) takes a typed number** instead of one step at a time, and the benchmark reports the cache instead of the MoE-on-CPU value it no longer uses.
 
 ## [0.85.7] - 2026-08-22
 
