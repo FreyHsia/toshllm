@@ -1880,3 +1880,45 @@ en cambio, hay localidad entre tokens y las 114 ranuras reducen fallos de cache.
 La mejora TG no cumple el objetivo de menor VRAM que `ncmoe 24`: K114 puro ronda 6.98 GiB y
 K114 con residentes 7.88 GiB. Por tanto K114 sirve para confirmar el comportamiento, no como
 configuracion equilibrada. K8 + ocho capas residentes sigue siendo el mejor punto medido.
+
+## PFlash pospuesto para exploracion posterior
+
+Se identifico PFlash como la tecnica recordada para acelerar prompts mediante un GGUF auxiliar.
+El equipo ya contiene `Qwen3-0.6B-BF16.gguf` (1.11 GiB), medido en Metal a 1943.83 pp256 y
+2409.73 pp4096. El objetivo Qwen3.6-35B K8 puro midio 588.84 pp4096.
+
+PFlash no mejora el PP exacto del objetivo: selecciona y elimina partes del prompt antes del
+prefill, por lo que cambia la entrada y puede perder instrucciones, codigo o esquemas de
+herramientas. Se deja explicitamente fuera de esta fase. Podra explorarse despues como modo
+separado, opcional y solo para contexto largo; el trabajo actual continua buscando acelerar K8
+puro con el prompt completo y resultados exactos.
+
+Un barrido adicional de `GGML_METAL_NCB=4,8,12,16`, manteniendo K8 y cuatro slots de prefetch,
+dio 297.14, 297.69, 297.95 y 297.58 pp256. La profundidad de command buffers no rompe el techo
+actual y no justifica ningun cambio.
+
+## Alternativas exactas sin capas residentes
+
+Se probaron tres caminos adicionales manteniendo el prompt y los pesos exactos:
+
+| alternativa | resultado pp256 | veredicto |
+|---|---:|---|
+| staging de solo expertos seleccionados, sin prefetch | 215.64 +/- 7.82 | descartar; pierde el solape |
+| 8/16/24/32 capas CPU + K8 en el resto | 296.44-298.41 | neutro; termina limitado por la misma copia |
+| dos colas H2D Metal en paralelo | 12.48 GB/s | no supera una cola: 12.68 GB/s |
+
+El staging selectivo fue un prototipo temporal: un threadgroup por experto comprobaba los IDs y
+copiaba solo la fila usada. Fue correcto estructuralmente, pero la copia depende del router de
+esa misma capa y no puede anticiparse; queda muy por debajo del prefetch lineal de ~298 pp. El
+kernel y toda la telemetria temporal se retiraron y el binario se recompilo limpio.
+
+La compresion sin perdida tampoco es viable. Zstd nivel 1 sobre cuatro regiones de 256 MiB del
+GGUF Q2 dejo 99.47-99.64% del tamano original: el costo de descompresion no puede compensar un
+ahorro inferior a 0.6%.
+
+La frontera queda mas estrecha: una sola cola ya satura el enlace y los bancos Q2 son
+incompresibles. Para superar ~298 pp sin residencia hay que solapar trabajo util con la copia
+dentro de la capa, no ajustar colas. La siguiente ruta exacta es un operador MoE por franjas:
+doble buffer de K expertos, transferencia de la franja siguiente mientras Metal calcula la
+actual y acumulacion unica al final. Debe conservar PPL antes de cualquier optimizacion o
+exposicion.
