@@ -1934,6 +1934,37 @@ La mejora contra el bloqueo Q4 es de aproximadamente 46 veces en la medicion TG1
 
 La correccion se valido numericamente con Qwen Q2, contexto 16 y batch/ubatch 1. La ruta directa y la ruta acotada produjeron exactamente `PPL = 8.9828 +/- 9.52892`. La ruta acotada tardo 1.30 s y la directa 0.58 s, confirmando que debe seleccionarse solo cuando el banco completo provoca el bloqueo del driver.
 
+## Mapeo por capa con ring acotado — descartado por medida
+
+Se implemento temporalmente el siguiente camino, oculto y sin cambios de interfaz:
+
+- `tosh_moe_lru` y el remapeo de IDs permanecian completamente en GPU;
+- cada banco host se exponia a Metal por tensor, no como la asignacion completa;
+- el grafo se dividia en command buffers por capa;
+- un ring limitaba cuantos command buffers y mapeos podian permanecer en vuelo;
+- `tosh_moe_fetch` copiaba solamente las filas que el LRU marcaba como misses.
+
+El objetivo era evitar tanto la vista de 16.88 GiB como el readback CPU por capa. El resultado separo dos cuellos distintos:
+
+| modelo | ring | fetch chunks | resultado |
+|---|---:|---:|---:|
+| Qwen 35B A3B Q2 K8 | 4 | 16 | 33.04 pp16 / **0.30 tg16** |
+| Qwen 35B A3B Q2 K8 | 40 | 16 | 36.34 pp1 / **28.08 tg4** |
+| Qwen 35B A3B Q4 K8 | 40 | 16 | **0.17 pp1 / 0.17 tg4** |
+| Qwen 35B A3B Q4 K8 | 40 | 64 | **0.17 pp1 / 0.17 tg1** |
+
+El ring pequeno introduce esperas de reutilizacion que destruyen Q2. Un ring de 40 recupera casi toda la ruta Q2 porque no reutiliza posiciones dentro del token, pero deja de ser acotado. En Q4, incluso una vista por capa y 40 command buffers encolados conservan el colapso de 0.17 t/s. Subir cuatro veces el paralelismo de `tosh_moe_fetch` no cambia ni una centesima.
+
+La ejecucion Q4 tuvo un RSS maximo de 19.50 GB y cero swaps atribuidos al proceso. Por tanto, esta regresion tampoco proviene de duplicar el banco ni de swap: el kernel compute que lee filas Q4 directamente desde RAM host es el camino patologico en Metal/AMD.
+
+Conclusion: un ring util no puede consistir solamente en mapear regiones menores del banco. Debe ser un ring shared que CPU rellene mediante `memcpy`, seguido de blit a slots privados. Como los misses actuales solo se conocen despues del router de la misma capa, eliminar el readback exige una de estas piezas todavia pendientes:
+
+1. prediccion/prefetch de expertos usando la pasada anterior, con fallback exacto;
+2. handshake asincrono CPU/GPU por eventos o flags compartidos que no bloquee toda la cola;
+3. rama CPU exacta para misses mientras la GPU ejecuta hits.
+
+El prototipo de mapeo por capa se retiro por completo despues de medirlo. La ruta secuencial acotada de 9.22 TG permanece como baseline Q4 y el selector adaptativo conserva Q2 en la ruta rapida.
+
 ## Alternativas exactas sin capas residentes
 
 Se probaron tres caminos adicionales manteniendo el prompt y los pesos exactos:
