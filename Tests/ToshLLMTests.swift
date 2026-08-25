@@ -696,6 +696,14 @@ final class ServerSettingsTests: XCTestCase {
             gpuVRAMMB: 3_072, reserveMB: 1_024, prefetch: 4))
     }
 
+    func testDynamicMoeAutoKeepsDirectMetalBankInsideGPUWorkingSet() {
+        let gib = UInt64(1024 * 1024 * 1024)
+        XCTAssertTrue(ServerSettings.dynamicMoeHostBankFitsDirectMetal(
+            modelBytes: UInt64(11.44 * Double(gib)), gpuVRAMMB: 12_288))
+        XCTAssertFalse(ServerSettings.dynamicMoeHostBankFitsDirectMetal(
+            modelBytes: UInt64(19.45 * Double(gib)), gpuVRAMMB: 12_288))
+    }
+
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {
         var settings = makeSettings()
         settings.jinja = false

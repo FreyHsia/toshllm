@@ -609,6 +609,8 @@ La tabla CPU y la tabla GPU deben coincidir.
 
 ## Fase 5: caché Metal durante decode
 
+> Auditoría del 24 de agosto de 2026: esta fase está incompleta. Los slots privados, el LRU y el remapeo existen, pero `tosh_moe_fetch` lee directamente desde el banco host completo expuesto como `MTLBuffer`; no existe todavía la ventana host acotada con staging y blit descrita abajo. Esa diferencia permite cargar bancos mayores que la VRAM, pero en la RX 6700 XT los bancos Q4 de 12.58–16.88 GiB atascan Metal aun con RAM libre y swap estable. Dividir el recurso por tensor no corrigió el problema.
+
 ### Objetivo
 
 Ejecutar expertos desde una caché real de VRAM.
@@ -1299,7 +1301,7 @@ Solución:
 [ ] Implementar benchmark CPU/RAM/PCIe/GPU.
 [ ] Crear perfiles persistentes.
 [x] Implementar slots lógicos.
-[x] Implementar caché Metal secuencial.
+[ ] Completar la caché Metal secuencial con staging host acotado y blit; la ruta direct-fetch actual solo está validada para bancos dentro del working set de Metal.
 [x] Validar decode en la configuración de referencia.
 [ ] Implementar política q*.
 [ ] Implementar rama CPU.

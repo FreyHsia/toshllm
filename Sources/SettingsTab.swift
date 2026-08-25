@@ -191,6 +191,9 @@ struct SettingsView: View {
         case .normalNoCacheBenefit:
             loc.t("Auto eligió normal: todos los expertos de la capa están activos y la caché no reduciría VRAM.",
                   "Auto selected normal: every expert in the layer is active, so the cache would not reduce VRAM.")
+        case .normalOversizedHostBank:
+            loc.t("Auto eligió normal: el banco de expertos supera la ventana Metal validada para esta GPU.",
+                  "Auto selected normal: the expert bank exceeds the validated Metal window for this GPU.")
         }
     }
 

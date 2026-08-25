@@ -758,7 +758,52 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-
  #endif
          }
      }
-@@ -2164,17 +2176,17 @@
+@@ -1293,24 +1305,38 @@ void * ggml_metal_device_wrap_host(ggml_metal_device_t dev, const void * data, s
+         }
+     }
+ 
+-    size_t limit = dev->props.max_working_set_size*7/8;
++    // A no-copy host buffer only makes already allocated system-RAM pages addressable by Metal;
++    // it does not make them private VRAM residents. recommendedMaxWorkingSetSize is therefore the
++    // wrong ceiling: on a discrete GPU it rejects the exact oversized models this cache exists to
++    // serve. The device's maximum *single buffer* size is the real structural constraint. Keep the
++    // aggregate limit only as an explicit laboratory/debug override.
++    if (len > dev->props.max_buffer_size) {
++        [dev->wrap_lock unlock];
++        return NULL;
++    }
++
+     const char * limit_mb = getenv("GGML_METAL_HOST_WRAP_LIMIT_MB");
+     if (limit_mb != NULL) {
+-        limit = (size_t) strtoull(limit_mb, NULL, 10)*1024*1024;
+-    }
+-    if (len > limit || dev->host_wrap_bytes > limit - len) {
+-        [dev->wrap_lock unlock];
+-        return NULL;
++        const size_t limit = (size_t) strtoull(limit_mb, NULL, 10)*1024*1024;
++        if (len > limit || dev->host_wrap_bytes > limit - len) {
++            [dev->wrap_lock unlock];
++            return NULL;
++        }
+     }
+ 
+     id<MTLBuffer> buf = [dev->mtl_device newBufferWithBytesNoCopy:(void *) base
+                                                            length:len
+                                                           options:MTLResourceStorageModeShared
+                                                       deallocator:nil];
+     if (buf == nil) {
+         [dev->wrap_lock unlock];
+         return NULL;
+     }
++
++    if (len >= (size_t) 1024*1024*1024) {
++        GGML_LOG_INFO("%s: mapped %.2f GiB of existing host RAM as one Metal buffer (not VRAM)\n",
++                __func__, (double) len/(1024.0*1024.0*1024.0));
++    }
+ 
+     if (dev->n_host_wraps == GGML_METAL_HOST_WRAP_MAX) {
+         // evict the oldest entry; in-flight command buffers retain the resource
+@@ -2164,17 +2190,17 @@
  
      size_t size_aligned = size;
      if ((size_aligned % size_page) != 0) {
@@ -777,7 +822,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-
      } else {
          // use virtual address
          res->all_data = (void *) atomic_fetch_add_explicit(&dev->addr_virt, size_aligned, memory_order_relaxed);
-@@ -2186,17 +2198,20 @@
+@@ -2186,17 +2212,20 @@
  
      res->n_buffers = 1;
  
@@ -909,7 +954,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
  
-@@ -25,7 +35,23 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
+@@ -25,7 +35,37 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
  
      return ggml_metal_buffer_get_id(ctx, t);
  }
@@ -924,16 +969,30 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-m
 +        return ggml_metal_get_buffer_id(t);
 +    }
 +
++    // Wrap the whole CPU allocation once. The expert tensors are slices of this allocation;
++    // mapping them independently duplicates address ranges and eventually exhausts Metal's
++    // resource table on large models.
++    void * const base = ggml_backend_buffer_get_base(buffer);
++    const size_t size = ggml_backend_buffer_get_size(buffer);
++    const size_t off  = (const char *) t->data - (const char *) base;
++
 +    size_t offs = 0;
-+    void * metal = ggml_metal_device_wrap_host(dev, t->data, ggml_nbytes(t), &offs);
-+    GGML_ASSERT(metal != nullptr && "failed to wrap the Dynamic MoE CPU bank for Metal");
-+    return { metal, offs };
++    void * metal = ggml_metal_device_wrap_host(dev, base, size, &offs);
++    if (metal == nullptr) {
++        // A driver can reject a single allocation larger than maxBufferLength. Keep a bounded
++        // compatibility fallback for smaller tensors; never mistake this for a VRAM budget.
++        metal = ggml_metal_device_wrap_host(dev, t->data, ggml_nbytes(t), &offs);
++        GGML_ASSERT(metal != nullptr && "failed to wrap the Dynamic MoE CPU bank for Metal");
++        return { metal, offs };
++    }
++
++    return { metal, offs + off };
 +}
  
  struct ggml_metal_op {
      ggml_metal_op(
          ggml_metal_device_t dev,
-@@ -2951,16 +2961,133 @@
+@@ -2951,16 +2975,133 @@
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
      ggml_metal_buffer_id bid_src2 = ggml_metal_get_buffer_id(op->src[2]);

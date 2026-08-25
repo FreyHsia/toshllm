@@ -38,6 +38,7 @@ enum DynamicMoeAutoRoute: Equatable {
     case normalMissingMetadata
     case normalInsufficientVRAM
     case normalNoCacheBenefit
+    case normalOversizedHostBank
 }
 
 struct DynamicMoeModelInfo: Equatable {
@@ -758,6 +759,9 @@ struct ServerSettings {
         guard base == .cache else { return base }
         guard let info = dynamicMoeModelInfo else { return .normalMissingMetadata }
         guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
+        guard Self.dynamicMoeHostBankFitsDirectMetal(modelBytes: size, gpuVRAMMB: gpu?.vramMB ?? 0) else {
+            return .normalOversizedHostBank
+        }
         guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
         return .cache
     }
@@ -871,6 +875,18 @@ struct ServerSettings {
         let ramHeadroom = max(modelBytes / 4, UInt64(4) * 1024 * 1024 * 1024)
         guard physicalRAMBytes >= modelBytes + ramHeadroom else { return .normalInsufficientRAM }
         return .cache
+    }
+
+    /// The current decode kernel directly binds the complete host expert pool to Metal. On a
+    /// discrete GPU, measured banks larger than the device working set can stall the driver even
+    /// when system RAM and swap are healthy. Auto stays on the validated side of that boundary;
+    /// private Manual mode remains available for developing a bounded staging implementation.
+    static func dynamicMoeHostBankFitsDirectMetal(modelBytes: UInt64, gpuVRAMMB: Int) -> Bool {
+        guard modelBytes > 0, gpuVRAMMB > 0 else { return false }
+        let mib = UInt64(1024 * 1024)
+        let sharedBytes = min(modelBytes, UInt64(Double(UInt64(1024) * mib) * 1.3))
+        let estimatedExpertBytes = modelBytes - sharedBytes
+        return estimatedExpertBytes <= UInt64(gpuVRAMMB) * mib
     }
 
     /// Resolves DFlash against the same physical GPU selection and memory reserve

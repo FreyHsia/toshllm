@@ -1569,8 +1569,10 @@ Contra `ncmoe 10` a igual VRAM la ganancia pasa de +54% a **+103% de generacion*
 
 ## El 35B: medido por fin, en Q2_K_XL (11.45 GiB)
 
-El Q4_K_S (19.45 GiB) no cabe: el banco de host son ~16 GiB fijados y la maquina de 32 GB se
-va al swap. El Q2_K_XL si entra.
+En esta tanda se asumio que el Q4_K_S (19.45 GiB) no cabia porque su banco host ronda 16 GiB.
+La prueba posterior del 24 de agosto invalido esa explicacion: cargo con ~18.1 GiB de RSS y el
+swap practicamente inmovil. El Q2_K_XL se uso aqui porque permitia completar el barrido, no
+porque quedara demostrado que RAM era el limite del Q4.
 
 Prompt de 1459 tokens de wikitext, 300 generados, VRAM igualada al gramo:
 
@@ -1896,6 +1898,23 @@ puro con el prompt completo y resultados exactos.
 Un barrido adicional de `GGML_METAL_NCB=4,8,12,16`, manteniendo K8 y cuatro slots de prefetch,
 dio 297.14, 297.69, 297.95 y 297.58 pp256. La profundidad de command buffers no rompe el techo
 actual y no justifica ningun cambio.
+
+## Bancos mayores que el working set de Metal — 24 de agosto de 2026
+
+La app publicada descubrio una asercion al probar GLM-4.7-Flash REAP Q4: el acumulado de buffers host visibles para Metal se limitaba a `7/8 × recommendedMaxWorkingSetSize`, como si esas paginas de RAM fueran VRAM privada. Esto contradecia el experimento `rset.swift`, que ya habia demostrado que 20 GiB de host pueden quedar direccionables en una RX 6700 XT mientras la ventana leida permanezca acotada.
+
+Se conservo y completo el ajuste que estaba solo en el arbol generado: cada asignacion CPU estable se envuelve una vez, sus tensores reutilizan el mismo recurso y el limite estructural pasa a ser `maxBufferLength`. `GGML_METAL_HOST_WRAP_LIMIT_MB` queda como override manual de laboratorio, no como presupuesto derivado de VRAM. La serie `0070` se reconstruyo desde el commit upstream limpio y aplico sin depender del vendor sucio.
+
+| modelo y modo | banco de expertos aprox. | resultado corto |
+|---|---:|---:|
+| GLM-4.7-Flash REAP Q4, Dynamic K4 | 12.58 GiB | 55.75 pp256 / 0.95 tg32 |
+| GLM-4.7-Flash REAP Q4, `ncmoe 8` | colocacion normal | 112.10 pp16 / 40.56 tg16 |
+| Qwen3.6-35B Q4_K_S, Dynamic K8 | 16.88 GiB | 53.66-57.38 pp16 / 0.20 tg32; carga correcta |
+| Qwen3.6-35B Q2_K_XL, Dynamic K8 | 9.61 GiB | 297.75 pp256 / 29.92 tg32 |
+
+Qwen Q4 alcanzo ~18.1 GiB de RSS y el swap del sistema solo paso de 260 a 263.5 MiB durante la carga corta. Por tanto, la hipotesis de presion de RAM queda descartada para esta ejecucion. Dividir el mapeo unico de 16.88 GiB en recursos por tensor tampoco cambio el resultado: 53.66 pp16 / 0.20 tg4. El perfil interno midio esperas de ~8.9 s por dos pasos en la frontera de salida, frente a ~0.11 s de trabajo GPU registrado; el bloqueo esta dentro de la ruta Metal que mantiene direccionable el banco grande, no en swap. GLM tampoco mejora al subir K: K8 y K16 permanecen cerca de 0.95 tg, y K24 cae a 0.32. La conclusion medida es que el cierre por capacidad quedo resuelto, pero los bancos Q4 grandes necesitan una ventana host acotada que exponga y transfiera solo los expertos seleccionados. No se debe confundir "carga" con "configuracion recomendada".
+
+Como proteccion temporal, Auto vuelve a la ejecucion normal si el banco de expertos estimado supera el working set de la GPU seleccionada. Manual sigue disponible detras de `TOSH_MOE_UI=1` para pruebas controladas; la proteccion no se presenta como una solucion de rendimiento.
 
 ## Alternativas exactas sin capas residentes
 

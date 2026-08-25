@@ -221,7 +221,9 @@ ToshLLM uses that estimate when a model is selected, then the benchmark's **Find
 
 #### The Dynamic MoE architecture
 
-Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot; selected experts already present execute immediately, and missing rows are fetched through the persistent Metal staging/prefetch path before the expert matmul. Routing and slot IDs stay on the GPU, so decode does not round-trip through the CPU just to make a cache decision.
+Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot; selected experts already present execute immediately. The current decode prototype fetches missing rows directly from a GPU-addressable host bank before the expert matmul; the bounded staging-and-blit path described in the research plan is not implemented yet. Routing and slot IDs stay on the GPU, so decode does not round-trip through the CPU just to make a cache decision.
+
+Host pages exposed through Metal are address mappings, not duplicate VRAM allocations, so their total size is not capped by `recommendedMaxWorkingSetSize`. ToshLLM maps each stable CPU allocation once and limits the actual private-VRAM cache with K. This allows expert banks larger than the GPU working-set recommendation to load, but does not make them automatically fast: the current direct-fetch path makes the complete bank GPU-addressable for the duration of the graph. On the tested RX 6700 XT, a 9.61 GiB Q2 expert bank remained fast while 12.58–16.88 GiB Q4 banks stalled inside Metal despite free system RAM and essentially unchanged swap. Until a bounded host staging window is implemented and validated, Automatic mode falls back to normal execution when its estimated expert bank exceeds the selected GPU's working set; private Manual mode remains available for controlled research.
 
 K is **per layer**, not a global model count, and its valid interval comes from that model's GGUF:
 

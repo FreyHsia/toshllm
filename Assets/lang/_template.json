@@ -65,6 +65,7 @@
   "Auto selected normal: even the minimum expert cache does not fit with the configured headroom.": "",
   "Auto selected normal: every expert in the layer is active, so the cache would not reduce VRAM.": "",
   "Auto selected normal: the GGUF does not declare layers, total experts, and active experts.": "",
+  "Auto selected normal: the expert bank exceeds the validated Metal window for this GPU.": "",
   "Auto selected normal: the model fits in VRAM with the configured headroom.": "",
   "Auto selected normal: the model is not MoE.": "",
   "Auto selected normal: there is not enough physical RAM to pin the expert bank.": "",
