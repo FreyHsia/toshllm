@@ -26,7 +26,7 @@ struct BenchmarksView: View {
     @AppStorage(SettingsKeys.benchAdvanced) private var benchAdvanced = false
 
     private var gpus: [GPUDevice] { ServerController.availableGPUs() }
-    private var busy: Bool { bench.running || bench.sweeping }
+    private var busy: Bool { bench.running || bench.sweeping || bench.optimizingDynamicMoe }
 
     var body: some View {
         ScrollView {
@@ -81,6 +81,11 @@ struct BenchmarksView: View {
             }
         }
         .animation(.spring(duration: 0.3), value: appliedToast)
+        .onChange(of: bench.dynamicMoeOptimizationProfile?.modelFingerprint) { _, fingerprint in
+            guard fingerprint != nil else { return }
+            cfg.dynamicMoe = true
+            cfg.dynamicMoePolicy = "auto"
+        }
     }
 
     // MARK: run card
@@ -294,6 +299,14 @@ struct BenchmarksView: View {
                     sweepProgress
                 }
 
+                if bench.optimizingDynamicMoe || bench.dynamicMoeOptimizationStatus != .idle {
+                    DynamicMoeOptimizationStatusView(
+                        running: bench.optimizingDynamicMoe,
+                        status: bench.dynamicMoeOptimizationStatus,
+                        profile: bench.dynamicMoeOptimizationProfile,
+                        samples: bench.dynamicMoeOptimizationSamples)
+                }
+
                 Divider().opacity(0.35)
 
                 // Effective configuration — the exact run that produces the result.
@@ -338,15 +351,33 @@ struct BenchmarksView: View {
 
     @ViewBuilder private var actionButtons: some View {
         HStack(spacing: 10) {
-            if bench.running || bench.sweeping {
+            if bench.running || bench.sweeping || bench.optimizingDynamicMoe {
                 ProgressView().controlSize(.small)
-                if bench.sweeping {
+                if bench.optimizingDynamicMoe {
+                    Text(bench.dynamicMoeOptimizationStatus.localized(using: loc))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(loc.t("Cancelar", "Cancel"), role: .destructive,
+                           action: bench.cancelDynamicMoeOptimization)
+                } else if bench.sweeping {
                     Text(bench.sweepStatus).font(.caption).foregroundStyle(.secondary)
                     Button(loc.t("Cancelar", "Cancel"), role: .destructive) { bench.cancelSweep() }
                 } else {
                     Button(loc.t("Cancelar", "Cancel"), role: .destructive) { bench.cancel() }
                 }
             } else {
+                if isMoEModel && cfg.dynamicMoeUIUnlocked {
+                    Button {
+                        rememberWorkload()
+                        bench.optimizeDynamicMoe(settings: cfg)
+                    } label: {
+                        Label(loc.t("Optimizar dMoE", "Optimize dMoE"), systemImage: "gearshape.2.fill")
+                    }
+                    .disabled(cfg.modelPath.isEmpty || cfg.serverBinary != ServerSettings.defaultBinary
+                              || server.state == .running || server.state == .starting)
+                    .help(loc.t("Genera un mapa completo de expertos, compara la ruta directa y la dividida, barre K y activa automáticamente el mejor perfil para este modelo y GPU.",
+                                "Builds a complete expert map, compares direct and split routes, sweeps K, and automatically activates the best profile for this model and GPU."))
+                }
                 Button { rememberWorkload(); bench.sweep(settings: cfg) } label: {
                     Label(loc.t("Buscar óptimo", "Find optimum"), systemImage: "scope")
                 }

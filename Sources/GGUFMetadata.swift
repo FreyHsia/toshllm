@@ -6,16 +6,27 @@ import Foundation
 
 struct GGUFMetadata: Sendable {
     fileprivate let strings: [String: String]
-    fileprivate let uint32Values: [String: UInt32]
+    fileprivate let integerValues: [String: UInt64]
 
     func string(for key: String) -> String? {
         strings[key]
     }
 
     func uint32(forSuffix suffix: String) -> UInt32? {
-        uint32Values[suffix]
-            ?? uint32Values.first(where: { $0.key.hasSuffix(".\(suffix)") })?.value
+        let value = integerValues[suffix]
+            ?? integerValues.first(where: { $0.key.hasSuffix(".\(suffix)") })?.value
+        return value.flatMap(UInt32.init(exactly:))
     }
+
+    var isMoE: Bool {
+        if let experts = uint32(forSuffix: "expert_count") { return experts > 0 }
+        guard let architecture = string(for: "general.architecture") else { return false }
+        return Self.moeArchitectures.contains(architecture.lowercased())
+    }
+
+    private static let moeArchitectures: Set<String> = [
+        "olmoe", "deepseek", "deepseek2", "deepseek2-ocr", "deepseek32", "deepseek4",
+    ]
 }
 
 struct GGUFTensorFlags: Sendable {
@@ -115,7 +126,7 @@ enum GGUFMetadataCache {
               let metadataCount = cursor.readUInt64(), metadataCount <= 1_000_000 else { return nil }
 
         var strings: [String: String] = [:]
-        var uint32Values: [String: UInt32] = [:]
+        var integerValues: [String: UInt64] = [:]
 
         for _ in 0..<metadataCount {
             guard let key = cursor.readString(maxLength: 1 << 20),
@@ -124,22 +135,43 @@ enum GGUFMetadataCache {
             // Model metadata precedes the tokenizer in llama.cpp-generated GGUF files.
             // Stop here to avoid walking hundreds of thousands of tokenizer strings.
             if key.hasPrefix("tokenizer.") {
-                return GGUFMetadata(strings: strings, uint32Values: uint32Values)
+                return GGUFMetadata(strings: strings, integerValues: integerValues)
             }
 
             switch valueType {
+            case 0:
+                guard let value = cursor.readUInt8() else { return nil }
+                integerValues[key] = UInt64(value)
+            case 1:
+                guard let value = cursor.readInt8() else { return nil }
+                if value >= 0 { integerValues[key] = UInt64(value) }
+            case 2:
+                guard let value = cursor.readUInt16() else { return nil }
+                integerValues[key] = UInt64(value)
+            case 3:
+                guard let value = cursor.readInt16() else { return nil }
+                if value >= 0 { integerValues[key] = UInt64(value) }
             case 4:
                 guard let value = cursor.readUInt32() else { return nil }
-                uint32Values[key] = value
+                integerValues[key] = UInt64(value)
+            case 5:
+                guard let value = cursor.readInt32() else { return nil }
+                if value >= 0 { integerValues[key] = UInt64(value) }
             case 8:
                 guard let value = cursor.readString(maxLength: 4 << 20) else { return nil }
                 strings[key] = value
+            case 10:
+                guard let value = cursor.readUInt64() else { return nil }
+                integerValues[key] = value
+            case 11:
+                guard let value = cursor.readInt64() else { return nil }
+                if value >= 0 { integerValues[key] = UInt64(value) }
             default:
                 guard cursor.skipValue(type: valueType) else { return nil }
             }
         }
 
-        return GGUFMetadata(strings: strings, uint32Values: uint32Values)
+        return GGUFMetadata(strings: strings, integerValues: integerValues)
     }
 
     private static func parseTensorFlags(at path: String) -> GGUFTensorFlags {
@@ -187,6 +219,30 @@ private struct GGUFDataCursor {
         return data.subdata(in: range)
     }
 
+    mutating func readUInt8() -> UInt8? {
+        guard skipIsValid(count: 1) else { return nil }
+        let value = data[offset]
+        offset += 1
+        return value
+    }
+
+    mutating func readInt8() -> Int8? {
+        readUInt8().map { Int8(bitPattern: $0) }
+    }
+
+    mutating func readUInt16() -> UInt16? {
+        guard skipIsValid(count: 2) else { return nil }
+        let value = data.withUnsafeBytes { raw -> UInt16 in
+            raw.loadUnaligned(fromByteOffset: offset, as: UInt16.self)
+        }
+        offset += 2
+        return UInt16(littleEndian: value)
+    }
+
+    mutating func readInt16() -> Int16? {
+        readUInt16().map { Int16(bitPattern: $0) }
+    }
+
     mutating func readUInt32() -> UInt32? {
         guard skipIsValid(count: 4) else { return nil }
         let value = data.withUnsafeBytes { raw -> UInt32 in
@@ -196,6 +252,10 @@ private struct GGUFDataCursor {
         return UInt32(littleEndian: value)
     }
 
+    mutating func readInt32() -> Int32? {
+        readUInt32().map { Int32(bitPattern: $0) }
+    }
+
     mutating func readUInt64() -> UInt64? {
         guard skipIsValid(count: 8) else { return nil }
         let value = data.withUnsafeBytes { raw -> UInt64 in
@@ -203,6 +263,10 @@ private struct GGUFDataCursor {
         }
         offset += 8
         return UInt64(littleEndian: value)
+    }
+
+    mutating func readInt64() -> Int64? {
+        readUInt64().map { Int64(bitPattern: $0) }
     }
 
     mutating func readString(maxLength: Int) -> String? {

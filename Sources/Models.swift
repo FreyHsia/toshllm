@@ -13,7 +13,7 @@ struct LocalModel: Identifiable, Hashable {
     var sizeGB: String { String(format: "%.1f GB", Double(sizeBytes) / 1_073_741_824) }
     var isMoE: Bool {
         if let metadata = GGUFMetadataCache.metadata(at: url.path) {
-            return (metadata.uint32(forSuffix: "expert_count") ?? 0) > 0
+            return metadata.isMoE
         }
         return ModelName.looksMoE(name)
     }

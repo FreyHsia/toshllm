@@ -573,6 +573,22 @@ struct ServerSettings {
             env["TOSH_MOE_CPU_BANK"] = "1"
             env["GGML_SCHED_PREFETCH_EXPERTS"] = String(effectiveDynamicMoePrefetch)
             env["GGML_METAL_NCB"] = "8"
+            if dynamicMoeExecutionRoute == .split {
+                let profile = dynamicMoeOptimizationProfile
+                env["TOSH_MOE_SPLIT_BANK"] = "1"
+                env["TOSH_MOE_SPLIT_RING"] = String(profile?.ringSlots ?? max(8, dynamicMoeModelInfo?.activeExpertCount ?? 1))
+                env["TOSH_MOE_BOUNDED_STAGE"] = "1"
+                env["TOSH_MOE_BOUNDED_STAGE_FORCE"] = "1"
+                env["TOSH_MOE_DOUBLE_BUFFER"] = "1"
+                if let mapPath = profile?.hotMapPath,
+                   FileManager.default.fileExists(atPath: mapPath) {
+                    env["TOSH_MOE_HOT_MAP"] = mapPath
+                    env["TOSH_MOE_HOT_MAP_OUT"] = mapPath
+                    if let experts = dynamicMoeModelInfo?.expertCount {
+                        env["TOSH_MOE_HOT_MAP_K"] = String(experts)
+                    }
+                }
+            }
         } else if prefetchExperts && (ncmoe > 0 || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
             // GPU, so stay below it. Router mode has no single ncmoe to compare.
@@ -742,12 +758,31 @@ struct ServerSettings {
     /// Router presets load models independently and cannot carry the per-tensor
     /// override required by this prototype, so keep the experiment fixed-model only.
     var dynamicMoeUIUnlocked: Bool { extraArgTokens.env["TOSH_MOE_UI"] == "1" }
+    var dynamicMoeGPU: GPUDevice? {
+        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
+        return selected.max { $0.vramMB < $1.vramMB }
+    }
+    var dynamicMoeOptimizationProfile: DynamicMoeOptimizationProfile? {
+        DynamicMoeProfileStore.load(modelPath: modelPath, gpu: dynamicMoeGPU)
+    }
+    var dynamicMoeExecutionRoute: DynamicMoeExecutionRoute {
+        if dynamicMoePolicy == "auto", let profile = dynamicMoeOptimizationProfile {
+            return profile.route
+        }
+        guard let size = GGUFFile.totalSize(at: modelPath), let gpu = dynamicMoeGPU else {
+            return .direct
+        }
+        return Self.dynamicMoeHostBankFitsDirectMetal(modelBytes: size, gpuVRAMMB: gpu.vramMB)
+            ? .direct : .split
+    }
     var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
         guard !modelPath.isEmpty, let size = GGUFFile.totalSize(at: modelPath) else {
             return .normalMissingModel
         }
-        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
-        let gpu = selected.max { $0.vramMB < $1.vramMB }
+        let gpu = dynamicMoeGPU
+        if dynamicMoeOptimizationProfile != nil, !isSplitting, !routerMode {
+            return .cache
+        }
         let base = Self.resolveDynamicMoeAuto(
             isMoE: Self.modelIsMoE(at: modelPath),
             modelBytes: size,
@@ -759,9 +794,6 @@ struct ServerSettings {
         guard base == .cache else { return base }
         guard let info = dynamicMoeModelInfo else { return .normalMissingMetadata }
         guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
-        guard Self.dynamicMoeHostBankFitsDirectMetal(modelBytes: size, gpuVRAMMB: gpu?.vramMB ?? 0) else {
-            return .normalOversizedHostBank
-        }
         guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
         return .cache
     }
@@ -773,6 +805,7 @@ struct ServerSettings {
     }
     var effectiveDynamicMoeSlots: Int {
         if dynamicMoePolicy == "auto" {
+            if let profile = dynamicMoeOptimizationProfile { return profile.slots }
             return dynamicMoeSlotPlan(prefetch: 4)?.automaticSlots ?? 0
         }
         if let info = dynamicMoeModelInfo {
@@ -782,7 +815,10 @@ struct ServerSettings {
         return min(max(dynamicMoeSlots, 1), 256)
     }
     var effectiveDynamicMoePrefetch: Int {
-        dynamicMoePolicy == "auto" ? 4 : min(max(dynamicMoePrefetch, 0), 16)
+        if dynamicMoePolicy == "auto", let profile = dynamicMoeOptimizationProfile {
+            return profile.prefetch
+        }
+        return dynamicMoePolicy == "auto" ? 4 : min(max(dynamicMoePrefetch, 0), 16)
     }
 
     var dynamicMoeModelInfo: DynamicMoeModelInfo? {
@@ -1058,7 +1094,7 @@ struct ServerSettings {
     /// True when the model is a Mixture-of-Experts (GGUF `<arch>.expert_count` > 0).
     /// Gates the `--n-cpu-moe` control, which a dense model ignores.
     nonisolated static func modelIsMoE(at path: String) -> Bool {
-        (ggufUInt32("expert_count", at: path) ?? 0) > 0
+        GGUFMetadataCache.metadata(at: path)?.isMoE ?? false
     }
 
     /// Remembers the ncmoe the user settled on for a MoE model, so selecting
@@ -1559,6 +1595,9 @@ final class ServerController: ObservableObject {
                        "GGML_METAL_SHARED_BUFFERS_DISABLE", "TOSH_FA_AMD",
                        "GGML_SCHED_PREFETCH_EXPERTS", "GGML_CPU_NO_REPACK",
                        "TOSH_MOE_UI", "TOSH_MOE_MODE", "TOSH_MOE_SLOTS", "TOSH_MOE_CPU_BANK",
+                       "TOSH_MOE_SPLIT_BANK", "TOSH_MOE_SPLIT_RING", "TOSH_MOE_BOUNDED_STAGE",
+                       "TOSH_MOE_BOUNDED_STAGE_FORCE", "TOSH_MOE_DOUBLE_BUFFER", "TOSH_MOE_HOT_MAP",
+                       "TOSH_MOE_HOT_MAP_OUT", "TOSH_MOE_HOT_MAP_K",
                        "GGML_METAL_NCB",
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
         let env = settings.environment

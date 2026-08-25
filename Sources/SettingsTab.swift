@@ -139,6 +139,9 @@ struct SettingsView: View {
     private var dynamicMoeModelInfo: DynamicMoeModelInfo? {
         ServerSettings.fromDefaults().dynamicMoeModelInfo
     }
+    private var dynamicMoeProfile: DynamicMoeOptimizationProfile? {
+        ServerSettings.fromDefaults().dynamicMoeOptimizationProfile
+    }
     private var dynamicMoeSlotPlan: DynamicMoeSlotPlan? {
         ServerSettings.fromDefaults().dynamicMoeSlotPlan()
     }
@@ -164,35 +167,42 @@ struct SettingsView: View {
     private var dynamicMoeAutoMessage: String {
         switch dynamicMoeAutoRoute {
         case .cache:
-            loc.t("Auto eligió caché dinámica: el modelo no cabe con margen en VRAM y hay RAM suficiente.",
-                  "Auto selected dynamic cache: the model does not fit in VRAM with headroom and enough RAM is available.")
+            if let profile = dynamicMoeProfile {
+                return profile.route == .split
+                    ? loc.t("Auto usa el perfil optimizado dividido K\(profile.slots) + ring\(profile.ringSlots). El mapa seguirá adaptándose durante el uso.",
+                            "Auto uses the optimized split profile K\(profile.slots) + ring\(profile.ringSlots). The map keeps adapting during use.")
+                    : loc.t("Auto usa el perfil directo K\(profile.slots), porque el banco de expertos cabe en la ventana Metal.",
+                            "Auto uses the direct K\(profile.slots) profile because the expert bank fits in the Metal window.")
+            }
+            return loc.t("Auto eligió caché dinámica: el modelo no cabe con margen en VRAM y hay RAM suficiente.",
+                         "Auto selected dynamic cache: the model does not fit in VRAM with headroom and enough RAM is available.")
         case .normalDense:
-            loc.t("Auto eligió normal: el modelo no es MoE.", "Auto selected normal: the model is not MoE.")
+            return loc.t("Auto eligió normal: el modelo no es MoE.", "Auto selected normal: the model is not MoE.")
         case .normalFitsVRAM:
-            loc.t("Auto eligió normal: el modelo cabe en VRAM con el margen configurado.",
+            return loc.t("Auto eligió normal: el modelo cabe en VRAM con el margen configurado.",
                   "Auto selected normal: the model fits in VRAM with the configured headroom.")
         case .normalInsufficientRAM:
-            loc.t("Auto eligió normal: no hay RAM física suficiente para fijar el banco de expertos.",
+            return loc.t("Auto eligió normal: no hay RAM física suficiente para fijar el banco de expertos.",
                   "Auto selected normal: there is not enough physical RAM to pin the expert bank.")
         case .normalUnsupportedGPU:
-            loc.t("Auto eligió normal: se necesita una GPU discreta compatible.",
+            return loc.t("Auto eligió normal: se necesita una GPU discreta compatible.",
                   "Auto selected normal: a compatible discrete GPU is required.")
         case .normalMissingModel:
-            loc.t("Auto espera un modelo válido para decidir.", "Auto is waiting for a valid model before deciding.")
+            return loc.t("Auto espera un modelo válido para decidir.", "Auto is waiting for a valid model before deciding.")
         case .normalSplitOrRouter:
-            loc.t("Auto eligió normal: Dynamic MoE aún no admite split ni router.",
+            return loc.t("Auto eligió normal: Dynamic MoE aún no admite split ni router.",
                   "Auto selected normal: Dynamic MoE does not support split or router yet.")
         case .normalMissingMetadata:
-            loc.t("Auto eligió normal: el GGUF no declara capas, expertos totales y expertos activos.",
+            return loc.t("Auto eligió normal: el GGUF no declara capas, expertos totales y expertos activos.",
                   "Auto selected normal: the GGUF does not declare layers, total experts, and active experts.")
         case .normalInsufficientVRAM:
-            loc.t("Auto eligió normal: ni la caché mínima de expertos cabe con los márgenes configurados.",
+            return loc.t("Auto eligió normal: ni la caché mínima de expertos cabe con los márgenes configurados.",
                   "Auto selected normal: even the minimum expert cache does not fit with the configured headroom.")
         case .normalNoCacheBenefit:
-            loc.t("Auto eligió normal: todos los expertos de la capa están activos y la caché no reduciría VRAM.",
+            return loc.t("Auto eligió normal: todos los expertos de la capa están activos y la caché no reduciría VRAM.",
                   "Auto selected normal: every expert in the layer is active, so the cache would not reduce VRAM.")
         case .normalOversizedHostBank:
-            loc.t("Auto eligió normal: el banco de expertos supera la ventana Metal validada para esta GPU.",
+            return loc.t("Auto eligió normal: el banco de expertos supera la ventana Metal validada para esta GPU.",
                   "Auto selected normal: the expert bank exceeds the validated Metal window for this GPU.")
         }
     }
@@ -556,8 +566,8 @@ struct SettingsView: View {
                             Text(loc.t("Automática", "Automatic")).tag("auto")
                             Text(loc.t("Caché manual", "Manual cache")).tag("cache")
                         }
-                        .infoTip(loc.t("Auto usa el camino normal si el modelo cabe en VRAM o falta RAM; si no, usa K igual al top-k real del GGUF y prefetch4. Caché manual permite ajustar ambos valores dentro del rango válido del modelo.",
-                                    "Auto uses the normal path when the model fits in VRAM or RAM is insufficient; otherwise K matches the GGUF's real top-k with prefetch4. Manual cache lets you tune both values within the model's valid range."))
+                        .infoTip(loc.t("Auto reutiliza el perfil medido por Optimizar dMoE. Puede elegir la ruta directa cuando el banco cabe o la ruta dividida para modelos grandes. Sin perfil usa una configuración conservadora; Caché manual permite experimentar.",
+                                    "Auto reuses the profile measured by Optimize dMoE. It can choose the direct route when the bank fits or the split route for large models. Without a profile it uses a conservative configuration; Manual cache remains available for experiments."))
                         if dynamicMoePolicy == "auto" {
                             Label(dynamicMoeAutoMessage,
                                   systemImage: dynamicMoeAutoRoute == .cache ? "bolt.horizontal.fill" : "checkmark.shield")
@@ -615,7 +625,7 @@ struct SettingsView: View {
                                         "Number of banks prefetched during prompt processing. Four was the measured optimum for K8; the other values let you repeat the sweep from Benchmarks."))
                         }
                         Label(dynamicMoePolicy == "auto"
-                                ? loc.t("Auto: normal o K=top-k · prefetch4", "Auto: normal or K=top-k · prefetch4")
+                                ? loc.t("Auto: perfil medido y adaptación continua", "Auto: measured profile with continuous adaptation")
                                 : loc.t("Configuración efectiva: cache · mlock · NCB8",
                                         "Effective configuration: cache · mlock · NCB8"),
                               systemImage: "flask.fill")

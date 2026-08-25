@@ -185,8 +185,8 @@ The design is an independent llama.cpp/Metal implementation inspired by the publ
 1. Select the bundled engine and a MoE GGUF.
 2. In **Settings → Extra arguments**, add `TOSH_MOE_UI=1`.
 3. The private **Dynamic MoE (experimental)** panel appears. Turn it on.
-4. Choose **Automatic** for the model-aware minimum-VRAM policy, or **Manual cache** to vary K and prefetch.
-5. Use **Benchmarks** to compare prompt processing and generation; it receives exactly the same Dynamic MoE environment, tensor placement and load mode as the server.
+4. Open **Benchmarks** and press **Optimize dMoE**. ToshLLM measures normal execution, learns a complete expert ranking, sweeps K, then tunes prompt prefetch without accepting more than a 3% TG regression at the chosen K.
+5. The resulting **Automatic** profile is activated for the integrated chat. **Manual cache** remains available to vary K and prefetch by hand.
 
 `TOSH_MOE_UI=1` only reveals the controls. Removing it, turning Dynamic MoE off, selecting a custom engine, or letting Auto reject the configuration returns the same binary to unmodified llama.cpp execution. The feature is not yet used by router or multi-GPU mode.
 
@@ -221,9 +221,11 @@ ToshLLM uses that estimate when a model is selected, then the benchmark's **Find
 
 #### The Dynamic MoE architecture
 
-Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot; selected experts already present execute immediately. The current decode prototype fetches missing rows directly from a GPU-addressable host bank before the expert matmul; the bounded staging-and-blit path described in the research plan is not implemented yet. Routing and slot IDs stay on the GPU, so decode does not round-trip through the CPU just to make a cache decision.
+Dynamic MoE keeps the complete quantized expert bank addressable in RAM, but gives every MoE layer only `K` reusable expert slots in VRAM. A GPU-resident LRU table maps `(layer, expert)` to a slot; selected experts already present execute immediately. Routing and slot IDs stay on the GPU, so decode does not round-trip through the CPU just to make a cache decision.
 
-Host pages exposed through Metal are address mappings, not duplicate VRAM allocations, so their total size is not capped by `recommendedMaxWorkingSetSize`. ToshLLM maps each stable CPU allocation once and limits the actual private-VRAM cache with K. This allows expert banks larger than the GPU working-set recommendation to load, but does not make them automatically fast: the current direct-fetch path makes the complete bank GPU-addressable for the duration of the graph. On the tested RX 6700 XT, a 9.61 GiB Q2 expert bank remained fast while 12.58–16.88 GiB Q4 banks stalled inside Metal despite free system RAM and essentially unchanged swap. Until a bounded host staging window is implemented and validated, Automatic mode falls back to normal execution when its estimated expert bank exceeds the selected GPU's working set; private Manual mode remains available for controlled research.
+There are two execution routes. **Direct** maps the stable host expert bank once and preserves the high-performance implementation already validated when that bank fits Metal's practical window. **Split** keeps K fixed experts per layer in private VRAM, stores the remaining quantized rows in RAM, and exposes only a small `ring` of cold rows plus bounded full-bank staging buffers to Metal. This removes the former requirement to wrap a 10–17 GiB expert allocation as one Metal resource and allows oversized Q4 models to run without copying the complete expert pool into VRAM.
+
+The router remains exact in both routes: every GGUF expert is available and the model still selects the same top-A experts for every token. The optimizer records a complete per-layer histogram as `expert:count`; future loads normalize the historical counts to a bounded prior, then add new observations. This means repeated representative use improves the initial resident ranking, short sessions cannot erase the profile, and a changed workload can still overtake stale history. It is cache adaptation, not model training, and performance eventually stabilizes when the routing distribution stabilizes.
 
 K is **per layer**, not a global model count, and its valid interval comes from that model's GGUF:
 
@@ -249,13 +251,13 @@ Krecommended = min(E, Kbudget)
 VRAMdynamic(K) ≈ Wfixed + K × (Wexp / E)
 ```
 
-The manual control permits every architecturally valid integer from `A` through `E`, while showing a warning above `Krecommended`; that warning is an estimate, not a prohibition, so unusual hardware can still be measured. Automatic mode chooses the smallest useful cache:
+The manual control permits every architecturally valid integer from `A` through `E`, while showing a warning above `Krecommended`; that warning is an estimate, not a prohibition, so unusual hardware can still be measured. Before a profile exists, Automatic mode starts conservatively at the smallest useful cache:
 
 ```text
 Kauto = A
 ```
 
-That is K8 for Qwen3.6/OLMoE and K4 for GPT-OSS 20B—not a hard-coded K8. Auto activates the cache only when the model does not fit the normal full-GPU budget, `A < E`, the minimum K fits, a discrete single GPU is selected, and physical RAM can hold `W` plus `max(25% of W, 4 GiB)` of headroom. Otherwise it falls back before launch to normal `ncmoe` execution.
+That is K8 for Qwen3.6/OLMoE and K4 for GPT-OSS 20B—not a hard-coded K8. **Optimize dMoE** then tests model-derived values between A and the estimated VRAM limit, saves the smallest K reaching at least 95% of the normal TG reference when possible, and tunes prefetch 0/1/2/4 for PP. The profile is keyed by GGUF fingerprint and physical GPU, so changing models or GPUs never silently reuses an unrelated ranking. Auto activates the cache only when `A < E`, a discrete single GPU is selected, and physical RAM can hold `W` plus `max(25% of W, 4 GiB)` of headroom; otherwise it falls back before launch to normal `ncmoe` execution.
 
 The memory trade is deliberate:
 

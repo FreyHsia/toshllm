@@ -5,6 +5,35 @@
 import XCTest
 @testable import ToshLLM
 
+final class DynamicMoeOptimizationTests: XCTestCase {
+    func testCandidateSlotsFollowEachModelsExpertCount() {
+        let qwen = DynamicMoeModelInfo(layerCount: 40, expertCount: 256, activeExpertCount: 8)
+        XCTAssertEqual(BenchmarkController.dynamicMoeCandidateSlots(model: qwen, maximum: 75),
+                       [8, 16, 32, 64, 75])
+        XCTAssertEqual(BenchmarkController.dynamicMoeCandidateSlots(model: qwen, maximum: 132),
+                       [8, 16, 32, 64, 76], "automatic profiling must not approach a full bank")
+
+        let gptOSS = DynamicMoeModelInfo(layerCount: 24, expertCount: 32, activeExpertCount: 4)
+        XCTAssertEqual(BenchmarkController.dynamicMoeCandidateSlots(model: gptOSS, maximum: 32),
+                       [4, 8, 9])
+    }
+
+    func testHotMapValidatorAcceptsLegacyAndAdaptiveCounts() throws {
+        let directory = FileManager.default.temporaryDirectory
+        let legacy = directory.appendingPathComponent("tosh-dmoe-legacy-\(UUID().uuidString).map")
+        let adaptive = directory.appendingPathComponent("tosh-dmoe-adaptive-\(UUID().uuidString).map")
+        defer {
+            try? FileManager.default.removeItem(at: legacy)
+            try? FileManager.default.removeItem(at: adaptive)
+        }
+        try "0 2 0 3 1\n".write(to: legacy, atomically: true, encoding: .utf8)
+        try "0 2:91 0:47 3:12 1:1\n".write(to: adaptive, atomically: true, encoding: .utf8)
+
+        XCTAssertTrue(BenchmarkController.dynamicMoeHotMapIsValid(legacy, expertCount: 4))
+        XCTAssertTrue(BenchmarkController.dynamicMoeHotMapIsValid(adaptive, expertCount: 4))
+    }
+}
+
 // MARK: - Memory estimator
 
 final class EstimatorTests: XCTestCase {
@@ -1793,6 +1822,21 @@ final class LocalizationTests: XCTestCase {
         loc.language = "en"
         XCTAssertFalse(loc.isSpanish)
         XCTAssertEqual(loc.t("hola", "hello"), "hello")
+    }
+
+    func testDynamicMoeOptimizationStatesUseActiveLanguage() {
+        let loc = Localizer()
+        loc.language = "es"
+        XCTAssertEqual(DynamicMoeOptimizationState.testingDirect(slots: 8).localized(using: loc),
+                       "Probando dMoE directo K8…")
+        XCTAssertEqual(DynamicMoeOptimizationState.optimizedSplit(slots: 64, ringSlots: 8)
+            .localized(using: loc), "Optimizado: ruta dividida K64 + ring8")
+
+        loc.language = "en"
+        XCTAssertEqual(DynamicMoeOptimizationState.testingDirect(slots: 8).localized(using: loc),
+                       "Testing direct dMoE K8…")
+        XCTAssertEqual(DynamicMoeOptimizationState.optimizedSplit(slots: 64, ringSlots: 8)
+            .localized(using: loc), "Optimized: split route K64 + ring8")
     }
 }
 
