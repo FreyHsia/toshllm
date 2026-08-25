@@ -609,7 +609,19 @@ La tabla CPU y la tabla GPU deben coincidir.
 
 ## Fase 5: caché Metal durante decode
 
-> Auditoría del 24 de agosto de 2026: la primera ruta secuencial con ventana host acotada ya existe detrás del flag interno `TOSH_MOE_BOUNDED_STAGE=1`. Lee sólo los IDs compactos del router, copia desde RAM únicamente los expertos ausentes, hace blit a slots privados y remapea los IDs físicos. No se expone todavía en Auto ni en la interfaz pública porque sincroniza una vez por capa y aún no alcanza el rendimiento objetivo. La ruta anterior `tosh_moe_fetch`, que entrega el banco host completo a Metal, permanece como referencia para bancos pequeños.
+> Auditoría del 25 de agosto de 2026: la primera ruta secuencial con ventana host acotada ya existe detrás del flag interno `TOSH_MOE_BOUNDED_STAGE=1`. Lee sólo los IDs compactos del router, copia desde RAM únicamente los expertos ausentes, hace blit a slots privados y remapea los IDs físicos. El flag ahora es adaptativo: conserva `tosh_moe_fetch` para bancos que caben dentro de un umbral seguro del working set y usa staging sólo para bancos sobredimensionados. `TOSH_MOE_BOUNDED_STAGE_FORCE=1` fuerza la ruta lenta únicamente para diagnóstico. No se expone todavía en Auto ni en la interfaz pública porque la ruta acotada sincroniza una vez por capa y aún no alcanza el rendimiento objetivo.
+
+La regresión que motivó la selección adaptativa quedó cuantificada en la RX 6700 XT:
+
+| Modelo y configuración | Ruta | PP | TG |
+| --- | --- | ---: | ---: |
+| Qwen 35B A3B Q2 K8 | staging forzado | 608.60 pp512 | 15.22 tg128 |
+| Qwen 35B A3B Q2 K8 | caché rápida | 592.07 pp512 | 32.85 tg128 |
+| Qwen 35B A3B Q2 K64 | caché rápida | 607.26 pp512 | 51.13 tg128 |
+| Qwen 35B A3B Q4 K8 | staging acotado | 76.39 pp512 | 8.83 tg128 |
+| GLM 23B A3B Q4 K30 | staging acotado | 112.94 pp512 | 25.01 tg128 |
+
+Una verificación corta posterior al selector adaptativo obtuvo 30.76 tg16 en Qwen Q2 K8 por la ruta rápida y 9.22 tg4 en Qwen Q4 K8 por staging. El Q4 llegó a un RSS máximo de 19.52 GB con `mlock`; el staging seleccionado no duplica por sí mismo el banco completo. La presión y el swap observados durante cargas PP grandes deben estudiarse aparte porque combinan las páginas bloqueadas del banco, las páginas del GGUF tocadas durante la carga y el scratch temporal de prefill.
 
 ### Objetivo
 
@@ -1301,7 +1313,7 @@ Solución:
 [ ] Implementar benchmark CPU/RAM/PCIe/GPU.
 [ ] Crear perfiles persistentes.
 [x] Implementar slots lógicos.
-[ ] Completar la caché Metal secuencial con staging host acotado y blit; la ruta direct-fetch actual solo está validada para bancos dentro del working set de Metal.
+[x] Completar el staging host acotado y el selector adaptativo inicial; falta eliminar la sincronización por capa para recuperar TG.
 [x] Validar decode en la configuración de referencia.
 [ ] Implementar política q*.
 [ ] Implementar rama CPU.
