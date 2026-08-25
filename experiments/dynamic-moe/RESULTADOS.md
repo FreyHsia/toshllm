@@ -1916,6 +1916,24 @@ Qwen Q4 alcanzo ~18.1 GiB de RSS y el swap del sistema solo paso de 260 a 263.5 
 
 Como proteccion temporal, Auto vuelve a la ejecucion normal si el banco de expertos estimado supera el working set de la GPU seleccionada. Manual sigue disponible detras de `TOSH_MOE_UI=1` para pruebas controladas; la proteccion no se presenta como una solucion de rendimiento.
 
+## Staging host acotado para decode — prototipo interno
+
+Se implemento la primera version secuencial de la Fase 5 detras de `TOSH_MOE_BOUNDED_STAGE=1`, sin panel publico y fuera de Auto. El grafo se corta despues de cada router, copia a CPU solamente sus IDs I32, aplica el LRU ya probado, empaqueta en un buffer shared persistente solo las filas de los misses y hace blit a los slots privados. El matmul recibe IDs remapeados y nunca ve un `MTLBuffer` que represente el banco completo.
+
+Los buffers persistentes adicionales son acotados por una capa: para Qwen Q4 K8 el staging de expertos es aproximadamente `K/E` del banco de una capa, unos 13.5 MiB, mas dos buffers de IDs de pocos KiB. No duplica los 16.88 GiB del banco RAM ni incrementa el swap de forma material. La RAM principal sigue siendo el GGUF completo y la VRAM principal sigue siendo la cache K.
+
+| ruta, Qwen3.6-35B-A3B Q4_K_S K8 | PP | TG |
+|---|---:|---:|
+| banco host completo, medicion anterior | 53.66-57.38 pp16 | 0.20 tg32 |
+| staging acotado inicial, sin LRU persistente | 6.15 pp1 | 6.10 tg8 |
+| staging acotado + LRU + buffers persistentes | 13.70 pp1 | 9.22 tg16 |
+| binario empaquetado en `dist/ToshLLM.app` | 10.73 pp1 | 6.78 tg4 |
+| fallback de prefill ancho con el flag activo | 57.35 pp16 | — |
+
+La mejora contra el bloqueo Q4 es de aproximadamente 46 veces en la medicion TG16, pero no cumple todavia el objetivo de acercarse a `ncmoe 24`. El limite actual es la sincronizacion CPU/GPU por cada una de las 40 capas. El prefill ancho conserva la ruta anterior y no regresa: pp16 queda dentro del rango historico.
+
+La correccion se valido numericamente con Qwen Q2, contexto 16 y batch/ubatch 1. La ruta directa y la ruta acotada produjeron exactamente `PPL = 8.9828 +/- 9.52892`. La ruta acotada tardo 1.30 s y la directa 0.58 s, confirmando que debe seleccionarse solo cuando el banco completo provoca el bloqueo del driver.
+
 ## Alternativas exactas sin capas residentes
 
 Se probaron tres caminos adicionales manteniendo el prompt y los pesos exactos:

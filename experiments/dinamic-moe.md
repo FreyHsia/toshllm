@@ -609,7 +609,7 @@ La tabla CPU y la tabla GPU deben coincidir.
 
 ## Fase 5: caché Metal durante decode
 
-> Auditoría del 24 de agosto de 2026: esta fase está incompleta. Los slots privados, el LRU y el remapeo existen, pero `tosh_moe_fetch` lee directamente desde el banco host completo expuesto como `MTLBuffer`; no existe todavía la ventana host acotada con staging y blit descrita abajo. Esa diferencia permite cargar bancos mayores que la VRAM, pero en la RX 6700 XT los bancos Q4 de 12.58–16.88 GiB atascan Metal aun con RAM libre y swap estable. Dividir el recurso por tensor no corrigió el problema.
+> Auditoría del 24 de agosto de 2026: la primera ruta secuencial con ventana host acotada ya existe detrás del flag interno `TOSH_MOE_BOUNDED_STAGE=1`. Lee sólo los IDs compactos del router, copia desde RAM únicamente los expertos ausentes, hace blit a slots privados y remapea los IDs físicos. No se expone todavía en Auto ni en la interfaz pública porque sincroniza una vez por capa y aún no alcanza el rendimiento objetivo. La ruta anterior `tosh_moe_fetch`, que entrega el banco host completo a Metal, permanece como referencia para bancos pequeños.
 
 ### Objetivo
 
