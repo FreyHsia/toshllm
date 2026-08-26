@@ -5,7 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Audio is now a full workspace beside Chat, Images and Video.** Whisper.cpp transcribes microphone, audio and video on the Radeon; projects preserve editable original and translated tracks, synchronized playback, calibrated Silero VAD, recovery, subtitle exports and captioned MOV copies. Feature requested by [playexit](https://github.com/engeldlgado/toshllm/issues/73).
+- **Audio can translate with Whisper or the loaded chat model.** Chat translation resumes without rerunning Whisper and uses an explicit model, neighboring context, prior terminology and a glossary to keep segments consistent.
+
+### Improved
+
+- **The Italian localization now covers the complete interface.** All current UI strings are translated instead of falling back to English.
+
 ### Fixed
+
 - **The server log says what Dynamic MoE actually ran with.** It printed the MoE-on-CPU value you had saved while the cache was running with a different one; it now reports the cache and its slots, and stops passing a CPU-expert count the cache does not use.
 
 ## [0.85.8] - 2026-08-24

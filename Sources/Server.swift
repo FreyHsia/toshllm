@@ -1787,6 +1787,9 @@ final class ServerController: ObservableObject {
     }
 
     func stop() {
+        AudioStudioController.shared.shutdown()
+        SpeechDictationController.shared.shutdown()
+        AppleSpeechDictationController.shared.shutdown()
         healthTask?.cancel()
         dflashMemoryTask?.cancel()
         activeDflashModelPath = nil
@@ -1828,6 +1831,9 @@ final class ServerController: ObservableObject {
     /// Quitting: the engine must be signalled inline, since a detached task does
     /// not outlive the process.
     func stopImmediately() {
+        AudioStudioController.shared.shutdown()
+        SpeechDictationController.shared.shutdown()
+        AppleSpeechDictationController.shared.shutdown()
         healthTask?.cancel()
         dflashMemoryTask?.cancel()
         activeDflashModelPath = nil

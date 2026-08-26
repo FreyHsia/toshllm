@@ -413,6 +413,8 @@ struct SettingsView: View {
                 }
             }
 
+            SpeechModelsSettingsSection()
+
             Section(loc.t("Perfiles", "Profiles")) {
                 HStack {
                     TextField(loc.t("Nombre del perfil (p. ej. Código, Chat rápido)",
