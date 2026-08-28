@@ -5,7 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Improved
+
+- **Infinity Fabric Link is now on by default.** Splitting by tensors reads prompts 16% faster at no cost to generation, measured on four Radeon Pro Vega II. Thanks to [Chris Hafey](https://github.com/chafey) for the hardware.
+
 ### Fixed
+
+- **A very large mixture-of-experts model no longer fails to load across several cards.** The host-resident experts each card maps were uncapped, so the card stopped granting allocations. A 153 GB model now runs on two Radeon Pro Vega II. Thanks to [Chris Hafey](https://github.com/chafey) for the hardware.
+
+- **Cards in a mixture-of-experts split no longer fill unevenly.** Layers were dealt out by count, so the ones keeping their experts overflowed a card while the rest sat idle. On four Radeon Pro Vega II: 1.4 / 5.2 / 41.5 / 41.5 GB before, 24.3 / 21.2 / 21.2 / 18.2 GB now. Thanks to [Chris Hafey](https://github.com/chafey) for the hardware.
+
+- **Splitting a mixture-of-experts model by tensors no longer stops the engine.** A card left an empty slice aborted the graph; it now contributes nothing instead. Perplexity unchanged: 6.2307 across four cards against 6.2336 across two. Thanks to [Chris Hafey](https://github.com/chafey) for the hardware.
+
+- **A speculative draft the engine cannot load is no longer offered or used.** Newer DFlash drafts carry stages with no loader here; the server exited on the tensor count.
 
 - **The fused QKV path now runs during generation.** Its matcher expected the projections in a different order, so the faster path was never selected; Gemma 3 4B with Turbo KV gains 1.7% on a Radeon RX 6700 XT. Thanks to [malzzz](https://github.com/engeldlgado/toshllm/pull/71) for the fix.
 

@@ -34,6 +34,37 @@ struct GGUFTensorFlags: Sendable {
     let hasTurboQuantTensor: Bool
     /// Metal refuses bf16 on cards without the family that provides it, weights included.
     let hasBF16Tensor: Bool
+    /// Experts whose scales live in a companion tensor; the meta backend cannot split those.
+    let hasExpertScaleTensor: Bool
+    /// Bytes one repeating block occupies, split between its expert weights and the rest.
+    /// `--n-cpu-moe` moves only the expert half, which is what unbalances a layer split.
+    let expertBytesPerLayer: UInt64
+    let otherBytesPerLayer: UInt64
+    /// A DFlash draft with the convolution and selector stages the engine has no loader for:
+    /// it reads the file, builds only part of it and aborts on the tensor count.
+    let hasUnsupportedDraftStage: Bool
+}
+
+
+/// Average bytes one element takes, by GGUF type id. Unknown types fall back to a
+/// four-bit quant, the most common case in the catalogue.
+private func ggufBytesPerElement(_ typeID: UInt32) -> Double {
+    switch typeID {
+    case 0: return 4                       // F32
+    case 1, 30: return 2                   // F16, BF16
+    case 2, 3: return 18.0/32              // Q4_0, Q4_1
+    case 6, 7: return 22.0/32              // Q5_0, Q5_1
+    case 8: return 34.0/32                 // Q8_0
+    case 10: return 84.0/256               // Q2_K
+    case 11: return 110.0/256              // Q3_K
+    case 12: return 144.0/256              // Q4_K
+    case 13: return 176.0/256              // Q5_K
+    case 14: return 210.0/256              // Q6_K
+    case 20: return 18.0/32                // IQ4_NL
+    case 23: return 136.0/256              // IQ4_XS
+    case 39: return 17.0/32                // MXFP4
+    default: return 144.0/256
+    }
 }
 
 enum GGUFMetadataCache {
@@ -74,7 +105,10 @@ enum GGUFMetadataCache {
 
     static func tensorFlags(at path: String) -> GGUFTensorFlags {
         guard let key = fileKey(for: path) else {
-            return GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false)
+            return GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false,
+                                   hasExpertScaleTensor: false,
+                                   expertBytesPerLayer: 0, otherBytesPerLayer: 0,
+                                   hasUnsupportedDraftStage: false)
         }
 
         lock.lock()
@@ -175,7 +209,10 @@ enum GGUFMetadataCache {
     }
 
     private static func parseTensorFlags(at path: String) -> GGUFTensorFlags {
-        let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false)
+        let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false,
+                                    hasExpertScaleTensor: false,
+                                    expertBytesPerLayer: 0, otherBytesPerLayer: 0,
+                                    hasUnsupportedDraftStage: false)
         guard let data = readPrefix(at: path, limit: 32 * 1024 * 1024) else { return empty }
         var cursor = GGUFDataCursor(data: data)
         guard cursor.readBytes(count: 4) == Data([0x47, 0x47, 0x55, 0x46]),
@@ -192,19 +229,35 @@ enum GGUFMetadataCache {
         var hasNextN = false
         var hasTurboQuant = false
         var hasBF16 = false
+        var hasExpertScale = false
+        var hasDraftStage = false
+        var expertBytes: UInt64 = 0
+        var otherBytes: UInt64 = 0
         for _ in 0..<tensorCount {
             guard let name = cursor.readString(maxLength: 1 << 20),
                   let dimensions = cursor.readUInt32(), dimensions <= 8 else { return empty }
-            guard cursor.skip(count: Int(dimensions) * 8),
-                  let tensorType = cursor.readUInt32(),
+            var elements: UInt64 = 1
+            for _ in 0..<Int(dimensions) {
+                guard let extent = cursor.readUInt64() else { return empty }
+                elements &*= max(1, extent)
+            }
+            guard let tensorType = cursor.readUInt32(),
                   cursor.readUInt64() != nil else { return empty }
+            if name.hasPrefix("blk.0.") {
+                let bytes = UInt64(Double(elements) * ggufBytesPerElement(tensorType))
+                if name.contains("_exps.") { expertBytes &+= bytes } else { otherBytes &+= bytes }
+            }
             hasNextN = hasNextN || name.contains(".nextn.")
             hasTurboQuant = hasTurboQuant || tensorType == 45 || tensorType == 46
             hasBF16 = hasBF16 || tensorType == 30
+            if name.hasSuffix("_exps.scale") { hasExpertScale = true }
+            if name.hasPrefix("selector_") || name.hasSuffix("_conv_proj.weight") { hasDraftStage = true }
         }
 
         return GGUFTensorFlags(hasNextNTensor: hasNextN, hasTurboQuantTensor: hasTurboQuant,
-                               hasBF16Tensor: hasBF16)
+                               hasBF16Tensor: hasBF16, hasExpertScaleTensor: hasExpertScale,
+                               expertBytesPerLayer: expertBytes, otherBytesPerLayer: otherBytes,
+                               hasUnsupportedDraftStage: hasDraftStage)
     }
 }
 

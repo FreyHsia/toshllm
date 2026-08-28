@@ -1,0 +1,84 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -6822,16 +6822,27 @@
+ 
+     for (int i = 0; i < NE; i++) {
+         dst[i*NW + lane] = reg[i];
+     }
+ }
+ 
+ typedef decltype(kernel_fwht_f32<64>) kernel_fwht_t;
+ 
++// A tensor split can leave a device an empty slice of a weight. Its matmul contributes
++// nothing, but the destination still enters the sum across devices, so it must read zero.
++kernel void kernel_zero_bytes(
++        device char             * dst,
++        constant uint64_t       & n,
++        uint tpig[[thread_position_in_grid]]) {
++    if (tpig < n) {
++        dst[tpig] = 0;
++    }
++}
++
+ template [[host_name("kernel_fwht_f32_64")]]  kernel kernel_fwht_t kernel_fwht_f32<64>;
+ template [[host_name("kernel_fwht_f32_128")]] kernel kernel_fwht_t kernel_fwht_f32<128>;
+ template [[host_name("kernel_fwht_f32_256")]] kernel kernel_fwht_t kernel_fwht_f32<256>;
+ template [[host_name("kernel_fwht_f32_512")]] kernel kernel_fwht_t kernel_fwht_f32<512>;
+ 
+ template [[host_name("kernel_fwht_f32_64_w64")]]  kernel kernel_fwht_t kernel_fwht_f32<64,  64>;
+ template [[host_name("kernel_fwht_f32_128_w64")]] kernel kernel_fwht_t kernel_fwht_f32<128, 64>;
+ template [[host_name("kernel_fwht_f32_256_w64")]] kernel kernel_fwht_t kernel_fwht_f32<256, 64>;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -295,16 +295,49 @@
+                     GGML_LOG_DEBUG("%s: node[%5d] - %-12s %s\n", __func__, idx, ggml_op_name(node->op), "(noop)");
+                 }
+             } return 1;
+         default:
+             {
+             } break;
+     }
+ 
++    // A tensor split hands a device an empty slice when the weight has fewer whole
++    // quantization blocks than there are devices. The op then contributes nothing, but
++    // its result still enters the sum across devices, so write zeros rather than abort.
++    if (!ggml_is_empty(node)) {
++        bool empty_src = false;
++        for (int i = 0; i < GGML_MAX_SRC; i++) {
++            if (node->src[i] && ggml_is_empty(node->src[i])) {
++                empty_src = true;
++                break;
++            }
++        }
++        if (empty_src && (node->op == GGML_OP_MUL_MAT || node->op == GGML_OP_MUL_MAT_ID)) {
++            if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++                return 1;
++            }
++            ggml_metal_pipeline_with_params pz = ggml_metal_library_get_pipeline(ctx->lib, "kernel_zero_bytes");
++            if (!pz.pipeline) {
++                ggml_metal_cv_t cv = ggml_metal_cv_init();
++                pz = ggml_metal_library_compile_pipeline(ctx->lib, "kernel_zero_bytes", "kernel_zero_bytes", cv);
++                ggml_metal_cv_free(cv);
++            }
++            if (pz.pipeline) {
++                const uint64_t n = ggml_nbytes(node);
++                const int nth = std::min<int>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pz));
++                ggml_metal_encoder_set_pipeline(ctx->enc, pz);
++                ggml_metal_encoder_set_buffer  (ctx->enc, ggml_metal_get_buffer_id(node), 0);
++                ggml_metal_encoder_set_bytes   (ctx->enc, (void *) &n, sizeof(n), 1);
++                ggml_metal_encoder_dispatch_threadgroups(ctx->enc, (int) ((n + nth - 1)/nth), 1, 1, nth, 1, 1);
++                return 1;
++            }
++        }
++    }
++
+     if (!ggml_metal_device_supports_op(ctx->dev, node)) {
+         GGML_LOG_ERROR("%s: error: unsupported op '%s'\n", __func__, ggml_op_desc(node));
+         GGML_ABORT("unsupported op");
+     }
+ 
+     if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+         return 1;
+     }

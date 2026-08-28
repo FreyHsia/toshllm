@@ -38,7 +38,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
     @AppStorage(SettingsKeys.mgpuEvents) private var mgpuEvents = true
-    @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = false
+    @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = true
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
     @AppStorage(SettingsKeys.embeddings) private var embeddings = false
     @AppStorage(SettingsKeys.forcePrivateBuffers) private var forcePrivateBuffers = false
@@ -515,11 +515,11 @@ struct SettingsView: View {
                                      "Fast hand-off between GPUs"), isOn: $mgpuEvents)
                             .infoTip(loc.t("Pasa los datos de una GPU a otra sin vaciar las colas de las dos en cada copia. Repartiendo por capas no cambia nada; repartiendo por tensores es la mayor parte de la velocidad de generación (medido +59% en dos GPUs). Apágalo solo para diagnosticar.",
                                         "Hands data from one GPU to the other without draining both queues on every copy. It changes nothing when splitting by layers; when splitting by tensors it is most of the generation speed (measured +59% on two GPUs). Turn it off only to diagnose."))
-                        Toggle(loc.t("Infinity Fabric Link entre GPUs (experimental)",
-                                     "Infinity Fabric Link between GPUs (experimental)"), isOn: $mgpuPeer)
+                        Toggle(loc.t("Infinity Fabric Link entre GPUs",
+                                     "Infinity Fabric Link between GPUs"), isOn: $mgpuPeer)
                             .disabled(!hasPeerLink)
-                            .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Acelera el procesamiento del prompt. Repartiendo por tensores se usa solo donde gana, leyendo el prompt, y el traspaso rápido se queda con la generación. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
-                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo, or two cards joined by the external bridge), copies activations directly between them instead of through system RAM. Speeds up prompt processing. When splitting by tensors it is used only where it wins, reading the prompt, and the fast hand-off keeps generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
+                            .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Repartiendo por tensores acelera la lectura del prompt un 16% sin costar generación, medido en cuatro Radeon Pro Vega II. Necesita el traspaso rápido encendido: por sí solo baja la generación a la mitad. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
+                                        "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo, or two cards joined by the external bridge), copies activations directly between them instead of through system RAM. When splitting by tensors it reads the prompt 16% faster at no cost to generation, measured on four Radeon Pro Vega II. It needs the fast hand-off on: on its own it halves generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
                         if !hasPeerLink {
                             Label(loc.t("No se detecta ningún puente entre estas GPUs, así que no hay nada que activar. Metal las pondría en un mismo grupo de pares si lo hubiera.",
                                         "No bridge is detected between these GPUs, so there is nothing to turn on. Metal would put them in the same peer group if there were one."),

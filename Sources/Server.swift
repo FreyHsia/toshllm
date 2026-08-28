@@ -149,10 +149,10 @@ struct ServerSettings {
     /// draining both queues on every copy (TOSH_MGPU_EVENTS). Inert on a layer
     /// split; on a tensor split it is most of the generation speed.
     var mgpuEvents: Bool = true
-    /// EXPERIMENTAL opt-in: when two split GPUs share a Metal peer group (Infinity
-    /// Fabric Link, e.g. a W6800X/Vega II Duo), copy activations die-to-die instead
-    /// of via host (TOSH_MGPU_PEER). Wins the prefill; unset falls back to staging.
-    var mgpuPeer: Bool = false
+    /// When two split GPUs share a Metal peer group (Infinity Fabric Link, e.g. a
+    /// W6800X/Vega II Duo), copy activations die-to-die instead of via host
+    /// (TOSH_MGPU_PEER). Worth 16% of the prefill, and only safe alongside mgpuEvents.
+    var mgpuPeer: Bool = true
     /// Force VRAM-resident (private) Metal buffers. The backend forces shared ones
     /// for external GPUs, which streams weights over Thunderbolt every op; this
     /// covers the default-GPU case, where the app can't tell macOS picked an eGPU.
@@ -177,8 +177,61 @@ struct ServerSettings {
     /// One model served across several GPUs, either by the all/N toggle or by an
     /// explicit selection of at least two cards.
     var isSplitting: Bool { multiGPU || gpuList.count >= 2 }
-    /// Guards against a stale or hand-edited value: llama.cpp only takes these two.
-    var effectiveSplitMode: String { splitMode == "tensor" ? "tensor" : "layer" }
+    /// Guards against a stale or hand-edited value: llama.cpp only takes these two,
+    /// and a tensor split the model cannot take falls back instead of aborting.
+    var effectiveSplitMode: String {
+        (splitMode == "tensor" && tensorSplitLimit.map { splitDeviceCount <= $0 } != false) ? "tensor" : "layer"
+    }
+
+    /// GPUs the split will span, matching how the launch environment picks them.
+    var splitDeviceCount: Int {
+        if gpuList.count >= 2 { return gpuList.count }
+        guard multiGPU else { return 1 }
+        let gpus = ServerController.availableGPUs()
+        let discrete = gpus.filter { !$0.isIntegrated }.count
+        let limit = discrete > 0 ? discrete : gpus.count
+        return max(2, multiGPUCount > 0 ? min(multiGPUCount, limit) : limit)
+    }
+
+    /// Layer counts per GPU that even out the bytes rather than the layer count.
+    /// `--n-cpu-moe` empties the experts of the first N layers, and llama.cpp still hands
+    /// out layers by index, so without this the last GPUs take every expert and overflow.
+    var layerBalancedTensorSplit: [Int]? {
+        guard isSplitting, effectiveSplitMode == "layer", ncmoe > 0 else { return nil }
+        let devices = splitDeviceCount
+        guard devices >= 2 else { return nil }
+        let flags = GGUFMetadataCache.tensorFlags(at: modelPath)
+        let expert = Double(flags.expertBytesPerLayer)
+        let other = Double(flags.otherBytesPerLayer)
+        guard expert > 0, other > 0,
+              let blocks = Self.ggufUInt32("block_count", at: modelPath).map(Int.init),
+              blocks >= devices else { return nil }
+
+        let weights = (0..<blocks).map { $0 < ncmoe ? other : other + expert }
+        let target = weights.reduce(0, +) / Double(devices)
+        var counts = [Int](repeating: 0, count: devices)
+        var dev = 0
+        var acc = 0.0
+        for (il, w) in weights.enumerated() {
+            // leave at least one layer for each device still waiting
+            let mustAdvance = blocks - il == devices - dev
+            if dev < devices - 1 && (mustAdvance || (acc + w/2 > target && counts[dev] > 0)) {
+                dev += 1
+                acc = 0
+            }
+            counts[dev] += 1
+            acc += w
+        }
+        return counts.allSatisfy { $0 > 0 } ? counts : nil
+    }
+
+    /// GPUs this model's experts can be divided among, nil when nothing limits it.
+    var tensorSplitLimit: Int? { Self.tensorSplitLimit(forModel: modelPath) }
+
+    /// The user asked for a tensor split the model cannot take; the run uses layers.
+    var tensorSplitDowngraded: Bool {
+        splitMode == "tensor" && isSplitting && effectiveSplitMode == "layer"
+    }
 
     var isMultimodal: Bool { Self.mmprojPath(forModel: modelPath) != nil }
     /// Vision actually loaded (projector available AND the eye is on); slot
@@ -286,6 +339,9 @@ struct ServerSettings {
         if parallelSlots > 1 { args.append("--kv-unified") }
         // Which devices to split across is decided by the env vars below.
         if isSplitting { args += ["--split-mode", effectiveSplitMode] }
+        if let counts = layerBalancedTensorSplit {
+            args += ["--tensor-split", counts.map(String.init).joined(separator: ",")]
+        }
         if embeddings { args.append("--embeddings") }
         if agentToolsEnabled {
             if !args.contains("--jinja") { args.append("--jinja") }
@@ -487,6 +543,9 @@ struct ServerSettings {
             args += ["-fa", "auto"]
         }
         if isSplitting { args += ["--split-mode", effectiveSplitMode] }
+        if let counts = layerBalancedTensorSplit {
+            args += ["--tensor-split", counts.map(String.init).joined(separator: ",")]
+        }
         return args
     }
 
@@ -1091,6 +1150,13 @@ struct ServerSettings {
         GGUFMetadataCache.metadata(at: path)?.string(for: key)
     }
 
+    /// GPUs a tensor split can divide this model's experts among. Experts whose scales
+    /// sit in their own tensor span two buffers, which the meta backend cannot divide.
+    nonisolated static func tensorSplitLimit(forModel path: String) -> Int? {
+        guard !path.isEmpty else { return nil }
+        return GGUFMetadataCache.tensorFlags(at: path).hasExpertScaleTensor ? 1 : nil
+    }
+
     /// True when the model is a Mixture-of-Experts (GGUF `<arch>.expert_count` > 0).
     /// Gates the `--n-cpu-moe` control, which a dense model ignores.
     nonisolated static func modelIsMoE(at path: String) -> Bool {
@@ -1176,7 +1242,9 @@ struct ServerSettings {
         let url = URL(fileURLWithPath: modelPath)
         let stem = url.deletingPathExtension().lastPathComponent
         let path = url.deletingLastPathComponent().appendingPathComponent("\(stem).dflash.gguf").path
-        return FileManager.default.fileExists(atPath: path) ? path : nil
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        // A draft the engine only half-builds takes the server down on load, so ignore it.
+        return GGUFMetadataCache.tensorFlags(at: path).hasUnsupportedDraftStage ? nil : path
     }
 
     nonisolated static func dflashMode(forModel modelPath: String) -> DflashMode {
@@ -1611,6 +1679,9 @@ final class ServerController: ObservableObject {
             : "ncmoe=\(settings.ncmoe)"
         var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
         if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
+        if settings.tensorSplitDowngraded {
+            gpuSel += " (tensor needs \(settings.splitDeviceCount) way split of experts this model only divides \(settings.tensorSplitLimit ?? 1) ways)"
+        }
         return """
         ========================================================
          ToshLLM \(AppInfo.version) — server start (\(ServerSettings.isAppleSilicon ? "arm64" : "x86_64")\(AppInfo.isNoAVX2 ? " · no-AVX2 build" : ""))
@@ -1721,6 +1792,9 @@ final class ServerController: ObservableObject {
         let tail = log.suffix(6000).lowercased()
         if tail.contains("unknown model architecture") || tail.contains("unknown architecture") {
             return "Arquitectura no soportada por este motor / model architecture not supported by this engine"
+        }
+        if tail.contains("split_mode_tensor not implemented for architecture") {
+            return "Esta arquitectura no admite el reparto por tensores: cámbialo a por capas en Ajustes / this architecture has no tensor split: switch to by layers in Settings"
         }
         if tail.contains("address already in use") || tail.contains("couldn't bind") {
             return "Puerto ocupado: cambia el puerto en Ajustes / port busy: change it in Settings"

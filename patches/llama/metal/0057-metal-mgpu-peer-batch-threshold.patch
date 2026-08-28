@@ -1,0 +1,61 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -563,18 +563,32 @@
+     //ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
+ 
+     //ggml_metal_buffer_t buf_ctx_src = (ggml_metal_buffer_t)buf_src->context;
+     //ggml_metal_buffer_t buf_ctx_dst = (ggml_metal_buffer_t)buf_dst->context;
+ 
+     return ggml_metal_cpy_tensor_async_ex(ctx_src, ctx_dst, src, dst, prefer_events, hold_dst);
+ }
+ 
++// Peer costs a third of the decode, so it only pays from a batch up. Both the layer
++// hand-off below and the allreduce read the same threshold.
++static int64_t ggml_metal_peer_min_batch(void) {
++    static int64_t v = -1;
++    if (v < 0) {
++        const char * s = getenv("TOSH_MGPU_PEER_MIN_BATCH");
++        v = s ? atoll(s) : 32;
++    }
++    return v;
++}
++
+ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst) {
+-    return ggml_backend_metal_cpy_tensor_async_ex(backend_src, backend_dst, src, dst, /*prefer_events =*/ false, /*hold_dst =*/ false);
++    // A layer hand-off crosses one token at a time, which is the shape peer is worst at.
++    const int64_t batch = src->ne[0] > 0 ? ggml_nelements(src)/src->ne[0] : 1;
++    const bool prefer_events = batch < ggml_metal_peer_min_batch();
++    return ggml_backend_metal_cpy_tensor_async_ex(backend_src, backend_dst, src, dst, prefer_events, /*hold_dst =*/ false);
+ }
+ 
+ static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+     ggml_metal_t ctx = (ggml_metal_t)backend->context;
+ 
+     return ggml_metal_graph_compute(ctx, cgraph);
+ }
+ 
+@@ -1046,22 +1060,17 @@
+         ggml_metal_t ctx = (ggml_metal_t) comm_ctx->backends[i]->context;
+         if (!ggml_metal_add_inplace_supported(ctx, tensors[i], &tmp[i])) {
+             return false;
+         }
+     }
+ 
+     // The peer copy has the higher bandwidth and the event hand-off the lower fixed cost, so
+     // the batch decides: peer wins the prefill, events the decode.
+-    static int64_t peer_min_batch = -1;
+-    if (peer_min_batch < 0) {
+-        const char * v = getenv("TOSH_MGPU_PEER_MIN_BATCH");
+-        peer_min_batch = v ? atoll(v) : 32;
+-    }
+-    const bool prefer_events = ne / tensors[0]->ne[0] < peer_min_batch;
++    const bool prefer_events = ne / tensors[0]->ne[0] < ggml_metal_peer_min_batch();
+ 
+     // the add goes into the command buffer the copy already opened; kill switch because that
+     // buffer stays open between the two calls
+     static int fuse = -1;
+     if (fuse < 0) {
+         fuse = getenv("TOSH_MGPU_FUSE_ADD_DISABLE") == NULL ? 1 : 0;
+     }
+     const bool hold_dst = fuse == 1;

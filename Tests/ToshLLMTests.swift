@@ -2512,3 +2512,12 @@ final class ModelNameTests: XCTestCase {
         XCTAssertEqual(EngineCheck.binaryPath(serverBinary: "/a/bin/llama-server"), "/a/bin/test-backend-ops")
     }
 }
+
+extension ServerSettingsTests {
+    @MainActor func testDiagnoseExplainsAnArchitectureWithoutTensorSplit() {
+        let log = "llama_model_load: error loading model: LLAMA_SPLIT_MODE_TENSOR not implemented for architecture 'deepseek4'"
+        let hint = ServerController.diagnose(log, exitCode: 1)
+        XCTAssertTrue(hint.contains("por capas"), hint)
+        XCTAssertTrue(hint.contains("by layers"), hint)
+    }
+}

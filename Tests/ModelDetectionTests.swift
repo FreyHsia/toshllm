@@ -389,4 +389,112 @@ final class ModelDetectionTests: XCTestCase {
         }
         try data.write(to: url)
     }
+
+    func testTensorSplitIsRefusedOnlyForExpertsWithASeparateScale() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Few blocks per expert is fine: the engine zeroes the empty slice instead of aborting.
+        let fewBlocks = dir.appendingPathComponent("moe-q4k.gguf")
+        try writeGGUFWithExpertDown(to: fewBlocks, ne0: 512, typeID: 12)
+        XCTAssertNil(ServerSettings.tensorSplitLimit(forModel: fewBlocks.path))
+
+        // A companion scale tensor spans two buffers, which the meta backend cannot divide.
+        let scaled = dir.appendingPathComponent("moe-scaled.gguf")
+        try writeGGUFWithExpertDown(to: scaled, ne0: 704, typeID: 39, withScale: true)
+        XCTAssertEqual(ServerSettings.tensorSplitLimit(forModel: scaled.path), 1)
+
+        let dense = dir.appendingPathComponent("dense.gguf")
+        try writeGGUF(to: dense, uint32: ["llama.block_count": 24])
+        XCTAssertNil(ServerSettings.tensorSplitLimit(forModel: dense.path))
+    }
+
+    func testTensorSplitFallsBackToLayersWhenTheModelCannotTakeIt() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let model = dir.appendingPathComponent("moe-scaled.gguf")
+        try writeGGUFWithExpertDown(to: model, ne0: 704, typeID: 39, withScale: true)
+
+        var settings = ServerSettings(
+            serverBinary: "/usr/bin/true", modelPath: model.path, port: 8080,
+            ngl: 99, ncmoe: 0, ctx: 4_096, threads: 6, flashAttn: "auto",
+            noMmap: true, jinja: true, vramReserveMB: 1_024, gpuIndex: -1,
+            extraArgs: "", cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
+        settings.splitMode = "tensor"
+        settings.gpuList = [0, 1]
+        XCTAssertEqual(settings.effectiveSplitMode, "layer",
+                       "Splitting a two-buffer expert would abort the engine while allocating")
+        XCTAssertTrue(settings.tensorSplitDowngraded)
+    }
+
+
+    func testLayerSplitIsBalancedByBytesWhenExpertsGoToTheCPU() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 40 blocks whose experts weigh far more than the rest of the layer.
+        let model = dir.appendingPathComponent("moe.gguf")
+        try writeGGUFWithExpertDown(to: model, ne0: 2048, typeID: 12, blockCount: 40)
+
+        var settings = ServerSettings(
+            serverBinary: "/usr/bin/true", modelPath: model.path, port: 8080,
+            ngl: 99, ncmoe: 20, ctx: 4_096, threads: 6, flashAttn: "auto",
+            noMmap: true, jinja: true, vramReserveMB: 1_024, gpuIndex: -1,
+            extraArgs: "", cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
+        settings.gpuList = [0, 1]
+
+        let counts = try XCTUnwrap(settings.layerBalancedTensorSplit)
+        XCTAssertEqual(counts.reduce(0, +), 40, "Every layer still lands on some GPU")
+        XCTAssertGreaterThan(counts[0], counts[1],
+                             "The GPU holding the layers whose experts went to the CPU takes more of them")
+        XCTAssertTrue(counts.allSatisfy { $0 > 0 })
+
+        settings.ncmoe = 0
+        XCTAssertNil(settings.layerBalancedTensorSplit,
+                     "With every expert on the GPU the layers already weigh the same")
+    }
+
+    private func writeGGUFWithExpertDown(
+        to url: URL, ne0: UInt64, typeID: UInt32, withScale: Bool = false, blockCount: UInt32 = 1
+    ) throws {
+        var data = Data("GGUF".utf8)
+        func appendUInt32(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func appendUInt64(_ value: UInt64) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func appendString(_ value: String) {
+            appendUInt64(UInt64(value.utf8.count))
+            data.append(contentsOf: value.utf8)
+        }
+        func appendTensor(_ name: String, _ ne: [UInt64], _ type: UInt32) {
+            appendString(name)
+            appendUInt32(UInt32(ne.count))
+            ne.forEach(appendUInt64)
+            appendUInt32(type)
+            appendUInt64(0)
+        }
+
+        appendUInt32(3)
+        appendUInt64(withScale ? 3 : 2)
+        appendUInt64(2)
+        appendString("qwen3moe.expert_count")
+        appendUInt32(4)
+        appendUInt32(128)
+        appendString("qwen3moe.block_count")
+        appendUInt32(4)
+        appendUInt32(blockCount)
+        appendTensor("blk.0.ffn_down_exps.weight", [ne0, 2048, 128], typeID)
+        appendTensor("blk.0.attn_output.weight", [2048, 2048], typeID)
+        if withScale { appendTensor("blk.0.ffn_down_exps.scale", [128], 0) }
+        try data.write(to: url)
+    }
 }

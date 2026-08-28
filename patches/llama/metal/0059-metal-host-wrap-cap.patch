@@ -1,0 +1,39 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1305,24 +1305,30 @@
+     // wrong ceiling: on a discrete GPU it rejects the exact oversized models this cache exists to
+     // serve. The device's maximum *single buffer* size is the real structural constraint. Keep the
+     // aggregate limit only as an explicit laboratory/debug override.
+     if (len > dev->props.max_buffer_size) {
+         [dev->wrap_lock unlock];
+         return NULL;
+     }
+ 
++    // Left uncapped, a large MoE offload maps its whole host-resident expert set here and the
++    // device stops granting any new shared buffer: measured failing a 1.21 GiB allocation with
++    // 142.75 GiB wrapped against a 34.34 GiB working set. The cap costs no speed (measured
++    // identical at 8 and 16 GiB) and sends the overflow to the bounded staging ring instead.
++    // GGML_METAL_HOST_WRAP_LIMIT_MB overrides it; 0 restores the uncapped behaviour.
++    size_t limit = (size_t) dev->props.max_working_set_size;
+     const char * limit_mb = getenv("GGML_METAL_HOST_WRAP_LIMIT_MB");
+     if (limit_mb != NULL) {
+-        const size_t limit = (size_t) strtoull(limit_mb, NULL, 10)*1024*1024;
+-        if (len > limit || dev->host_wrap_bytes > limit - len) {
+-            [dev->wrap_lock unlock];
+-            return NULL;
+-        }
++        limit = (size_t) strtoull(limit_mb, NULL, 10)*1024*1024;
+     }
++    if (limit > 0 && (len > limit || dev->host_wrap_bytes > limit - len)) {
++        [dev->wrap_lock unlock];
++        return NULL;
++    }
+ 
+     id<MTLBuffer> buf = [dev->mtl_device newBufferWithBytesNoCopy:(void *) base
+                                                            length:len
+                                                           options:MTLResourceStorageModeShared
+                                                       deallocator:nil];
+     if (buf == nil) {
+         [dev->wrap_lock unlock];
+         return NULL;
