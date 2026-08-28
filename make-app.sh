@@ -13,7 +13,13 @@ if [ -n "$TOSH_VERSION" ]; then
     echo "$VERSION" > VERSION
 elif [ -z "$CI" ] && [ "$TOSH_NO_BUMP" != "1" ]; then
     VERSION=$(<VERSION)
-    VERSION="${VERSION%.*}.$(( ${VERSION##*.} + 1 ))"
+    # a two-component version opens its patch series (0.86 -> 0.86.1) instead of
+    # bumping the minor, which is what incrementing its last component would do
+    if [ "${VERSION//[^.]/}" = "." ]; then
+        VERSION="$VERSION.1"
+    else
+        VERSION="${VERSION%.*}.$(( ${VERSION##*.} + 1 ))"
+    fi
     echo "$VERSION" > VERSION
 else
     VERSION=$(<VERSION)
