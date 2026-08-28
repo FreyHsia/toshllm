@@ -121,6 +121,12 @@ struct SettingsView: View {
         ServerSettings.mmprojPath(forModel: modelPath) != nil
     }
     private var splitSelection: [Int] { ServerSettings.gpuList(fromCSV: gpuListCSV) }
+    /// GPUs the split will actually use, which is what decides whether a tensor split
+    /// still holds its generation speed.
+    private var splitTargetCount: Int {
+        if splitSelection.count >= 2 { return splitSelection.count }
+        return multiGPUCount > 0 ? min(multiGPUCount, hardware.gpus.count) : hardware.gpus.count
+    }
     /// macOS exposes the bridge nowhere else: linked GPUs share a Metal peer group.
     private var hasPeerLink: Bool { !hardware.peerGroups.isEmpty }
     private func toggleSplitGPU(_ i: Int) {
@@ -525,7 +531,14 @@ struct SettingsView: View {
                                         "No bridge is detected between these GPUs, so there is nothing to turn on. Metal would put them in the same peer group if there were one."),
                                   systemImage: "info.circle")
                                 .font(.caption).foregroundStyle(.secondary)
-                        } else if mgpuPeer && splitMode != "tensor" {
+                        }
+                        if splitMode == "tensor" && splitTargetCount > 2 {
+                            Label(loc.t("Con más de dos GPUs el reparto por tensores lee el prompt casi el doble de rápido, pero genera más lento: cada capa obliga a las GPUs a esperarse y esa espera crece con cada GPU que añades. Medido en cuatro Vega II: 207 contra 109 leyendo, 13.2 contra 16.2 generando. Con dos GPUs no pierde nada.",
+                                        "With more than two GPUs a tensor split reads the prompt almost twice as fast but generates slower: every layer makes the GPUs wait for each other, and that wait grows with each GPU you add. Measured on four Vega II: 207 against 109 reading, 13.2 against 16.2 generating. With two GPUs it loses nothing."),
+                                  systemImage: "info.circle")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        if mgpuPeer && splitMode != "tensor" {
                             Label(loc.t("Con reparto por capas no hace nada: el puente acelera la reducción que solo existe repartiendo por tensores.",
                                         "With a layer split it does nothing: the bridge speeds up the reduction that only exists when splitting by tensors."),
                                   systemImage: "info.circle")

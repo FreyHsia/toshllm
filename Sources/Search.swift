@@ -195,9 +195,6 @@ final class SearchStore: ObservableObject {
         // key; newer converters emit `dflash.target_layer_ids`, which won't load.
         let draftURL = downloadURL(repo: repo, file: best.0)
         guard await Self.headerContains(draftURL, "dflash.target_layers") else { return nil }
-        // Selector-stage drafts carry convolution and selector tensors the engine has no
-        // loader for; it builds part of the file and then aborts on the tensor count.
-        guard await !Self.headerContains(draftURL, "dflash.selector_rank") else { return nil }
         return DraftInfo(repo: repo, file: best.0, sizeBytes: best.1)
     }
 

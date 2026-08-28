@@ -3,6 +3,28 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Qwen3.8-Flash-Next now runs.** The 176B mixture-of-experts model writes at 20.3 tokens/s splitting by layers, or reads at 265 splitting by tensors, still reading at 221 and writing at 15.5 at an 8k context. Measured on the UD-Q2_K_XL build across two Radeon Pro Vega II with every expert on the cards. Thanks to [Chris Hafey](https://github.com/chafey) for the hardware.
+- **Newer DFlash drafts are supported.** The second-generation drafts the previous engine could not load now work.
+- **Very large models can now be split by tensors.** A card whose share of the weights outgrew one Metal buffer stopped the engine; Qwen3.8-Flash-Next reads 2.4 times faster this way.
+
+### Improved
+
+- **Transcription is faster.** Whisper's encoder gains 10% on a Radeon RX 6700 XT and 5% on a Radeon Pro Vega II.
+- **Fixes and improvements to speculative decoding.** How much a draft gains depends on how predictable the text is: up to 12% on repetitive content, and it steps aside on content it cannot predict.
+- **The GPU panel now says whether the Infinity Fabric bridge is being used**, not just whether it exists, and the tooltip explains why when it is idle. macOS reports a bridge as connected without saying which cards it joins.
+- **Splitting by tensors now warns what it costs.** Above two GPUs it reads prompts far faster but writes slower, and the note carries the measured figures.
+
+### Fixed
+
+- **Models that ship in several files are read whole.** Only the first file was inspected, and it carries no tensors, so the app saw an empty model: multi-GPU splits went unbalanced and speculative heads went unnoticed. Every large mixture-of-experts model ships this way.
+- **Speculative drafts no longer appear as models to run.** They were filtered by file name, so drafts named like a normal model reached the picker.
+- **The Infinity Fabric switch now matches what it does.** It read as off while the switch showed on, and it is applied only where it helps.
+- **Z-Image and Flux now run on cards without bfloat.** Their shared autoencoder was the bf16 copy, which such a card cannot compute on at all, so generation stopped on its first tensor. Reported by [Slice](https://www.insanelymac.com/forum/profile/112217-slice/).
+
 ## [0.85.10] - 2026-08-28
 
 ### Improved

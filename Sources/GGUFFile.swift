@@ -94,7 +94,12 @@ enum GGUFFile {
     /// A DFlash or MTP speculative-decoding draft.
     static func isDraft(_ path: String) -> Bool {
         let name = URL(fileURLWithPath: path).lastPathComponent.lowercased()
-        return name.contains("dflash") || name.hasPrefix("mtp-") || name.hasSuffix(".mtp.gguf")
+        if name.contains("dflash") || name.hasPrefix("mtp-") || name.hasSuffix(".mtp.gguf") {
+            return true
+        }
+        // Drafts ship under many names, so the name alone lets them into the picker.
+        // The architecture is what says it is one.
+        return GGUFMetadataCache.metadata(at: path)?.string(for: "general.architecture") == "dflash"
     }
 
     private static func isModelFile(_ path: String) -> Bool {

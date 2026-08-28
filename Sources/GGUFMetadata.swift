@@ -40,9 +40,6 @@ struct GGUFTensorFlags: Sendable {
     /// `--n-cpu-moe` moves only the expert half, which is what unbalances a layer split.
     let expertBytesPerLayer: UInt64
     let otherBytesPerLayer: UInt64
-    /// A DFlash draft with the convolution and selector stages the engine has no loader for:
-    /// it reads the file, builds only part of it and aborts on the tensor count.
-    let hasUnsupportedDraftStage: Bool
 }
 
 
@@ -107,8 +104,7 @@ enum GGUFMetadataCache {
         guard let key = fileKey(for: path) else {
             return GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false,
                                    hasExpertScaleTensor: false,
-                                   expertBytesPerLayer: 0, otherBytesPerLayer: 0,
-                                   hasUnsupportedDraftStage: false)
+                                   expertBytesPerLayer: 0, otherBytesPerLayer: 0)
         }
 
         lock.lock()
@@ -208,11 +204,51 @@ enum GGUFMetadataCache {
         return GGUFMetadata(strings: strings, integerValues: integerValues)
     }
 
+    /// The other files of a split GGUF, in order. The first part carries the metadata and no
+    /// tensors at all, so a scan that stops there sees an empty model.
+    private static func splitSiblings(of path: String) -> [String] {
+        let name = (path as NSString).lastPathComponent
+        guard name.hasSuffix(".gguf") else { return [] }
+        let stem = String(name.dropLast(5))
+        // <base>-00001-of-000NN
+        let parts = stem.components(separatedBy: "-of-")
+        guard parts.count == 2, let total = Int(parts[1]), total > 1,
+              let dash = parts[0].lastIndex(of: "-") else { return [] }
+        let base = String(parts[0][parts[0].startIndex..<dash])
+        let dir = (path as NSString).deletingLastPathComponent
+        return (1...total).map {
+            (dir as NSString).appendingPathComponent(String(format: "%@-%05d-of-%05d.gguf", base, $0, total))
+        }
+    }
+
     private static func parseTensorFlags(at path: String) -> GGUFTensorFlags {
         let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false,
                                     hasExpertScaleTensor: false,
-                                    expertBytesPerLayer: 0, otherBytesPerLayer: 0,
-                                    hasUnsupportedDraftStage: false)
+                                    expertBytesPerLayer: 0, otherBytesPerLayer: 0)
+
+        let siblings = splitSiblings(of: path)
+        if siblings.count > 1 {
+            var merged = empty
+            for part in siblings where FileManager.default.fileExists(atPath: part) {
+                let flags = parseTensorFlagsOne(at: part)
+                merged = GGUFTensorFlags(
+                    hasNextNTensor: merged.hasNextNTensor || flags.hasNextNTensor,
+                    hasTurboQuantTensor: merged.hasTurboQuantTensor || flags.hasTurboQuantTensor,
+                    hasBF16Tensor: merged.hasBF16Tensor || flags.hasBF16Tensor,
+                    hasExpertScaleTensor: merged.hasExpertScaleTensor || flags.hasExpertScaleTensor,
+                    expertBytesPerLayer: merged.expertBytesPerLayer &+ flags.expertBytesPerLayer,
+                    otherBytesPerLayer: merged.otherBytesPerLayer &+ flags.otherBytesPerLayer)
+            }
+            return merged
+        }
+
+        return parseTensorFlagsOne(at: path)
+    }
+
+    private static func parseTensorFlagsOne(at path: String) -> GGUFTensorFlags {
+        let empty = GGUFTensorFlags(hasNextNTensor: false, hasTurboQuantTensor: false, hasBF16Tensor: false,
+                                    hasExpertScaleTensor: false,
+                                    expertBytesPerLayer: 0, otherBytesPerLayer: 0)
         guard let data = readPrefix(at: path, limit: 32 * 1024 * 1024) else { return empty }
         var cursor = GGUFDataCursor(data: data)
         guard cursor.readBytes(count: 4) == Data([0x47, 0x47, 0x55, 0x46]),
@@ -230,7 +266,6 @@ enum GGUFMetadataCache {
         var hasTurboQuant = false
         var hasBF16 = false
         var hasExpertScale = false
-        var hasDraftStage = false
         var expertBytes: UInt64 = 0
         var otherBytes: UInt64 = 0
         for _ in 0..<tensorCount {
@@ -251,13 +286,11 @@ enum GGUFMetadataCache {
             hasTurboQuant = hasTurboQuant || tensorType == 45 || tensorType == 46
             hasBF16 = hasBF16 || tensorType == 30
             if name.hasSuffix("_exps.scale") { hasExpertScale = true }
-            if name.hasPrefix("selector_") || name.hasSuffix("_conv_proj.weight") { hasDraftStage = true }
         }
 
         return GGUFTensorFlags(hasNextNTensor: hasNextN, hasTurboQuantTensor: hasTurboQuant,
                                hasBF16Tensor: hasBF16, hasExpertScaleTensor: hasExpertScale,
-                               expertBytesPerLayer: expertBytes, otherBytesPerLayer: otherBytes,
-                               hasUnsupportedDraftStage: hasDraftStage)
+                               expertBytesPerLayer: expertBytes, otherBytesPerLayer: otherBytes)
     }
 }
 

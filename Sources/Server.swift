@@ -621,7 +621,9 @@ struct ServerSettings {
             env["GGML_METAL_SHARED_BUFFERS_DISABLE"] = "1"
         }
         if effectiveFaAmd { env["TOSH_FA_AMD"] = "1" }
-        if mgpuPeer && isSplitting { env["TOSH_MGPU_PEER"] = "1" }
+        // Only a tensor split reduces across cards, which is the copy the bridge speeds up.
+        // A layer split has nothing for it to carry.
+        if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" { env["TOSH_MGPU_PEER"] = "1" }
         if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
@@ -765,7 +767,7 @@ struct ServerSettings {
             multiGPUCount: int(SettingsKeys.multiGPUCount, 0),
             splitMode: d.string(forKey: SettingsKeys.splitMode) ?? "layer",
             mgpuEvents: bool(SettingsKeys.mgpuEvents, true),
-            mgpuPeer: bool(SettingsKeys.mgpuPeer, false),
+            mgpuPeer: bool(SettingsKeys.mgpuPeer, true),
             forcePrivateBuffers: bool(SettingsKeys.forcePrivateBuffers, false),
             cacheReuse: bool(SettingsKeys.cacheReuse, true),
             loadVision: bool(SettingsKeys.loadVision, true),
@@ -1243,8 +1245,7 @@ struct ServerSettings {
         let stem = url.deletingPathExtension().lastPathComponent
         let path = url.deletingLastPathComponent().appendingPathComponent("\(stem).dflash.gguf").path
         guard FileManager.default.fileExists(atPath: path) else { return nil }
-        // A draft the engine only half-builds takes the server down on load, so ignore it.
-        return GGUFMetadataCache.tensorFlags(at: path).hasUnsupportedDraftStage ? nil : path
+        return path
     }
 
     nonisolated static func dflashMode(forModel modelPath: String) -> DflashMode {

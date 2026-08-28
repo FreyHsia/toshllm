@@ -49,8 +49,8 @@ cp "$SWIFT_BIN" "$APP/Contents/MacOS/ToshLLM"
 LLAMA_STATIC="vendor/llama.cpp/build-static/bin"
 [ -x "$LLAMA_STATIC/llama-server" ] || LLAMA_STATIC="$HOME/dev/repositorios/llama.cpp/build-static/bin"
 if [ -x "$LLAMA_STATIC/llama-server" ]; then
-    if [ ! -f "$LLAMA_STATIC/default.metallib" ]; then
-        echo "ERROR: llama.cpp default.metallib is required; rebuild the engines" >&2
+    if [ ! -d "$LLAMA_STATIC/kernels" ]; then
+        echo "ERROR: the precompiled kernels/ metal libraries are required; rebuild the engines" >&2
         exit 1
     fi
     mkdir -p "$APP/Contents/Resources/bin"
@@ -61,7 +61,7 @@ if [ -x "$LLAMA_STATIC/llama-server" ]; then
     if [ -f "$LLAMA_STATIC/test-backend-ops" ]; then
         cp "$LLAMA_STATIC/test-backend-ops" "$APP/Contents/Resources/bin/"
     fi
-    cp "$LLAMA_STATIC/default.metallib" "$APP/Contents/Resources/bin/"
+    cp -R "$LLAMA_STATIC/kernels" "$APP/Contents/Resources/bin/"
     echo "bundled static llama-server/llama-bench from $LLAMA_STATIC"
 else
     echo "WARNING: engines not built; run ./scripts/build-engines.sh first"
@@ -207,7 +207,7 @@ for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"*
     fi
 done
 
-[ -x "$APP/Contents/Resources/bin/llama-server" ] && codesign --force -s - "$APP/Contents/Resources/bin/"*
+[ -x "$APP/Contents/Resources/bin/llama-server" ] && codesign --force -s - "$APP/Contents/Resources/bin/"*(.)
 [ -x "$APP/Contents/Resources/bin-image/sd-cli" ] && codesign --force -s - "$APP/Contents/Resources/bin-image/"*
 [ -x "$APP/Contents/Resources/bin-audio/whisper-cli" ] && codesign --force -s - "$APP/Contents/Resources/bin-audio/"*
 codesign --force -s - "$APP"

@@ -123,10 +123,11 @@ struct ImageGenModel: Identifiable {
 }
 
 enum ImageGenCatalog {
-    /// Non-gated FLUX autoencoder mirror, shared by Z-Image and Flux.
+    /// Non-gated FLUX autoencoder mirror, shared by Z-Image and Flux. The f16 copy: a GPU
+    /// without bfloat cannot run any op on bf16 weights and generation stops on the first.
     private static func fluxVAE(_ name: String) -> ImageGenComponent {
         ImageGenComponent(kind: .vae,
-            urlString: "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/ae_bf16.safetensors",
+            urlString: "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/ae-f16.gguf",
             fileName: name, sizeGB: 0.16)
     }
 
@@ -165,7 +166,7 @@ enum ImageGenCatalog {
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_0.gguf",
                 fileName: "z_image_turbo-Q4_0.gguf", sizeGB: 3.5),
-            fluxVAE("z_image_ae.safetensors"),
+            fluxVAE("z_image_ae-f16.gguf"),
             ImageGenComponent(kind: .textEncoder,
                 urlString: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                 fileName: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", sizeGB: 2.4),
@@ -183,7 +184,7 @@ enum ImageGenCatalog {
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_0.gguf",
                 fileName: "flux1-schnell-Q4_0.gguf", sizeGB: 6.4),
-            fluxVAE("flux_ae.safetensors"),
+            fluxVAE("flux_ae-f16.gguf"),
             ImageGenComponent(kind: .t5,
                 urlString: "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
                 fileName: "t5-v1_1-xxl-encoder-Q4_K_M.gguf", sizeGB: 2.76),

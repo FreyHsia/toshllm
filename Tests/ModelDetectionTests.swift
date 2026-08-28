@@ -461,8 +461,74 @@ final class ModelDetectionTests: XCTestCase {
                      "With every expert on the GPU the layers already weigh the same")
     }
 
+    func testLayerSplitIsBalancedOnASplitGGUF() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // A split GGUF keeps every tensor out of the first part, which holds only metadata.
+        let first = dir.appendingPathComponent("moe-00001-of-00002.gguf")
+        let second = dir.appendingPathComponent("moe-00002-of-00002.gguf")
+        try writeGGUFWithExpertDown(to: first, ne0: 2048, typeID: 12, blockCount: 40, tensors: false)
+        try writeGGUFWithExpertDown(to: second, ne0: 2048, typeID: 12, blockCount: 40)
+
+        var settings = ServerSettings(
+            serverBinary: "/usr/bin/true", modelPath: first.path, port: 8080,
+            ngl: 99, ncmoe: 20, ctx: 4_096, threads: 6, flashAttn: "auto",
+            noMmap: true, jinja: true, vramReserveMB: 1_024, gpuIndex: -1,
+            extraArgs: "", cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
+        settings.gpuList = [0, 1]
+
+        let counts = try XCTUnwrap(settings.layerBalancedTensorSplit,
+                                   "The scan has to follow the other parts or the split stays uniform")
+        XCTAssertEqual(counts.reduce(0, +), 40)
+        XCTAssertGreaterThan(counts[0], counts[1])
+    }
+
+    func testDraftsAreKeptOutOfThePickerByArchitecture() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Named like a normal model: only the architecture says it is a draft.
+        let draft = dir.appendingPathComponent("Qwen3.6-35B-A3B-dspark-Q8_0.gguf")
+        try writeGGUFWithArchitecture("dflash", to: draft)
+        let model = dir.appendingPathComponent("Qwen3.6-35B-A3B-Q8_0.gguf")
+        try writeGGUFWithArchitecture("qwen3moe", to: model)
+
+        XCTAssertTrue(GGUFFile.isDraft(draft.path), "un borrador no puede aparecer como modelo")
+        XCTAssertFalse(GGUFFile.isDraft(model.path))
+
+        let found = LocalModel.scan(in: dir).map(\.name)
+        XCTAssertEqual(found, ["Qwen3.6-35B-A3B-Q8_0.gguf"])
+    }
+
+    private func writeGGUFWithArchitecture(_ arch: String, to url: URL) throws {
+        var data = Data("GGUF".utf8)
+        func appendUInt32(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func appendUInt64(_ value: UInt64) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func appendString(_ value: String) {
+            appendUInt64(UInt64(value.utf8.count))
+            data.append(contentsOf: value.utf8)
+        }
+        appendUInt32(3)
+        appendUInt64(0)          // sin tensores
+        appendUInt64(1)          // una clave
+        appendString("general.architecture")
+        appendUInt32(8)          // string
+        appendString(arch)
+        try data.write(to: url)
+    }
+
     private func writeGGUFWithExpertDown(
-        to url: URL, ne0: UInt64, typeID: UInt32, withScale: Bool = false, blockCount: UInt32 = 1
+        to url: URL, ne0: UInt64, typeID: UInt32, withScale: Bool = false, blockCount: UInt32 = 1,
+        tensors: Bool = true
     ) throws {
         var data = Data("GGUF".utf8)
         func appendUInt32(_ value: UInt32) {
@@ -484,7 +550,7 @@ final class ModelDetectionTests: XCTestCase {
         }
 
         appendUInt32(3)
-        appendUInt64(withScale ? 3 : 2)
+        appendUInt64(tensors ? (withScale ? 3 : 2) : 0)
         appendUInt64(2)
         appendString("qwen3moe.expert_count")
         appendUInt32(4)
@@ -492,9 +558,11 @@ final class ModelDetectionTests: XCTestCase {
         appendString("qwen3moe.block_count")
         appendUInt32(4)
         appendUInt32(blockCount)
-        appendTensor("blk.0.ffn_down_exps.weight", [ne0, 2048, 128], typeID)
-        appendTensor("blk.0.attn_output.weight", [2048, 2048], typeID)
-        if withScale { appendTensor("blk.0.ffn_down_exps.scale", [128], 0) }
+        if tensors {
+            appendTensor("blk.0.ffn_down_exps.weight", [ne0, 2048, 128], typeID)
+            appendTensor("blk.0.attn_output.weight", [2048, 2048], typeID)
+            if withScale { appendTensor("blk.0.ffn_down_exps.scale", [128], 0) }
+        }
         try data.write(to: url)
     }
 }

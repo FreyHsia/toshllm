@@ -1,6 +1,6 @@
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -9559,21 +9559,55 @@
+@@ -9050,21 +9050,55 @@
      const int32_t i0 = (n - i3*args.ne2*args.ne1*args.ne0 - i2*args.ne1*args.ne0 - i1*args.ne0);
  
      device T1 * dst_data = (device T1 *) (dst + i3*args.nb3 + i2*args.nb2 + i1*args.nb1 + i0*args.nb0);
@@ -72,7 +72,7 @@
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_2d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows          (ggml_metal_library_t lib, enum ggml_type tsrc);
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows          (ggml_metal_library_t lib, const struct ggml_tensor * op, bool wave64);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows          (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_diag              (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_repeat            (ggml_metal_library_t lib, enum ggml_type tsrc);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_concat            (ggml_metal_library_t lib, enum ggml_type tsrc);
@@ -105,7 +105,7 @@
      return res;
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -691,17 +691,17 @@
+@@ -677,17 +677,17 @@
      const bool inplace = (bool) ((const int32_t *) op->op_params)[4];
  
      if (!inplace) {
@@ -124,7 +124,7 @@
              /*.ne02 =*/ ne02,
              /*.ne03 =*/ ne03,
              /*.nb00 =*/ nb00,
-@@ -2046,17 +2046,17 @@
+@@ -1995,17 +1995,17 @@
      const bool inplace = (bool) ((const int32_t *) op->op_params)[4];
  
      if (!inplace) {
@@ -143,7 +143,7 @@
              /*.ne02 =*/ ne02,
              /*.ne03 =*/ ne03,
              /*.nb00 =*/ nb00,
-@@ -2080,17 +2080,17 @@
+@@ -2029,17 +2029,17 @@
  
          const int nth = std::min(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), ne00);
  
@@ -162,7 +162,7 @@
          nk0 = ne10/16;
      } else if (ggml_is_quantized(op->type)) {
          nk0 = ne10/ggml_blck_size(op->type);
-@@ -2155,18 +2155,47 @@
+@@ -2104,18 +2104,49 @@
      ggml_metal_library_t lib = ctx->lib;
      ggml_metal_encoder_t enc = ctx->enc;
  
@@ -172,6 +172,8 @@
      GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
  
 -    auto pipeline = ggml_metal_library_get_pipeline_cpy(lib, op->src[0]->type, op->type);
++    // a fully contiguous copy is one flat range: the generic kernel spends its instructions
++    // recomputing 4-D indices for every element instead
 +    const bool contig = ggml_blck_size(op->src[0]->type) == 1 && ggml_blck_size(op->type) == 1 &&
 +                        ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op) &&
 +                        getenv("TOSH_CPY_CONTIG_DISABLE") == nullptr;
@@ -179,7 +181,7 @@
 +    if (contig) {
 +        const int64_t n = ggml_nelements(op);
 +
-+        ggml_metal_kargs_cpy args = {
++        ggml_metal_kargs_cpy args_contig = {
 +            /*.nk0  =*/ n,
 +            /*.ne00 =*/ ne00, /*.ne01 =*/ ne01, /*.ne02 =*/ ne02, /*.ne03 =*/ ne03,
 +            /*.nb00 =*/ nb00, /*.nb01 =*/ nb01, /*.nb02 =*/ nb02, /*.nb03 =*/ nb03,
@@ -187,16 +189,16 @@
 +            /*.nb0  =*/ nb0,  /*.nb1  =*/ nb1,  /*.nb2  =*/ nb2,  /*.nb3  =*/ nb3,
 +        };
 +
-+        auto pipeline = ggml_metal_library_get_pipeline_cpy(lib, op->src[0]->type, op->type, true);
++        auto pipeline_contig = ggml_metal_library_get_pipeline_cpy(lib, op->src[0]->type, op->type, true);
 +
-+        const int nth = std::min<int>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
++        const int nth_contig = std::min<int>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline_contig));
 +
-+        ggml_metal_encoder_set_pipeline(enc, pipeline);
-+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_pipeline(enc, pipeline_contig);
++        ggml_metal_encoder_set_bytes   (enc, &args_contig, sizeof(args_contig), 0);
 +        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
 +        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
 +
-+        ggml_metal_encoder_dispatch_threadgroups(enc, (n + nth - 1)/nth, 1, 1, nth, 1, 1);
++        ggml_metal_encoder_dispatch_threadgroups(enc, (n + nth_contig - 1)/nth_contig, 1, 1, nth_contig, 1, 1);
 +
 +        return 1;
 +    }
@@ -205,9 +207,9 @@
 +
      GGML_ASSERT(ne00 % ggml_blck_size(op->src[0]->type) == 0);
  
-     const auto is_turbo = [](ggml_type t) {
-         return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0;
-     };
- 
      int64_t nk0 = ne00;
-     if (is_turbo(op->src[0]->type)) {
+     if (ggml_is_quantized(op->src[0]->type)) {
+         nk0 = ne00/16;
+     } else if (ggml_is_quantized(op->type)) {
+         nk0 = ne00/ggml_blck_size(op->type);
+     }

@@ -577,6 +577,10 @@ struct MachineCard: View {
 
 /// Per-GPU VRAM bars. Owns the 3s-polling monitor so its ticks re-render only this card.
 struct GPUsCard: View {
+    @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = true
+    @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
+    @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
+    @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
     @EnvironmentObject var vram: VRAMMonitor
     @EnvironmentObject var loc: Localizer
 
@@ -631,12 +635,21 @@ struct GPUsCard: View {
         }
     }
 
+    /// The bridge only carries anything when the split is by tensors and the toggle is on:
+    /// a layer split never reduces across cards, so the link sits idle.
+    private var peerInUse: Bool {
+        let splitting = multiGPU || ServerSettings.gpuList(fromCSV: gpuListCSV).count >= 2
+        return splitting && mgpuPeer && splitMode == "tensor"
+    }
+
     @ViewBuilder private func peerBadge(for g: GPUStat) -> some View {
         let labels = peerLabels
         // Nothing on unlinked cards: the row tooltip spells that out.
         if let label = labels[g.peerGroupID] {
-            capsule(labels.count > 1 ? "Fabric \(label)" : "Fabric",
-                    icon: "link", tint: peerColors[g.peerGroupID] ?? .accentColor)
+            let name = labels.count > 1 ? "Fabric \(label)" : "Fabric"
+            capsule(peerInUse ? name : loc.t("\(name) · sin usar", "\(name) · unused"),
+                    icon: peerInUse ? "link" : "link.badge.plus",
+                    tint: peerInUse ? (peerColors[g.peerGroupID] ?? .accentColor) : .secondary)
         }
     }
 
@@ -659,8 +672,23 @@ struct GPUsCard: View {
                                    " No Infinity Fabric link: its copies go through system RAM.")
         }
         let peers = vram.gpus.filter { $0.peerGroupID == g.peerGroupID }.count
-        return vramUse + loc.t(" Enlazada por Infinity Fabric con otras \(peers - 1) GPUs (grupo \(label)), así que se copian activaciones entre ellas sin pasar por la RAM.",
-                               " Linked by Infinity Fabric to \(peers - 1) other GPUs (group \(label)), so they copy activations between themselves without going through RAM.")
+        let linked = vramUse + loc.t(" Enlazada por Infinity Fabric con otras \(peers - 1) GPUs (grupo \(label)).",
+                                     " Linked by Infinity Fabric to \(peers - 1) other GPUs (group \(label)).")
+        if peerInUse {
+            return linked + loc.t(" Se están copiando activaciones entre ellas sin pasar por la RAM.",
+                                  " Activations are being copied between them without going through RAM.")
+        }
+        let splitting = multiGPU || ServerSettings.gpuList(fromCSV: gpuListCSV).count >= 2
+        if !splitting {
+            return linked + loc.t(" No se usa: el modelo no está repartido entre varias GPUs.",
+                                  " Unused: the model is not split across several GPUs.")
+        }
+        if splitMode != "tensor" {
+            return linked + loc.t(" No se usa: el reparto por capas no reduce entre tarjetas, así que no hay nada que copiar por el puente.",
+                                  " Unused: a layer split does not reduce across cards, so there is nothing for the bridge to carry.")
+        }
+        return linked + loc.t(" No se usa: el puente está apagado en Ajustes.",
+                              " Unused: the bridge is turned off in Settings.")
     }
 }
 

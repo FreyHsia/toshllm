@@ -1386,6 +1386,27 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"])
     }
 
+    func testMultiGPUDefaultsReachTheEngine() {
+        // The picker shows both on; the server has to hand the engine the same thing.
+        let defaults = ServerSettings.fromDefaults()
+        XCTAssertTrue(defaults.mgpuEvents, "el traspaso rápido es la mayor parte del tg por tensores")
+        XCTAssertTrue(defaults.mgpuPeer, "la casilla del puente aparece marcada, así que debe aplicarse")
+
+        var s = makeSettings()
+        s.multiGPU = true
+        s.mgpuEvents = true
+        s.mgpuPeer = true
+        s.splitMode = "tensor"
+        XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
+        XCTAssertEqual(s.environment["TOSH_MGPU_PEER"], "1")
+
+        // A layer split never reduces across cards, so the bridge must stay out of the way.
+        s.splitMode = "layer"
+        XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
+        XCTAssertNil(s.environment["TOSH_MGPU_PEER"],
+                     "el puente no aporta nada por capas y ahí solo añade presión de memoria")
+    }
+
     func testLocalNetworkDiscoveryBindsServerToAllInterfaces() {
         var s = makeSettings()
         s.localNetworkDiscovery = true
