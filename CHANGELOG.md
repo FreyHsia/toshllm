@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** The engine handed the weights to the GPU as system memory, so every token read them back across the bus: 1.6 tokens/s where the same model writes 58. A card without unified memory now keeps its own copy either way. Measured on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
+
 ## [0.86] - 2026-08-28
 
 ### Added

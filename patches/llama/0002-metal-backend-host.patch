@@ -7467,7 +7467,7 @@ index 159a628d0..b917fd34b 100644
  
  #ifdef __cplusplus
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 9756d4705..0445c30c6 100644
+index 9756d4705..ca47f3c60 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -1,14 +1,20 @@
@@ -7682,7 +7682,24 @@ index 9756d4705..0445c30c6 100644
      ggml_backend_t backend = (ggml_backend_t) malloc(sizeof(ggml_backend));
  
      *backend = {
-@@ -690,17 +749,17 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
+@@ -678,29 +737,33 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+ 
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_metal_device_get_name(dev);
+     props->description = ggml_backend_metal_device_get_description(dev);
+     props->type        = ggml_backend_metal_device_get_type(dev);
+ 
+     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+ 
++    // zero-copy only loses when the fallback would be private VRAM: on a discrete GPU a mapped weight buffer streams weights over PCIe on every access (~25x slower decode).
++    // eGPUs default to shared buffers (#17866), so their fallback is shared memory too and they keep zero-copy.
++    const ggml_metal_device_props * props_dev = ggml_metal_device_get_props((ggml_metal_device_t) dev->context);
++
+     props->caps = {
+         /* .async                = */ true,
+         /* .host_buffer          = */ false,
+-        /* .buffer_from_host_ptr = */ true,
++        /* .buffer_from_host_ptr = */ props_dev->has_unified_memory || props_dev->use_shared_buffers,
          /* .events               = */ true,
          /* .mmap_support         = */ true,
      };
@@ -7701,7 +7718,7 @@ index 9756d4705..0445c30c6 100644
      ggml_backend_t backend = (ggml_backend_t) malloc(sizeof(ggml_backend));
  
      *backend = {
-@@ -898,17 +957,250 @@ static int ggml_backend_metal_tuning_fa_vec_baseline_ne(int dk, int dv) {
+@@ -898,17 +961,250 @@ static int ggml_backend_metal_tuning_fa_vec_baseline_ne(int dk, int dv) {
  }
  
  static const char * ggml_backend_metal_tuning_device_token(ggml_backend_dev_t dev) {
@@ -7952,7 +7969,7 @@ index 9756d4705..0445c30c6 100644
      }
      if (strcmp(name, "ggml_backend_metal_tuning_clear_fa_vec_override") == 0) {
          return (void *)ggml_backend_metal_tuning_clear_fa_vec_override;
-@@ -966,26 +1258,41 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
+@@ -966,26 +1262,41 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
          static std::mutex mutex;
          std::lock_guard<std::mutex> lock(mutex);
  
