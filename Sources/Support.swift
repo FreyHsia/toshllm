@@ -29,6 +29,7 @@ enum SettingsKeys {
     static let audioFollowTranscript = "audioFollowTranscript"
     static let audioTranscriptMode = "audioTranscriptMode"
     static let audioExportTrack = "audioExportTrack"
+    static let subtitleStyle = "subtitleStyle"
     static let audioGlossary = "audioGlossary"
     static let audioTranslationModel = "audioTranslationModel"
     static let audioVADMode = "audioVADMode"

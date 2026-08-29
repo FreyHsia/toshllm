@@ -16,7 +16,8 @@ final class SubtitleVideoExporter: ObservableObject {
     private var session: AVAssetExportSession?
     private var progressTask: Task<Void, Never>?
 
-    func export(sourceURL: URL, cues: [SubtitleCue], outputURL: URL) {
+    func export(sourceURL: URL, cues: [SubtitleCue], outputURL: URL,
+                style: SubtitleStyle = .load()) {
         guard !isExporting, !cues.isEmpty else { return }
         isExporting = true
         progress = 0
@@ -24,7 +25,7 @@ final class SubtitleVideoExporter: ObservableObject {
         completedURL = nil
         Task {
             do {
-                try await performExport(sourceURL: sourceURL, cues: cues, outputURL: outputURL)
+                try await performExport(sourceURL: sourceURL, cues: cues, outputURL: outputURL, style: style)
                 progress = 1
                 completedURL = outputURL
             } catch {
@@ -43,7 +44,8 @@ final class SubtitleVideoExporter: ObservableObject {
         isExporting = false
     }
 
-    private func performExport(sourceURL: URL, cues: [SubtitleCue], outputURL: URL) async throws {
+    private func performExport(sourceURL: URL, cues: [SubtitleCue], outputURL: URL,
+                               style: SubtitleStyle) async throws {
         let asset = AVURLAsset(url: sourceURL)
         let composition = AVMutableComposition()
         let duration = try await asset.load(.duration)
@@ -69,7 +71,7 @@ final class SubtitleVideoExporter: ObservableObject {
         parentLayer.frame = CGRect(origin: .zero, size: size)
         videoLayer.frame = parentLayer.frame
         parentLayer.addSublayer(videoLayer)
-        cues.forEach { parentLayer.addSublayer(Self.subtitleLayer(for: $0, size: size)) }
+        cues.forEach { parentLayer.addSublayer(Self.subtitleLayer(for: $0, size: size, style: style)) }
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
             postProcessingAsVideoLayer: videoLayer, in: parentLayer
         )
@@ -98,20 +100,33 @@ final class SubtitleVideoExporter: ObservableObject {
         }
     }
 
-    nonisolated private static func subtitleLayer(for cue: SubtitleCue, size: CGSize) -> CALayer {
-        let layer = CATextLayer()
-        layer.string = cue.text
-        layer.alignmentMode = .center
-        layer.isWrapped = true
-        layer.contentsScale = 2
-        layer.fontSize = max(22, size.height * 0.038)
-        layer.foregroundColor = CGColor(gray: 1, alpha: 1)
-        layer.backgroundColor = CGColor(gray: 0, alpha: 0.72)
-        layer.cornerRadius = 8
-        let width = size.width * 0.86
-        let height = max(72, size.height * 0.16)
-        layer.frame = CGRect(x: (size.width - width) / 2, y: size.height * 0.06,
-                             width: width, height: height)
+    nonisolated private static func subtitleLayer(for cue: SubtitleCue, size: CGSize,
+                                                  style: SubtitleStyle) -> CALayer {
+        let l = SubtitleLayout.layout(text: cue.text, style: style, frame: size)
+        let text = CATextLayer()
+        text.string = l.attributed
+        text.alignmentMode = .center
+        text.isWrapped = true
+        text.contentsScale = 2
+
+        guard style.background == .box else {
+            text.frame = l.box.insetBy(dx: l.textInset, dy: l.textInset)
+            animate(text, cue: cue)
+            return text
+        }
+        let plate = CALayer()
+        plate.frame = l.box
+        plate.backgroundColor = CGColor(gray: 0, alpha: style.backgroundOpacity)
+        plate.cornerRadius = 8
+        text.frame = CGRect(x: l.textInset, y: l.textInset,
+                            width: l.box.width - l.textInset * 2,
+                            height: l.box.height - l.textInset * 2)
+        plate.addSublayer(text)
+        animate(plate, cue: cue)
+        return plate
+    }
+
+    nonisolated private static func animate(_ layer: CALayer, cue: SubtitleCue) {
         layer.opacity = 0
         let animation = CAKeyframeAnimation(keyPath: "opacity")
         animation.values = [0, 1, 1, 0]
@@ -121,6 +136,5 @@ final class SubtitleVideoExporter: ObservableObject {
         animation.isRemovedOnCompletion = false
         animation.fillMode = .both
         layer.add(animation, forKey: "visibility")
-        return layer
     }
 }

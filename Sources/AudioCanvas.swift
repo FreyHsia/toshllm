@@ -20,6 +20,7 @@ struct AudioCanvas: View {
     @State private var editing = false
     @State private var exportError = ""
     @State private var showExportError = false
+    @State private var stylingSubtitles = false
 
     private var exportFormat: AudioExportFormat {
         AudioExportFormat(rawValue: exportFormatRaw) ?? .srt
@@ -73,6 +74,11 @@ struct AudioCanvas: View {
         .onChange(of: videoExporter.completedURL) { _, url in
             guard let url else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        .sheet(isPresented: $stylingSubtitles) {
+            SubtitleStyleSheet(sourceURL: studio.sourceURL,
+                               cues: studio.exportCues(for: exportTrack))
+                .environmentObject(loc)
         }
     }
 
@@ -171,6 +177,8 @@ struct AudioCanvas: View {
                     Button(loc.t("Guardar subtítulos…", "Save subtitles…"),
                            systemImage: "doc.badge.arrow.up", action: exportResult)
                     if studio.isVideo {
+                        Button(loc.t("Apariencia de los subtítulos…", "Subtitle appearance…"),
+                               systemImage: "textformat") { stylingSubtitles = true }
                         Button(loc.t("Crear vídeo subtitulado…", "Create captioned video…"),
                                systemImage: "film", action: exportCaptionedVideo)
                             .disabled(videoExporter.isExporting)
