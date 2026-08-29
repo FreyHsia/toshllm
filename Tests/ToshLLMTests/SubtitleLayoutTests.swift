@@ -58,3 +58,20 @@ final class SubtitleLayoutTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(SubtitleStyle.self, from: data), s)
     }
 }
+
+extension SubtitleLayoutTests {
+    /// The chosen size has to survive across the slider's range; an internal cap
+    /// tighter than the screen made it stop responding on tall frames.
+    func testSizeSliderKeepsWorkingOnAPortraitFrame() {
+        let portrait = CGSize(width: 720, height: 1280)
+        let caption = "Y entonces le dije que no podíamos seguir así, que llevábamos meses dando vueltas al mismo asunto."
+        var previous = 0.0
+        for milli in stride(from: 20, through: 60, by: 5) {
+            var style = SubtitleStyle.default
+            style.relativeSize = Double(milli) / 1000
+            let size = SubtitleLayout.layout(text: caption, style: style, frame: portrait).pointSize
+            XCTAssertGreaterThan(size, previous, "the slider stopped responding at \(milli)")
+            previous = size
+        }
+    }
+}

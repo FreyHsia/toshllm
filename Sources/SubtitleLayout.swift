@@ -16,14 +16,13 @@ enum SubtitleLayout {
     }
 
     /// Text is measured, never assumed to fit: the box grows to what the string
-    /// needs, and only if it would pass `maxHeightFraction` does the size come
-    /// down. A fixed box silently clips the long captions.
-    static func layout(text: String, style: SubtitleStyle, frame: CGSize,
-                       maxHeightFraction: Double = 0.4) -> Result {
+    /// needs, and the size only comes down when the box would not fit on screen.
+    /// A tighter cap than the frame would quietly override the chosen size.
+    static func layout(text: String, style: SubtitleStyle, frame: CGSize) -> Result {
         let width = frame.width * style.maxWidth
         let inset = max(6, frame.height * 0.012)
         let textWidth = max(1, width - inset * 2)
-        let maxTextHeight = max(1, frame.height * maxHeightFraction - inset * 2)
+        let maxTextHeight = max(1, frame.height * (1 - style.margin) - inset * 2)
 
         var size = max(style.minPointSize, frame.height * style.relativeSize)
         var attributed = string(text, style: style, pointSize: size)

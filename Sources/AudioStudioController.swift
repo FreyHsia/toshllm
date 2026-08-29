@@ -525,7 +525,7 @@ final class AudioStudioController: ObservableObject {
         refreshVisibleCues()
         saveRecovery()
         guard !batches.isEmpty else {
-            transcriptMode = .translated
+            adoptTranslationInTranscriptMode()
             refreshVisibleCues()
             complete()
             return
@@ -557,7 +557,7 @@ final class AudioStudioController: ObservableObject {
                     SubtitleCue(id: $0.id, start: $0.start, end: $0.end,
                                 text: translated[$0.id] ?? $0.text)
                 }
-                self.transcriptMode = .translated
+                self.adoptTranslationInTranscriptMode()
                 self.refreshVisibleCues()
                 self.saveRecovery()
                 self.complete()
@@ -740,6 +740,12 @@ final class AudioStudioController: ObservableObject {
             return "[\(id)] \(sourceCue.text) => \(translatedText)"
         }.joined(separator: "\n")
         return memory.isEmpty ? neighboring : "CONSISTENCY MEMORY:\n\(memory)\n\nNEIGHBORING CONTEXT:\n\(neighboring)"
+    }
+
+    /// Finishing a translation must not undo the view the user chose; only a
+    /// transcript still showing the original alone has anywhere to move to.
+    private func adoptTranslationInTranscriptMode() {
+        if transcriptMode == .original { transcriptMode = .translated }
     }
 
     func setTranscriptMode(_ mode: AudioTranscriptMode) {
