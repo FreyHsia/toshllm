@@ -16,10 +16,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** It wrote 1.6 tokens/s where the same model now writes 58, on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
+- **Answers split across three or more cards can no longer come back silently wrong.** An exchange that failed midway through the sum was counted twice, and a card could be told the work was done while another was still reading its memory. Thanks to [Mallory M.](https://github.com/malzzz).
 - **Tooltips carrying a number or a name now translate.** Any text with a value in it stayed English in Japanese and Italian, whatever the language setting said. Reported by [playexit](https://github.com/playexit).
 - **Speculative drafts named DSpark stay out of the model list.** They are drafts, not models to run.
-
-- **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** It wrote 1.6 tokens/s where the same model now writes 58, on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
 
 ## [0.86] - 2026-08-28
 
