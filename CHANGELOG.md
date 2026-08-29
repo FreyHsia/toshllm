@@ -5,37 +5,42 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.86.1] - 2026-08-29
 
-### Added
+### LLMs
 
-#### Images
-- **Retouch one area of a photo instead of the whole frame.** Paint over the init image and only what you paint is regenerated: measured on a Radeon RX 6700 XT, the rest of the picture moves 5.3 against the 5.2 floor of the encode and decode round trip.
-- **A negative prompt.** It only takes effect above CFG 1, and the app says so on the models that ignore it.
-
-#### Video
-- **A negative prompt**, prefilled with the model's recommended one, which can be replaced or emptied.
-
-#### Audio
-- **The subtitles burned into a transcribed video can be styled and previewed before exporting.** Typeface, size, colour, box or outline, position and margins, shown over a real frame of your own clip with its longest caption.
-
-### Improved
-
-#### LLMs
+#### Improved
 - **Model menus group by family.** Every Qwen together, every Llama together, each ordered by size, with makers the app does not recognise under Others.
 
-### Fixed
-
-- **Tooltips carrying a number or a name now translate.** Any text with a value in it stayed English in Japanese and Italian, whatever the language setting said. Reported by [playexit](https://github.com/playexit).
-
-#### LLMs
+#### Fixed
 - **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** It wrote 1.6 tokens/s where the same model now writes 58, on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
 - **Answers split across three or more cards can no longer come back silently wrong.** An exchange that failed midway through the sum was counted twice, and a card could be told the work was done while another was still reading its memory. Thanks to [Mallory M.](https://github.com/malzzz).
 - **Speculative drafts named DSpark stay out of the model list.** They are drafts, not models to run.
 
-#### Audio
+### Images
+
+#### Added
+- **Retouch one area of a photo instead of the whole frame.** Paint over the init image and only what you paint is regenerated: measured on a Radeon RX 6700 XT, the rest of the picture moves 5.3 against the 5.2 floor of the encode and decode round trip.
+- **A negative prompt.** It only takes effect above CFG 1, and the app says so on the models that ignore it.
+
+### Video
+
+#### Added
+- **A negative prompt**, prefilled with the model's recommended one, which can be replaced or emptied.
+
+### Audio
+
+#### Added
+- **The subtitles burned into a transcribed video can be styled and previewed before exporting.** Typeface, size, colour, box or outline, position and margins, shown over a real frame of your own clip with its longest caption.
+
+#### Fixed
 - **Long subtitles are no longer cut off in the exported video.** The caption box was a fixed height, so anything that needed more lines than fitted was clipped. It now grows to the text, and shrinks the text only when it would not fit on screen.
 - **The subtitle size setting works across its whole range.** Below the middle of the slider every value rendered the same, because an internal floor was measured in points against a preview still rather than the video.
 - **A captioned video keeps the codec and the colour of the original.** An HEVC clip was re-encoded as H.264, and a wide-gamut or HDR one came back flattened.
 - **The transcript keeps the view you chose once a translation finishes.** It dropped to translation-only even with bilingual selected, and switching away and back was the only way to get it back.
+
+### Across the app
+
+#### Fixed
+- **Tooltips carrying a number or a name now translate.** Any text with a value in it stayed English in Japanese and Italian, whatever the language setting said. Reported by [playexit](https://github.com/playexit).
 
 ## [0.86] - 2026-08-28
 
