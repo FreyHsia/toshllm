@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - **Images: a custom model can now be a diffusion model, not just a full checkpoint.** Point the app at the diffusion file, its VAE and its text encoder, and models published that way (Z-Image, Flux 2, Qwen-Image) run like the catalogue ones.
+- **Audio: a translation model can be picked, and downloaded, from the Audio panel.** With no language model installed the panel now offers the catalogue instead of an engine button that could never start.
 
 ### Fixed
 

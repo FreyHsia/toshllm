@@ -10,6 +10,8 @@ struct AudioControls: View {
     @EnvironmentObject private var loc: Localizer
     @EnvironmentObject private var models: ModelStore
     @EnvironmentObject private var server: ServerController
+    @EnvironmentObject private var control: ControlPanelState
+    @Environment(\.openWindow) private var openWindow
 
     @AppStorage(SettingsKeys.whisperModel) private var whisperModelID = WhisperModel.recommendedID
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
@@ -24,6 +26,7 @@ struct AudioControls: View {
     @AppStorage(SettingsKeys.audioGlossary) private var glossary = ""
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
     @AppStorage(SettingsKeys.audioVADMode) private var vadModeRaw = AudioVADMode.defaultMode.rawValue
+    @AppStorage(SettingsKeys.ncmoe) private var ncmoe = 0
 
     private var model: WhisperModel { WhisperModel.model(id: whisperModelID) }
     private var operation: AudioStudioOperation {
@@ -137,15 +140,45 @@ struct AudioControls: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-        } else {
+        } else if models.models.isEmpty {
             LabeledContent(loc.t("Modelo traductor", "Translation model")) {
-                Text(modelPath.isEmpty ? loc.t("Sin modelo", "No model")
-                                       : ModelName.forPath(modelPath).title)
-                    .lineLimit(1)
+                Text(loc.t("Sin modelos", "No models")).lineLimit(1)
             }
-            .help(loc.t("En modo normal se usa el modelo actualmente cargado en Chat.",
-                        "In normal mode, Audio uses the model currently loaded in Chat."))
+            downloadModelButton
+        } else {
+            Picker(loc.t("Modelo traductor", "Translation model"), selection: $modelPath) {
+                Text(loc.t("Sin modelo", "No model")).tag("")
+                ForEach(ModelFamilyGroup.grouped(models.models)) { group in
+                    Section(group.isOther ? loc.t("Otros", "Others") : group.family) {
+                        ForEach(group.models) {
+                            Text(ModelName.forPath($0.url.path).display)
+                                .tag($0.url.path)
+                        }
+                    }
+                }
+            }
+            .disabled(server.state == .running || server.state == .starting)
+            // Selecting a model also seeds ncmoe so it never carries over stale
+            // from the previous one, same as the dashboard picker.
+            .onChange(of: modelPath) { _, path in
+                ncmoe = Estimator.ncmoeForSelection(path: path, models: models.models)
+            }
+            .help(loc.t("Modelo que traducirá los segmentos; es el mismo del Chat. Para cambiarlo hay que detener el motor.",
+                        "Model that will translate the segments; it is the same one Chat uses. Stop the engine to change it."))
         }
+    }
+
+    private var downloadModelButton: some View {
+        Button(loc.t("Descargar un modelo…", "Download a model…"),
+               systemImage: "arrow.down.circle", action: openModelCatalog)
+        .controlSize(.small)
+        .help(loc.t("Abre el catálogo para descargar un modelo de lenguaje, necesario para traducir.",
+                    "Opens the catalog to download a language model, which translating requires."))
+    }
+
+    private func openModelCatalog() {
+        control.section = .models
+        openWindow(id: "control")
     }
 
     @ViewBuilder
@@ -162,7 +195,14 @@ struct AudioControls: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
-                if !modelPath.isEmpty && server.state == .stopped {
+                if models.models.isEmpty {
+                    downloadModelButton
+                } else if modelPath.isEmpty {
+                    Text(loc.t("Elige un modelo traductor abajo para poder iniciarlo.",
+                               "Pick a translation model below to start it."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if server.state == .stopped {
                     Button(loc.t("Iniciar motor de chat", "Start chat engine"),
                            systemImage: "play.fill") {
                         server.start(.fromDefaults())
