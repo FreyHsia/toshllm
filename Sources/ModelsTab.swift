@@ -519,8 +519,7 @@ private struct MyModelsTab: View {
             }
 
             SectionHeader(icon: "internaldrive",
-                          title: loc.t("Archivos locales en \(modelsFolderShort)",
-                                       "Local files in \(modelsFolderShort)"),
+                          title: loc.t("Archivos locales en %@", "Local files in %@", "\(modelsFolderShort)"),
                           subtitle: nil)
             if !models.models.isEmpty {
                 GlassSegmentedControl(selection: $filter, segments: LocalFilter.allCases.map {
@@ -562,7 +561,7 @@ private struct MyModelsTab: View {
         .padding(16)
         .task { await modelUpdates.checkIfStale(models.models) }
         .confirmationDialog(
-            loc.t("¿Actualizar \(pendingUpdate?.name ?? "")?", "Update \(pendingUpdate?.name ?? "")?"),
+            loc.t("¿Actualizar %@?", "Update %@?", "\(pendingUpdate?.name ?? "")"),
             isPresented: Binding(get: { pendingUpdate != nil }, set: { if !$0 { pendingUpdate = nil } })
         ) {
             Button(loc.t("Descargar y reemplazar", "Download and replace")) {
@@ -575,7 +574,7 @@ private struct MyModelsTab: View {
                        "It is downloaded again from its repo and the current file is replaced once the checksum verifies. If the model is loaded, restart the server afterwards."))
         }
         .confirmationDialog(
-            loc.t("¿Eliminar \(pendingDelete?.name ?? "")?", "Delete \(pendingDelete?.name ?? "")?"),
+            loc.t("¿Eliminar %@?", "Delete %@?", "\(pendingDelete?.name ?? "")"),
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
         ) {
             Button(loc.t("Mover a la Papelera", "Move to Trash"), role: .destructive) {

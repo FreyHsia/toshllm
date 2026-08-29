@@ -41,7 +41,7 @@ struct ToolCallCard: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-        .accessibilityLabel(loc.t("Llamada a herramienta \(call.name)", "Tool call \(call.name)"))
+        .accessibilityLabel(loc.t("Llamada a herramienta %@", "Tool call %@", "\(call.name)"))
     }
 }
 

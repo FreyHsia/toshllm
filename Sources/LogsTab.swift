@@ -98,8 +98,7 @@ struct ServerLogView: View {
         VStack(spacing: 14) {
             ProgressView().controlSize(.large)
             Text(loc.t("Comprobando el motor…", "Checking the engine…")).font(.headline)
-            Text(loc.t("\(checker.testCount) operaciones probadas\(checker.currentOp.isEmpty ? "" : " · \(checker.currentOp)")",
-                       "\(checker.testCount) operations tested\(checker.currentOp.isEmpty ? "" : " · \(checker.currentOp)")"))
+            Text(loc.t("%@ operaciones probadas%@", "%@ operations tested%@", "\(checker.testCount)", "\(checker.currentOp.isEmpty ? "" : " · \(checker.currentOp)")"))
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             Text(loc.t("Tarda varios minutos. La pantalla puede ir a tirones mientras dura.",
                        "This takes several minutes. The screen may stutter while it runs."))
@@ -158,7 +157,7 @@ struct ServerLogView: View {
 
                 Spacer()
 
-                Text(loc.t("^[\(matchCount) línea](inflect: true)", "^[\(matchCount) line](inflect: true)"))
+                Text(loc.t("^[%@ línea](inflect: true)", "^[%@ line](inflect: true)", "\(matchCount)"))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
 
                 Button(copied ? loc.t("Copiado", "Copied") : loc.t("Copiar", "Copy"),

@@ -181,8 +181,8 @@ struct ServerStatsToolbar: View {
             Text(value.map { String(format: "%.0f", $0) } ?? "—")
                 .font(.system(size: 12, design: .monospaced).weight(.semibold))
         }
-        .help(loc.t("\(label): velocidad de la última petición en tokens por segundo.",
-                    "\(label): last request speed in tokens per second."))
+        .help(loc.t("%@: velocidad de la última petición en tokens por segundo.",
+                    "%@: last request speed in tokens per second.", label))
     }
 
     private var statusBadge: some View {

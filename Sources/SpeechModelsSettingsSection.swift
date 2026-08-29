@@ -70,8 +70,7 @@ struct SpeechModelsSettingsSection: View {
                 Button {
                     models.downloadWhisperModel(selected)
                 } label: {
-                    Label(loc.t("Descargar \(selected.name) (\(selected.sizeMB) MB)",
-                                "Download \(selected.name) (\(selected.sizeMB) MB)"),
+                    Label(loc.t("Descargar %@ (%@ MB)", "Download %@ (%@ MB)", "\(selected.name)", "\(selected.sizeMB)"),
                           systemImage: "arrow.down.circle")
                 }
                 .help(loc.t("Descarga el modelo seleccionado para usarlo con micrófono, audio y vídeo.",

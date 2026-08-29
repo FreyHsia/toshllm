@@ -32,7 +32,7 @@ struct QueuedMessageBanner: View {
     private var summary: String {
         let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = message.attachments.count + message.imageURIs.count
-        if text.isEmpty { return loc.t("\(files) adjunto(s)", "\(files) attachment(s)") }
-        return files == 0 ? text : loc.t("\(text) · \(files) adjunto(s)", "\(text) · \(files) attachment(s)")
+        if text.isEmpty { return loc.t("%@ adjunto(s)", "%@ attachment(s)", "\(files)") }
+        return files == 0 ? text : loc.t("%@ · %@ adjunto(s)", "%@ · %@ attachment(s)", "\(text)", "\(files)")
     }
 }

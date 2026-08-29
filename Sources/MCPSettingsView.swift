@@ -110,7 +110,7 @@ struct MCPSettingsSection: View {
                 testingID = nil
                 let count = tools.filter { $0.mcpServerID == server.id }.count
                 status[server.id] = count > 0
-                    ? loc.t("Conectado · \(count) herramientas", "Connected · \(count) tools")
+                    ? loc.t("Conectado · %@ herramientas", "Connected · %@ tools", "\(count)")
                     : loc.t("Sin herramientas o conexión fallida; revisa el registro.",
                             "No tools or connection failed; check the log.")
             }
@@ -144,7 +144,7 @@ private struct MCPServerEditor: View {
                     Text("SSE").tag(MCPTransport.serverSentEvents)
                     Text("WebSocket").tag(MCPTransport.webSocket)
                 }
-                Stepper(loc.t("Timeout: \(server.timeoutSeconds) s", "Timeout: \(server.timeoutSeconds) s"),
+                Stepper(loc.t("Timeout: %@ s", "Timeout: %@ s", "\(server.timeoutSeconds)"),
                         value: $server.timeoutSeconds, in: 5...600, step: 5)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(loc.t("Cabeceras HTTP (JSON, opcional)", "HTTP headers (optional JSON)"))

@@ -70,7 +70,7 @@ struct VoiceInputOptionsView: View {
                     Button {
                         models.downloadWhisperModel(selectedModel)
                     } label: {
-                        Label(loc.t("Descargar \(selectedModel.name)", "Download \(selectedModel.name)"),
+                        Label(loc.t("Descargar %@", "Download %@", "\(selectedModel.name)"),
                               systemImage: "arrow.down.circle")
                     }
                     .help(loc.t("Descarga este modelo de Whisper en el Mac.",

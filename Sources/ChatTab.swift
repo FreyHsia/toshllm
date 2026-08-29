@@ -164,8 +164,8 @@ struct ChatMainView: View {
                     Label(loc.t("Actualización", "Update"), systemImage: "arrow.down.app.fill")
                         .foregroundStyle(Color.appAccent)
                 }
-                .help(loc.t("ToshLLM \(version) disponible... instálala desde Configuración → Inicio.",
-                            "ToshLLM \(version) available... install it from Configuration → Home."))
+                .help(loc.t("ToshLLM %@ disponible... instálala desde Configuración → Inicio.",
+                            "ToshLLM %@ available... install it from Configuration → Home.", version))
             }
             Button {
                 NSWorkspace.shared.open(server.webChatURL)

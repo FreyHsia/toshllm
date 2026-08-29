@@ -61,6 +61,18 @@ final class Localizer: ObservableObject {
         }
     }
 
+    /// Same lookup for a string carrying values. Interpolating them into the
+    /// literal makes the key dynamic and the overlay never matches, so the key
+    /// keeps `%@` placeholders and the values go in after the lookup.
+    func t(_ es: String, _ en: String, _ args: String...) -> String {
+        var out = t(es, en)
+        for a in args {
+            guard let r = out.range(of: "%@") else { break }
+            out.replaceSubrange(r, with: a)
+        }
+        return out
+    }
+
     /// Native display name (autonym) for a language code, e.g. "Italiano".
     func displayName(_ code: String) -> String {
         switch code {

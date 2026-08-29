@@ -110,8 +110,7 @@ struct BenchmarkShareReviewSheet: View {
                                           value: String(format: "%.1f t/s", review.generationMedian),
                                           detail: runValues(review.generationRuns))
                 }
-                Text(loc.t("Mediana de \(review.repetitions) ejecuciones independientes · pp\(review.promptTokens) / tg\(review.generatedTokens)",
-                           "Median of \(review.repetitions) independent runs · pp\(review.promptTokens) / tg\(review.generatedTokens)"))
+                Text(loc.t("Mediana de %@ ejecuciones independientes · pp%@ / tg%@", "Median of %@ independent runs · pp%@ / tg%@", "\(review.repetitions)", "\(review.promptTokens)", "\(review.generatedTokens)"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

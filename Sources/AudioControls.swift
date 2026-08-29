@@ -277,8 +277,7 @@ struct AudioControls: View {
                 .controlSize(.small)
         case .ready(let count, let speech, let sample):
             VStack(alignment: .leading, spacing: 4) {
-                Label(loc.t("\(count) segmentos · \(Int(speech.rounded())) s de voz en \(Int(sample.rounded())) s",
-                            "\(count) segments · \(Int(speech.rounded())) s of speech in \(Int(sample.rounded())) s"),
+                Label(loc.t("%@ segmentos · %@ s de voz en %@ s", "%@ segments · %@ s of speech in %@ s", "\(count)", "\(Int(speech.rounded()))", "\(Int(sample.rounded()))"),
                       systemImage: count > 0 ? "checkmark.circle.fill" : "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(count > 0 ? Color.green : Color.orange)
@@ -317,13 +316,13 @@ struct AudioControls: View {
                         .help(loc.t("Continúa la descarga desde donde se pausó.",
                                     "Continues the download from where it paused."))
                 } else {
-                    Text(loc.t("Descargando \(model.name)…", "Downloading \(model.name)…"))
+                    Text(loc.t("Descargando %@…", "Downloading %@…", "\(model.name)"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         } else {
-            Button(loc.t("Descargar \(model.name)", "Download \(model.name)"),
+            Button(loc.t("Descargar %@", "Download %@", "\(model.name)"),
                    systemImage: "arrow.down.circle.fill") {
                 models.downloadWhisperModel(model)
             }
@@ -343,8 +342,7 @@ struct AudioControls: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     if let remaining = studio.remaining {
-                        Text(loc.t("~\(MediaTime.compact(remaining)) restantes",
-                                   "~\(MediaTime.compact(remaining)) left"))
+                        Text(loc.t("~%@ restantes", "~%@ left", "\(MediaTime.compact(remaining))"))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -401,8 +399,7 @@ struct AudioControls: View {
         case .analyzingVAD: loc.t("Analizando VAD…", "Analyzing VAD…")
         case .transcribing: loc.t("Whisper está transcribiendo…", "Whisper is transcribing…")
         case .translating:
-            loc.t("Traduciendo lote \(studio.translatedBatchCount + 1) de \(max(1, studio.translationBatchCount))…",
-                  "Translating batch \(studio.translatedBatchCount + 1) of \(max(1, studio.translationBatchCount))…")
+            loc.t("Traduciendo lote %@ de %@…", "Translating batch %@ of %@…", "\(studio.translatedBatchCount + 1)", "\(max(1, studio.translationBatchCount))")
         default: ""
         }
     }

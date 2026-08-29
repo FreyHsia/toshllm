@@ -175,10 +175,8 @@ struct SettingsView: View {
         case .cache:
             if let profile = dynamicMoeProfile {
                 return profile.route == .split
-                    ? loc.t("Auto usa el perfil optimizado dividido K\(profile.slots) + ring\(profile.ringSlots). El mapa seguirá adaptándose durante el uso.",
-                            "Auto uses the optimized split profile K\(profile.slots) + ring\(profile.ringSlots). The map keeps adapting during use.")
-                    : loc.t("Auto usa el perfil directo K\(profile.slots), porque el banco de expertos cabe en la ventana Metal.",
-                            "Auto uses the direct K\(profile.slots) profile because the expert bank fits in the Metal window.")
+                    ? loc.t("Auto usa el perfil optimizado dividido K%@ + ring%@. El mapa seguirá adaptándose durante el uso.", "Auto uses the optimized split profile K%@ + ring%@. The map keeps adapting during use.", "\(profile.slots)", "\(profile.ringSlots)")
+                    : loc.t("Auto usa el perfil directo K%@, porque el banco de expertos cabe en la ventana Metal.", "Auto uses the direct K%@ profile because the expert bank fits in the Metal window.", "\(profile.slots)")
             }
             return loc.t("Auto eligió caché dinámica: el modelo no cabe con margen en VRAM y hay RAM suficiente.",
                          "Auto selected dynamic cache: the model does not fit in VRAM with headroom and enough RAM is available.")
@@ -318,8 +316,7 @@ struct SettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let count = try SettingsArchive.importData(Data(contentsOf: url))
-            settingsTransferMessage = loc.t("Se importaron \(count) ajustes. Reinicia el servidor para aplicar los cambios del motor.",
-                                            "Imported \(count) settings. Restart the server to apply engine changes.")
+            settingsTransferMessage = loc.t("Se importaron %@ ajustes. Reinicia el servidor para aplicar los cambios del motor.", "Imported %@ settings. Restart the server to apply engine changes.", "\(count)")
         } catch {
             settingsTransferMessage = error.localizedDescription
         }
@@ -474,7 +471,7 @@ struct SettingsView: View {
                                     "Splits the model across all detected GPUs (--split-mode) instead of using one, e.g. to load a model that doesn't fit on a single card. Overrides the picker above."))
                     if multiGPU && hardware.gpus.count > 2 && splitSelection.count < 2 {
                         Picker(loc.t("GPUs a usar", "GPUs to use"), selection: $multiGPUCount) {
-                            Text(loc.t("Todas (\(hardware.gpus.count))", "All (\(hardware.gpus.count))")).tag(0)
+                            Text(loc.t("Todas (%@)", "All (%@)", "\(hardware.gpus.count)")).tag(0)
                             ForEach(2...hardware.gpus.count, id: \.self) { Text("\($0)").tag($0) }
                         }
                         .infoTip(loc.t("Cuántas GPUs repartir. Más GPUs = prompt más rápido; menos GPUs = generación más rápida (menos sincronización entre tarjetas).",
@@ -492,7 +489,7 @@ struct SettingsView: View {
                                 }
                             } label: {
                                 Text(splitSelection.count >= 2
-                                        ? loc.t("\(splitSelection.count) elegidas", "\(splitSelection.count) selected")
+                                        ? loc.t("%@ elegidas", "%@ selected", "\(splitSelection.count)")
                                         : loc.t("Todas", "All"))
                             }
                             .fixedSize()
@@ -555,13 +552,13 @@ struct SettingsView: View {
                         .infoTip(loc.t("El motor Metal usa memoria compartida (del sistema) en GPUs externas, lo que transfiere los pesos por Thunderbolt en cada operación y desploma la velocidad (~0.8 t/s). Esto fuerza buffers privados en VRAM. Si fijas una eGPU en el selector de arriba ya se activa solo; usa esto cuando dejas 'Predeterminada' y macOS elige la eGPU.",
                                     "The Metal backend uses shared (system) memory on external GPUs, which streams weights over Thunderbolt every op and tanks speed (~0.8 t/s). This forces private VRAM buffers. If you pin an eGPU in the picker above it's automatic; use this when you leave 'Default' and macOS picks the eGPU."))
                 }
-                Stepper(loc.t("Capas en GPU (-ngl): \(ngl)", "GPU layers (-ngl): \(ngl)"),
+                Stepper(loc.t("Capas en GPU (-ngl): %@", "GPU layers (-ngl): %@", "\(ngl)"),
                         value: $ngl, in: 0...99)
                     .infoTip(loc.t("Cuántas capas del modelo van a la GPU. 99 = todas (recomendado si caben en VRAM); bájalo solo si la VRAM se desborda.",
                                 "How many model layers go to the GPU. 99 = all (recommended if they fit in VRAM); lower it only if VRAM overflows."))
                 let modelIsMoE = modelPath.isEmpty || ServerSettings.modelIsMoE(at: modelPath)
                 Stepper(modelIsMoE
-                            ? loc.t("Expertos MoE en CPU: \(ncmoe)", "MoE experts on CPU: \(ncmoe)")
+                            ? loc.t("Expertos MoE en CPU: %@", "MoE experts on CPU: %@", "\(ncmoe)")
                             : loc.t("Expertos MoE en CPU: no aplica (modelo denso)", "MoE experts on CPU: N/A (dense model)"),
                         value: Binding(get: { ncmoe }, set: { v in
                             ncmoe = v
@@ -589,16 +586,14 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(dynamicMoeAutoRoute == .cache ? .orange : .secondary)
                             if dynamicMoeAutoRoute == .cache, let plan = dynamicMoeSlotPlan {
-                                Label(loc.t("Auto usa K\(plan.automaticSlots) de \(plan.maximumSlots) expertos por capa (top-\(plan.minimumSlots)); estimado \(gibLabel(plan.estimatedVRAMBytes(slots: plan.automaticSlots))) de VRAM.",
-                                            "Auto uses K\(plan.automaticSlots) of \(plan.maximumSlots) experts per layer (top-\(plan.minimumSlots)); estimated \(gibLabel(plan.estimatedVRAMBytes(slots: plan.automaticSlots))) VRAM."),
+                                Label(loc.t("Auto usa K%@ de %@ expertos por capa (top-%@); estimado %@ de VRAM.", "Auto uses K%@ of %@ experts per layer (top-%@); estimated %@ VRAM.", "\(plan.automaticSlots)", "\(plan.maximumSlots)", "\(plan.minimumSlots)", "\(gibLabel(plan.estimatedVRAMBytes(slots: plan.automaticSlots)))"),
                                       systemImage: "memorychip")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         } else {
                             if let info = dynamicMoeModelInfo {
                                 HStack {
-                                    Text(loc.t("Ranuras en VRAM (K, de \(info.expertCount))",
-                                               "VRAM slots (K, of \(info.expertCount))"))
+                                    Text(loc.t("Ranuras en VRAM (K, de %@)", "VRAM slots (K, of %@)", "\(info.expertCount)"))
                                     Spacer()
                                     TextField("", value: dynamicMoeSlotBinding,
                                               format: .number.grouping(.never))
@@ -609,18 +604,17 @@ struct SettingsView: View {
                                             in: info.activeExpertCount...info.expertCount)
                                         .labelsHidden()
                                 }
-                                    .infoTip(loc.t("K es por capa. El mínimo es el número de expertos activos por token (top-\(info.activeExpertCount)) y el máximo es el total real del GGUF (\(info.expertCount)).",
-                                                        "K is per layer. The minimum is the experts active per token (top-\(info.activeExpertCount)); the maximum is the GGUF's real total (\(info.expertCount))."))
+                                    .infoTip(loc.t("K es por capa. El mínimo es el número de expertos activos por token (top-%@) y el máximo es el total real del GGUF (%@).",
+                                                        "K is per layer. The minimum is the experts active per token (top-%@); the maximum is the GGUF's real total (%@).",
+                                                        String(info.activeExpertCount), String(info.expertCount)))
                                 if let plan = dynamicMoeSlotPlan {
                                     let overBudget = effectiveDynamicMoeSlots > plan.recommendedMaximumSlots
-                                    Label(loc.t("Estimación: \(gibLabel(plan.estimatedVRAMBytes(slots: effectiveDynamicMoeSlots))) · máximo recomendado K\(plan.recommendedMaximumSlots).",
-                                                "Estimate: \(gibLabel(plan.estimatedVRAMBytes(slots: effectiveDynamicMoeSlots))) · recommended maximum K\(plan.recommendedMaximumSlots)."),
+                                    Label(loc.t("Estimación: %@ · máximo recomendado K%@.", "Estimate: %@ · recommended maximum K%@.", "\(gibLabel(plan.estimatedVRAMBytes(slots: effectiveDynamicMoeSlots)))", "\(plan.recommendedMaximumSlots)"),
                                           systemImage: overBudget ? "exclamationmark.triangle.fill" : "memorychip")
                                         .font(.caption)
                                         .foregroundStyle(overBudget ? .orange : .secondary)
                                 } else {
-                                    Label(loc.t("La caché mínima top-\(info.activeExpertCount) supera el presupuesto estimado; el modo manual permite probarla, pero puede agotar la VRAM.",
-                                                "The minimum top-\(info.activeExpertCount) cache exceeds the estimated budget; manual mode still allows testing it, but it may exhaust VRAM."),
+                                    Label(loc.t("La caché mínima top-%@ supera el presupuesto estimado; el modo manual permite probarla, pero puede agotar la VRAM.", "The minimum top-%@ cache exceeds the estimated budget; manual mode still allows testing it, but it may exhaust VRAM.", "\(info.activeExpertCount)"),
                                           systemImage: "exclamationmark.triangle.fill")
                                         .font(.caption).foregroundStyle(.orange)
                                 }
@@ -648,7 +642,7 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                Stepper(loc.t("Reserva de VRAM: \(vramReserve) MB", "VRAM reserve: \(vramReserve) MB"),
+                Stepper(loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
                         value: $vramReserve, in: 256...4096, step: 256)
                     .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
                                 "VRAM left free for the system and UI. 1024 MB is a safe margin."))
@@ -716,8 +710,7 @@ struct SettingsView: View {
                             .font(.body)
                             .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(loc.t("Sugerencia medida: claves \(s.k), valores \(s.v)",
-                                       "Measured suggestion: \(s.k) keys, \(s.v) values"))
+                            Text(loc.t("Sugerencia medida: claves %@, valores %@", "Measured suggestion: %@ keys, %@ values", "\(s.k)", "\(s.v)"))
                                 .font(.callout.weight(.medium))
                             Text(loc.t("Calidad indistinguible de f16 y un 25% menos de caché que q8_0 en ambos.",
                                        "Quality indistinguishable from f16, and 25% less cache than q8_0 on both."))
@@ -729,8 +722,8 @@ struct SettingsView: View {
                         Button(loc.t("Aplicar", "Apply")) { cacheTypeK = s.k; cacheTypeV = s.v }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .help(loc.t("Pone las claves en \(s.k) y los valores en \(s.v).",
-                                        "Sets keys to \(s.k) and values to \(s.v)."))
+                            .help(loc.t("Pone las claves en %@ y los valores en %@.",
+                                        "Sets keys to %@ and values to %@.", s.k, s.v))
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -745,7 +738,7 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         if let s = kvSuggestion {
                             Spacer(minLength: 8)
-                            Button(loc.t("Usar \(s.k) / \(s.v)", "Use \(s.k) / \(s.v)")) {
+                            Button(loc.t("Usar %@ / %@", "Use %@ / %@", "\(s.k)", "\(s.v)")) {
                                 cacheTypeK = s.k; cacheTypeV = s.v
                             }
                             .buttonStyle(.bordered)
@@ -764,10 +757,11 @@ struct SettingsView: View {
                 Toggle(loc.t("Reuso de caché de prompt (rápido)", "Prompt cache reuse (fast)"), isOn: $cacheReuse)
                     .infoTip(loc.t("Cuando reescribes/editas el prompt (asistentes de código) o se recorta el razonamiento entre turnos, reutiliza la caché desplazándola en vez de reprocesar — mucho más rápido. Es una aproximación: la salida sigue coherente pero puede variar levemente frente a un cálculo exacto. Desactívalo si quieres resultados idénticos y reproducibles.",
                                 "When the prompt is rewritten/edited (coding assistants) or the reasoning is trimmed between turns, it reuses the cache by shifting it instead of reprocessing — much faster. It's an approximation: output stays coherent but can differ slightly from an exact recompute. Turn it off for identical, reproducible results."))
-                Stepper(loc.t("Hilos de CPU: \(threads)", "CPU threads: \(threads)"),
+                Stepper(loc.t("Hilos de CPU: %@", "CPU threads: %@", "\(threads)"),
                         value: $threads, in: 1...max(1, hardware.logicalCores))
-                    .infoTip(loc.t("Hilos para la parte que corre en CPU (expertos MoE, tokenización). Tu equipo tiene \(hardware.logicalCores) hilos; los núcleos físicos (\(hardware.physicalCores)) suelen ser el óptimo; más hilos no acelera si el límite es la RAM.",
-                                "Threads for the CPU side (MoE experts, tokenization). Your machine has \(hardware.logicalCores) threads; physical cores (\(hardware.physicalCores)) are usually optimal; more threads won't help if RAM bandwidth is the limit."))
+                    .infoTip(loc.t("Hilos para la parte que corre en CPU (expertos MoE, tokenización). Tu equipo tiene %@ hilos; los núcleos físicos (%@) suelen ser el óptimo; más hilos no acelera si el límite es la RAM.",
+                                "Threads for the CPU side (MoE experts, tokenization). Your machine has %@ threads; physical cores (%@) are usually optimal; more threads won't help if RAM bandwidth is the limit.",
+                                String(hardware.logicalCores), String(hardware.physicalCores)))
                     .onAppear { if threads > hardware.logicalCores { threads = max(1, hardware.logicalCores) } }
                 Picker(loc.t("Flash Attention estándar (CPU)", "Standard Flash Attention (CPU)"), selection: $flashAttn) {
                     Text("auto").tag("auto"); Text("on").tag("on"); Text("off").tag("off")

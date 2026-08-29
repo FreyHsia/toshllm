@@ -21,9 +21,7 @@ struct DflashMemoryWarningSheet: View {
                 .bold()
                 .foregroundStyle(.orange)
 
-            Text(loc.t(
-                "El servidor mantiene \(usedText) de \(totalText) GiB ocupados (\(fractionText)). Esta configuración puede perder rendimiento, paginar memoria o fallar cuando crezca el contexto.",
-                "The server is holding \(usedText) of \(totalText) GiB (\(fractionText)). This configuration can lose performance, page memory, or fail as the context grows."))
+            Text(loc.t("El servidor mantiene %@ de %@ GiB ocupados (%@). Esta configuración puede perder rendimiento, paginar memoria o fallar cuando crezca el contexto.", "The server is holding %@ of %@ GiB (%@). This configuration can lose performance, page memory, or fail as the context grows.", "\(usedText)", "\(totalText)", "\(fractionText)"))
 
             Text(loc.t("Recomendación: vuelve a Auto para que ToshLLM elija una configuración segura; también puedes desactivar DFlash o continuar y recordar esta decisión.",
                        "Recommendation: return to Auto so ToshLLM can choose a safe configuration; you can also disable DFlash or continue and remember this decision."))

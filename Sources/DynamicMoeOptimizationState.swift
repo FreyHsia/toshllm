@@ -32,11 +32,11 @@ enum DynamicMoeOptimizationState: Equatable {
         case .baselineFailed:
             return loc.t("Falló la medición de referencia", "Baseline measurement failed")
         case .testingDirect(let slots):
-            return loc.t("Probando dMoE directo K\(slots)…", "Testing direct dMoE K\(slots)…")
+            return loc.t("Probando dMoE directo K%@…", "Testing direct dMoE K%@…", "\(slots)")
         case .optimizedDirect(let slots):
-            return loc.t("Optimizado: ruta directa K\(slots)", "Optimized: direct route K\(slots)")
+            return loc.t("Optimizado: ruta directa K%@", "Optimized: direct route K%@", "\(slots)")
         case .saveFailed(let message):
-            return loc.t("No se pudo guardar: \(message)", "Could not save: \(message)")
+            return loc.t("No se pudo guardar: %@", "Could not save: %@", "\(message)")
         case .mapCreationFailed:
             return loc.t("No se pudo crear el mapa de expertos", "Could not create the expert map")
         case .learningExperts:
@@ -44,15 +44,13 @@ enum DynamicMoeOptimizationState: Equatable {
         case .invalidMap:
             return loc.t("No se pudo generar un mapa válido", "Could not generate a valid map")
         case .testingSplit(let slots):
-            return loc.t("Probando dMoE dividido K\(slots)…", "Testing split dMoE K\(slots)…")
+            return loc.t("Probando dMoE dividido K%@…", "Testing split dMoE K%@…", "\(slots)")
         case .noSweepResults:
             return loc.t("El barrido dMoE no produjo resultados", "The dMoE sweep produced no results")
         case .tuningPrefetch(let prefetch):
-            return loc.t("Afinando procesamiento del prompt · prefetch\(prefetch)…",
-                         "Tuning prompt processing · prefetch\(prefetch)…")
+            return loc.t("Afinando procesamiento del prompt · prefetch%@…", "Tuning prompt processing · prefetch%@…", "\(prefetch)")
         case .optimizedSplit(let slots, let ringSlots):
-            return loc.t("Optimizado: ruta dividida K\(slots) + ring\(ringSlots)",
-                         "Optimized: split route K\(slots) + ring\(ringSlots)")
+            return loc.t("Optimizado: ruta dividida K%@ + ring%@", "Optimized: split route K%@ + ring%@", "\(slots)", "\(ringSlots)")
         case .cancelled:
             return loc.t("Optimización cancelada", "Optimization cancelled")
         }

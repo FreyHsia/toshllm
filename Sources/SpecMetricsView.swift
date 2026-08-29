@@ -59,7 +59,7 @@ struct SpecMetricsView: View {
 
     private func positionRow(index: Int, share: Double) -> some View {
         HStack(spacing: 8) {
-            Text(loc.t("Posición \(index + 1)", "Position \(index + 1)"))
+            Text(loc.t("Posición %@", "Position %@", "\(index + 1)"))
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(width: 78, alignment: .leading)
             ProgressView(value: share).controlSize(.small)

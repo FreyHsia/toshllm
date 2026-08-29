@@ -6,11 +6,14 @@ helper, including `loc.t(...)`) and writes the set of **English** strings — th
 keys community overlays use — to `Assets/lang/_template.json` as a flat
 `{ "English string": "" }` map.
 
+Strings carrying values use the `loc.t("es", "en", args...)` form, whose keys
+keep `%@` placeholders and are extracted like any other.
+
 Translators copy the template to `Assets/lang/<code>.json` (e.g. `it.json`) and
 fill in the values. Missing or blank values fall back to English at runtime, so
 a partial translation is always safe. Strings built with interpolation
 (`\\(...)`) are skipped: their runtime value is dynamic and can't be matched by
-an exact-string overlay (they stay English in other languages).
+an exact-string overlay, so they stay English. Use the `%@` form instead.
 
 Usage:  python3 scripts/extract-strings.py
 """
@@ -24,10 +27,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "Sources"
 OUT = ROOT / "Assets" / "lang" / "_template.json"
 
-# t( "<swift string>" , "<swift string>" )  — both literals, across newlines.
+# t( "<swift string>" , "<swift string>" [, args...] )  — the two literals may be
+# followed by placeholder values, so the call can close after them or continue.
 # A Swift string body is any run of non-quote / non-backslash chars or escapes.
 STR = r'"((?:[^"\\]|\\.)*)"'
-CALL = re.compile(r'\bt\(\s*' + STR + r'\s*,\s*' + STR + r'\s*\)', re.DOTALL)
+CALL = re.compile(r'\bt\(\s*' + STR + r'\s*,\s*' + STR + r'\s*[,)]', re.DOTALL)
 
 # Strings used by the standalone web console (Assets/test-ui/index.html). They
 # don't live in Swift, so they're listed here to appear in the template; the

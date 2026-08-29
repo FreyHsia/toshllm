@@ -112,7 +112,7 @@ struct DonateView: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(.borderless)
-            .iconHelp(copied ? loc.t("Copiado", "Copied") : loc.t("Copiar \(label)", "Copy \(label)"))
+            .iconHelp(copied ? loc.t("Copiado", "Copied") : loc.t("Copiar %@", "Copy %@", "\(label)"))
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))

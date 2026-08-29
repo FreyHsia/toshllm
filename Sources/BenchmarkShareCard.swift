@@ -274,8 +274,7 @@ struct BenchmarkShareCard: View {
                 let state = outcome.moderationStatus == "pending"
                     ? loc.t("en revisión", "in review")
                     : loc.t("aprobado", "approved")
-                phase = .done(loc.t("Enviado · \(trust) · \(state)",
-                                    "Sent · \(trust) · \(state)"))
+                phase = .done(loc.t("Enviado · %@ · %@", "Sent · %@ · %@", "\(trust)", "\(state)"))
                 bench.recordShared(cfg: cfg, pp: p.pp, tg: p.tg)
                 prepared = nil
             } catch {

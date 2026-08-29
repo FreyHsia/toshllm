@@ -76,8 +76,7 @@ struct UseModelButton: View {
             }
             Button(loc.t("Cancelar", "Cancel"), role: .cancel) {}
         } message: {
-            Text(loc.t("El servidor principal se reiniciará para usar «\(modelName)».",
-                       "The main server will restart to use “\(modelName)”."))
+            Text(loc.t("El servidor principal se reiniciará para usar «%@».", "The main server will restart to use “%@”.", "\(modelName)"))
         }
     }
 
@@ -116,7 +115,7 @@ struct GPUSelectionMenu: View {
 
     private var label: String {
         let sel = selection
-        if sel.count >= 2 { return loc.t("Reparto · \(sel.count) GPUs", "Split · \(sel.count) GPUs") }
+        if sel.count >= 2 { return loc.t("Reparto · %@ GPUs", "Split · %@ GPUs", "\(sel.count)") }
         if let i = sel.first, let g = hardware.gpus.first(where: { $0.index == i }) { return g.name }
         return loc.t("GPU predeterminada", "Default GPU")
     }

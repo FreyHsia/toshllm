@@ -194,12 +194,12 @@ struct AudioCanvas: View {
         let words = studio.cues.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
         let language = studio.detectedLanguage.isEmpty ? "" : " · \(studio.detectedLanguage.uppercased())"
         let translating = studio.translationBatchCount > 0 && studio.stage == .translating
-        let translationES = translating
-            ? " · \(studio.translatedBatchCount)/\(studio.translationBatchCount) traducidos" : ""
-        let translationEN = translating
-            ? " · \(studio.translatedBatchCount)/\(studio.translationBatchCount) translated" : ""
-        return loc.t("\(studio.cues.count) segmentos · \(words) palabras\(language)\(translationES)",
-                     "\(studio.cues.count) segments · \(words) words\(language)\(translationEN)")
+        let translation = translating
+            ? " · " + loc.t("%@/%@ traducidos", "%@/%@ translated",
+                            "\(studio.translatedBatchCount)", "\(studio.translationBatchCount)")
+            : ""
+        return loc.t("%@ segmentos · %@ palabras%@%@", "%@ segments · %@ words%@%@",
+                     "\(studio.cues.count)", "\(words)", language, translation)
     }
 
     private func pickMedia() {

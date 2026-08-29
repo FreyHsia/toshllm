@@ -25,9 +25,8 @@ struct DynamicMoeOptimizationStatusView: View {
             if let profile {
                 LabeledContent(loc.t("Ruta seleccionada", "Selected route")) {
                     Text(profile.route == .direct
-                         ? loc.t("Directa · K\(profile.slots)", "Direct · K\(profile.slots)")
-                         : loc.t("Dividida · K\(profile.slots) + ring\(profile.ringSlots)",
-                                 "Split · K\(profile.slots) + ring\(profile.ringSlots)"))
+                         ? loc.t("Directa · K%@", "Direct · K%@", "\(profile.slots)")
+                         : loc.t("Dividida · K%@ + ring%@", "Split · K%@ + ring%@", "\(profile.slots)", "\(profile.ringSlots)"))
                         .monospacedDigit()
                 }
                 LabeledContent(loc.t("Rendimiento", "Performance")) {

@@ -228,8 +228,9 @@ struct MessageBubble: View, Equatable {
                                     .font(.caption)
                                     .padding(.horizontal, 8).padding(.vertical, 3)
                                     .background(.quaternary.opacity(0.7), in: Capsule())
-                                    .help(loc.t("Archivo enviado al modelo en este turno (~\(a.estimatedTokens) tokens).",
-                                                "File sent to the model this turn (~\(a.estimatedTokens) tokens)."))
+                                    .help(loc.t("Archivo enviado al modelo en este turno (~%@ tokens).",
+                                                "File sent to the model this turn (~%@ tokens).",
+                                                String(a.estimatedTokens)))
                             }
                         }
                     }
