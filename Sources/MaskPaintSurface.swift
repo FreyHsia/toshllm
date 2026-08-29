@@ -92,6 +92,9 @@ struct MaskPaintSurface: View {
     private func drag(in rect: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
+                // onContinuousHover goes quiet while the button is down, so the
+                // ring has to track the drag itself, before any point is dropped.
+                hover = rect.contains(v.location) ? v.location : nil
                 let p = MaskEditorView.normalise(v.location, in: rect)
                 guard var stroke = current else {
                     current = MaskStroke(points: [p], radius: radius, erases: erasing)
