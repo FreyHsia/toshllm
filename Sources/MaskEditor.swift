@@ -25,18 +25,12 @@ struct MaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var strokes: [MaskStroke] = []
-    @State private var current: MaskStroke? = nil
     @State private var radius = 0.06
     @State private var erasing = false
     @State private var showMaskOnly = false
     @State private var error = ""
-
-    private var image: NSImage? { NSImage(contentsOfFile: initImagePath) }
-
-    private var pixelSize: CGSize {
-        guard let rep = image?.representations.first else { return CGSize(width: 512, height: 512) }
-        return CGSize(width: rep.pixelsWide, height: rep.pixelsHigh)
-    }
+    @State private var image: NSImage? = nil
+    @State private var pixelSize = CGSize(width: 512, height: 512)
 
     var body: some View {
         VStack(spacing: 12) {
@@ -49,7 +43,7 @@ struct MaskEditorView: View {
         }
         .padding(16)
         .frame(minWidth: 560, minHeight: 560)
-        .onAppear(perform: loadExisting)
+        .task(id: initImagePath) { load() }
     }
 
     private var header: some View {
@@ -64,52 +58,9 @@ struct MaskEditorView: View {
     }
 
     private var canvas: some View {
-        GeometryReader { geo in
-            let rect = Self.fitRect(pixelSize, in: geo.size)
-            ZStack {
-                if let image, !showMaskOnly {
-                    Image(nsImage: image)
-                        .resizable().interpolation(.medium)
-                        .frame(width: rect.width, height: rect.height)
-                        .position(x: rect.midX, y: rect.midY)
-                } else {
-                    Rectangle().fill(.black)
-                        .frame(width: rect.width, height: rect.height)
-                        .position(x: rect.midX, y: rect.midY)
-                }
-                Canvas { ctx, _ in
-                    ctx.clip(to: Path(rect))
-                    for stroke in strokes + (current.map { [$0] } ?? []) {
-                        ctx.stroke(path(for: stroke, in: rect),
-                                   with: .color(stroke.erases ? .black : .white),
-                                   style: StrokeStyle(lineWidth: stroke.radius * 2 * rect.width,
-                                                      lineCap: .round, lineJoin: .round))
-                    }
-                }
-                .opacity(showMaskOnly ? 1 : 0.55)
-                .allowsHitTesting(false)
-                Rectangle().stroke(.quaternary)
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        let p = Self.normalise(v.location, in: rect)
-                        if current == nil {
-                            current = MaskStroke(points: [p], radius: radius, erases: erasing)
-                        } else {
-                            current?.points.append(p)
-                        }
-                    }
-                    .onEnded { _ in
-                        if let c = current { strokes.append(c) }
-                        current = nil
-                    }
-            )
-        }
-        .frame(minHeight: 380)
+        MaskPaintSurface(image: image, pixelSize: pixelSize, strokes: $strokes,
+                         radius: radius, erasing: erasing, maskOnly: showMaskOnly)
+            .frame(minHeight: 380)
     }
 
     private var controls: some View {
@@ -180,7 +131,7 @@ struct MaskEditorView: View {
                        y: (point.y - rect.minY) / rect.height)
     }
 
-    private func path(for stroke: MaskStroke, in rect: CGRect) -> Path {
+    static func path(for stroke: MaskStroke, in rect: CGRect) -> Path {
         var p = Path()
         let pts = stroke.points.map {
             CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height)
@@ -195,9 +146,12 @@ struct MaskEditorView: View {
 
     // MARK: file
 
-    private func loadExisting() {
-        // Strokes are not stored in the PNG, so an existing mask cannot be
-        // reopened for editing; starting clean is the honest behaviour.
+    private func load() {
+        let img = NSImage(contentsOfFile: initImagePath)
+        image = img
+        if let rep = img?.representations.first {
+            pixelSize = CGSize(width: rep.pixelsWide, height: rep.pixelsHigh)
+        }
         strokes = []
     }
 

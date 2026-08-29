@@ -1003,16 +1003,17 @@ struct ImageInstanceForm: View {
             filePickRow(loc.t("Máscara (inpainting, opcional)", "Mask (inpainting, optional)"),
                         path: $cfg.maskPath, types: ["png", "jpg", "jpeg", "webp"])
                 .help(tip)
-            HStack {
-                Spacer(minLength: 0)
-                Button(loc.t("Pintar la zona…", "Paint the area…"), systemImage: "paintbrush.pointed") {
-                    paintingMask = true
-                }
-                .font(.caption).buttonStyle(.borderless)
-                .disabled(cfg.initImagePath.isEmpty)
-                .help(loc.t("Pinta la máscara sobre la imagen inicial en vez de preparar un PNG aparte.",
-                            "Paint the mask over the init image instead of preparing a separate PNG."))
+            Button { paintingMask = true } label: {
+                Label(cfg.maskPath.isEmpty
+                      ? loc.t("Pintar la zona", "Paint the area")
+                      : loc.t("Volver a pintarla", "Paint it again"),
+                      systemImage: "paintbrush.pointed")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered).controlSize(.small)
+            .disabled(cfg.initImagePath.isEmpty)
+            .help(loc.t("Pinta la máscara sobre la imagen inicial en vez de preparar un PNG aparte.",
+                        "Paint the mask over the init image instead of preparing a separate PNG."))
             .sheet(isPresented: $paintingMask) {
                 MaskEditorView(initImagePath: cfg.initImagePath,
                                outputDirectory: models.imagenDirectory,
