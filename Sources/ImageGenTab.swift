@@ -124,8 +124,7 @@ struct ImageControls: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let c = flavor.component(customPath: upscalerCustom),
                               !ImageUpscaler.installed(flavor, customPath: upscalerCustom, in: models) {
-                        Label(loc.t("Se descargan \(Int(c.sizeGB * 1000)) MB la primera vez",
-                                    "Downloads \(Int(c.sizeGB * 1000)) MB on first use"),
+                        Label(loc.t("Se descargan %@ MB la primera vez", "Downloads %@ MB on first use", "\(Int(c.sizeGB * 1000))"),
                               systemImage: "arrow.down.circle")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -153,14 +152,13 @@ struct ImageControls: View {
                     if !upscaler.queued.isEmpty {
                         Text(upscaler.queued.count == 1
                              ? upscaler.queued[0].lastPathComponent
-                             : loc.t("\(upscaler.queued.count) imágenes en cola",
-                                     "\(upscaler.queued.count) images queued"))
+                             : loc.t("%@ imágenes en cola", "%@ images queued", "\(upscaler.queued.count)"))
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         Button {
                             startUpscale(upscaler.queued)
                         } label: {
-                            Label(loc.t("Escalar \(scale.label)", "Upscale \(scale.label)"),
+                            Label(loc.t("Escalar %@", "Upscale %@", "\(scale.label)"),
                                   systemImage: "arrow.up.left.and.arrow.down.right")
                                 .frame(maxWidth: .infinity)
                         }
@@ -174,8 +172,7 @@ struct ImageControls: View {
                             ProgressView(value: upscaler.progress)
                             HStack {
                                 Text(upscaler.total > 1
-                                     ? loc.t("Imagen \(upscaler.index) de \(upscaler.total)",
-                                             "Image \(upscaler.index) of \(upscaler.total)")
+                                     ? loc.t("Imagen %@ de %@", "Image %@ of %@", "\(upscaler.index)", "\(upscaler.total)")
                                      : loc.t("Escalando ×4…", "Upscaling x4…"))
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
@@ -301,7 +298,7 @@ struct ImageControls: View {
                 .padding(.top, 10)
         } label: {
             HStack(spacing: 6) {
-                Text(loc.t("Instancia \(n)", "Instance \(n)")).font(.callout.weight(.medium))
+                Text(loc.t("Instancia %@", "Instance %@", "\(n)")).font(.callout.weight(.medium))
                 Text(model.name).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                 if hardware.gpus.count > 1, c.gpuIndex < hardware.gpus.count {
@@ -351,11 +348,13 @@ struct ImageControls: View {
                     pool.generator(for: c.id).generate(
                         model: c.resolvedModel(for: hardware), models: models,
                         prompt: pool.effectivePrompt(for: c),
+                        negativePrompt: pool.effectiveNegativePrompt(for: c),
                         width: w, height: h, steps: c.steps,
                         seed: c.seed, format: c.formatValue, offloadToCPU: c.offloadCPU,
                         gpuIndex: c.gpuIndex,
                         auxGPUIndex: c.auxGPU(gpuCount: hardware.gpus.count) ?? -1,
-                        initImagePath: c.initImagePath, strength: c.strength)
+                        initImagePath: c.initImagePath, maskPath: c.maskPath,
+                        strength: c.strength)
                 }
             } label: {
                 Label(loc.t("Generar", "Generate"), systemImage: "sparkles").frame(maxWidth: .infinity)
@@ -489,7 +488,7 @@ struct QueueFeedView: View {
             if !pool.queue.isEmpty || pool.queueActive {
                 HStack {
                     if !pool.queue.isEmpty {
-                        Text(loc.t("\(pool.queue.count) en cola", "\(pool.queue.count) queued"))
+                        Text(loc.t("%@ en cola", "%@ queued", "\(pool.queue.count)"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -557,7 +556,7 @@ struct QueueFeedView: View {
                     }
                     Text("\(gen.elapsed)s").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                     if let eta = gen.etaSeconds {
-                        Text(loc.t("~\(eta)s", "~\(eta)s")).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(loc.t("~%@s", "~%@s", "\(eta)")).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                     }
                 }
                 ProgressView(value: gen.progress > 0 ? gen.progress : nil)
@@ -727,6 +726,7 @@ struct ImageInstanceForm: View {
 
     @EnvironmentObject var loc: Localizer
     @EnvironmentObject var models: ModelStore
+    @State private var paintingMask = false
 
     private var model: ImageGenModel { cfg.resolvedModel(for: hardware) }
     private var installed: Bool { ImageGenerator.installed(model, in: models) }
@@ -759,11 +759,9 @@ struct ImageInstanceForm: View {
 
     private var nativeSizeMessage: String {
         if model.trainedSquareOnly && cfg.dimensions.0 != cfg.dimensions.1 {
-            return loc.t("Este modelo se entrenó solo en cuadrado (\(model.nativeLongEdge)x\(model.nativeLongEdge)): en otros formatos saca manchas de color por muchos pasos que le des. Es límite del modelo, no de la app.",
-                         "This model was trained on square frames only (\(model.nativeLongEdge)x\(model.nativeLongEdge)): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.")
+            return loc.t("Este modelo se entrenó solo en cuadrado (%@x%@): en otros formatos saca manchas de color por muchos pasos que le des. Es límite del modelo, no de la app.", "This model was trained on square frames only (%@x%@): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.", "\(model.nativeLongEdge)", "\(model.nativeLongEdge)")
         }
-        return loc.t("Por encima de los \(model.nativeLongEdge) px con los que se entrenó este modelo: puede repetir la composición (dos horizontes, sujetos duplicados). Es límite del modelo, no de la app.",
-                     "Above the \(model.nativeLongEdge) px this model was trained at: it may repeat the composition (two horizons, duplicated subjects). That is the model's limit, not the app's.")
+        return loc.t("Por encima de los %@ px con los que se entrenó este modelo: puede repetir la composición (dos horizontes, sujetos duplicados). Es límite del modelo, no de la app.", "Above the %@ px this model was trained at: it may repeat the composition (two horizons, duplicated subjects). That is the model's limit, not the app's.", "\(model.nativeLongEdge)")
     }
 
     private var nativeSizeNote: some View {
@@ -785,8 +783,7 @@ struct ImageInstanceForm: View {
             modelPicker
             if cfg.isCustom { customSetup }
             if !cfg.isCustom && !modelFitsGPU {
-                Label(loc.t("Necesita \(Int(model.minVRAMGB)) GB de VRAM; no corre en esta GPU.",
-                            "Needs \(Int(model.minVRAMGB)) GB of VRAM; it won't run on this GPU."),
+                Label(loc.t("Necesita %@ GB de VRAM; no corre en esta GPU.", "Needs %@ GB of VRAM; it won't run on this GPU.", "\(Int(model.minVRAMGB))"),
                       systemImage: "xmark.octagon.fill")
                     .font(.caption2).foregroundStyle(.red)
             } else if !cfg.isCustom && !installed {
@@ -794,6 +791,7 @@ struct ImageInstanceForm: View {
             } else {
                 Text(loc.t("Descripción", "Prompt")).font(.headline)
                 promptEditor
+                negativePromptSection
                 img2imgSection
                 settingsGrid
                 if !fitsVRAM { vramWarning }
@@ -947,6 +945,33 @@ struct ImageInstanceForm: View {
 
     /// img2img: optionally seed generation from an existing image. Strength shows
     /// only once an image is chosen (how much to transform it).
+    private var negativePromptSection: some View {
+        let tip = loc.t("Lo que NO debe aparecer. Solo surte efecto por encima de CFG 1: a CFG 1 el motor no calcula esa rama.",
+                        "What must NOT appear. It only takes effect above CFG 1: at CFG 1 the engine does not compute that branch.")
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(loc.t("Prompt negativo", "Negative prompt")).font(.subheadline).help(tip)
+            TextEditor(text: $cfg.negativePrompt)
+                .font(.callout).frame(minHeight: 44)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topLeading) {
+                    if cfg.negativePrompt.isEmpty {
+                        Text(loc.t("borroso, deforme, marca de agua, texto…",
+                                   "blurry, deformed, watermark, text…"))
+                            .font(.callout).foregroundStyle(.tertiary)
+                            .padding(.horizontal, 13).padding(.vertical, 15).allowsHitTesting(false)
+                    }
+                }
+                .help(tip)
+            if model.cfgScale <= 1, !cfg.negativePrompt.isEmpty {
+                Label(loc.t("Este modelo va a CFG %@ y no usa el prompt negativo. Necesita un modelo con CFG mayor que 1 (SD 1.5, Qwen-Image) o subir el CFG en un modelo propio.", "This model runs at CFG %@ and ignores the negative prompt. It needs a model with CFG above 1 (SD 1.5, Qwen-Image), or a higher CFG on your own model.", "\(String(format: "%.1f", model.cfgScale))"),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption2).foregroundStyle(.yellow)
+            }
+        }
+    }
+
     private var img2imgSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             filePickRow(loc.t("Imagen inicial (img2img)", "Init image (img2img)"),
@@ -966,8 +991,59 @@ struct ImageInstanceForm: View {
                           systemImage: "aspectratio")
                         .font(.caption2).foregroundStyle(.yellow)
                 }
+                maskRow
             }
         }
+    }
+
+    private var maskRow: some View {
+        let tip = loc.t("Retoca solo una zona (inpainting). Blanco = repinta, negro = conserva. Del tamaño de la imagen inicial. Sin máscara se repinta todo.",
+                        "Repaints one area only (inpainting). White = repaint, black = keep. Same size as the init image. Without one, everything is repainted.")
+        return VStack(alignment: .leading, spacing: 4) {
+            filePickRow(loc.t("Máscara (inpainting, opcional)", "Mask (inpainting, optional)"),
+                        path: $cfg.maskPath, types: ["png", "jpg", "jpeg", "webp"])
+                .help(tip)
+            HStack {
+                Spacer(minLength: 0)
+                Button(loc.t("Pintar la zona…", "Paint the area…"), systemImage: "paintbrush.pointed") {
+                    paintingMask = true
+                }
+                .font(.caption).buttonStyle(.borderless)
+                .disabled(cfg.initImagePath.isEmpty)
+                .help(loc.t("Pinta la máscara sobre la imagen inicial en vez de preparar un PNG aparte.",
+                            "Paint the mask over the init image instead of preparing a separate PNG."))
+            }
+            .sheet(isPresented: $paintingMask) {
+                MaskEditorView(initImagePath: cfg.initImagePath,
+                               outputDirectory: models.imagenDirectory,
+                               maskPath: $cfg.maskPath)
+                    .environmentObject(loc)
+            }
+            if !cfg.maskPath.isEmpty {
+                Text(tip).font(.caption2).foregroundStyle(.secondary)
+                if maskSizeMismatch {
+                    Label(loc.t("La máscara no tiene el mismo tamaño en píxeles que la imagen inicial; la zona retocada saldrá desplazada.",
+                                "The mask is not the same pixel size as the init image; the repainted area will land off-target."),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption2).foregroundStyle(.yellow)
+                }
+            }
+        }
+    }
+
+    private var maskSizeMismatch: Bool {
+        guard !cfg.maskPath.isEmpty, !cfg.initImagePath.isEmpty,
+              let a = Self.pixelSize(cfg.initImagePath), let b = Self.pixelSize(cfg.maskPath)
+        else { return false }
+        return a != b
+    }
+
+    private static func pixelSize(_ path: String) -> CGSize? {
+        guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Double,
+              let h = props[kCGImagePropertyPixelHeight] as? Double else { return nil }
+        return CGSize(width: w, height: h)
     }
 
     /// The init image's pixel ratio vs the chosen frame's; a big gap warns about
@@ -1162,7 +1238,7 @@ private func imageFailureText(_ raw: String, _ loc: Localizer) -> String {
         return loc.t("La GPU agotó el tiempo: la imagen es muy grande. Reduce el tamaño base.",
                      "The GPU timed out: the image is too large. Lower the base size.")
     default:
-        return loc.t("La generación falló (\(raw)).", "Generation failed (\(raw)).")
+        return loc.t("La generación falló (%@).", "Generation failed (%@).", "\(raw)")
     }
 }
 
@@ -1187,7 +1263,7 @@ struct ImageCanvas: View {
                     Picker("", selection: $detailTab) {
                         Text(loc.t("Instancias", "Instances")).tag(ImageDetailTab.instances)
                         Text(pool.queue.isEmpty ? loc.t("Cola", "Queue")
-                                                : loc.t("Cola (\(pool.queue.count))", "Queue (\(pool.queue.count))"))
+                                                : loc.t("Cola (%@)", "Queue (%@)", "\(pool.queue.count)"))
                             .tag(ImageDetailTab.queue)
                     }
                     .pickerStyle(.segmented).fixedSize()
@@ -1254,7 +1330,7 @@ struct ImageCanvas: View {
             HStack(spacing: 14) {
                 Label("\(gen.elapsed)s", systemImage: "clock")
                 if let eta = gen.etaSeconds {
-                    Label(loc.t("~\(eta)s restantes", "~\(eta)s left"), systemImage: "hourglass")
+                    Label(loc.t("~%@s restantes", "~%@s left", "\(eta)"), systemImage: "hourglass")
                 }
             }
             .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
@@ -1264,7 +1340,7 @@ struct ImageCanvas: View {
     private func stageLabel(_ gen: ImageGenerator) -> String {
         switch gen.stage {
         case .loading:  return loc.t("Cargando modelos…", "Loading models…")
-        case .sampling: return loc.t("Generando · paso \(gen.stepText)", "Sampling · step \(gen.stepText)")
+        case .sampling: return loc.t("Generando · paso %@", "Sampling · step %@", "\(gen.stepText)")
         case .decoding: return loc.t("Decodificando imagen…", "Decoding image…")
         }
     }
@@ -1284,7 +1360,7 @@ struct ImageCanvas: View {
                 }
                 HStack(spacing: 14) {
                     if gen.lastDuration > 0 {
-                        Label(loc.t("Generado en \(gen.lastDuration)s", "Generated in \(gen.lastDuration)s"),
+                        Label(loc.t("Generado en %@s", "Generated in %@s", "\(gen.lastDuration)"),
                               systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
                     }
                     Text("\(gen.lastWidth) × \(gen.lastHeight) · \(format.rawValue.uppercased())"
@@ -1552,7 +1628,7 @@ struct ImageInstanceRow: View {
             Label("\(gen.elapsed)s", systemImage: "clock")
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             if let eta = gen.etaSeconds {
-                Label(loc.t("~\(eta)s restantes", "~\(eta)s left"), systemImage: "hourglass")
+                Label(loc.t("~%@s restantes", "~%@s left", "\(eta)"), systemImage: "hourglass")
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             }
         } else if let url = gen.resultURL, gen.resultImage != nil {
@@ -1565,7 +1641,7 @@ struct ImageInstanceRow: View {
             Text(metaLine)
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             if gen.lastDuration > 0 {
-                Label(loc.t("Generado en \(gen.lastDuration)s", "Generated in \(gen.lastDuration)s"),
+                Label(loc.t("Generado en %@s", "Generated in %@s", "\(gen.lastDuration)"),
                       systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
             }
             if grid {

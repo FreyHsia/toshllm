@@ -578,10 +578,12 @@ final class ImageGenerator: ObservableObject {
     /// Generate an image. `prompt` is required; the rest are the tuned defaults
     /// unless the caller overrides them.
     func generate(model: ImageGenModel, models: ModelStore, prompt: String,
+                  negativePrompt: String = "",
                   width: Int, height: Int, steps: Int, seed: Int,
                   format: ImageFormat, offloadToCPU: Bool, gpuIndex: Int,
                   auxGPUIndex: Int = -1,
-                  initImagePath: String = "", strength: Double = 0.75) {
+                  initImagePath: String = "", maskPath: String = "",
+                  strength: Double = 0.75) {
         guard !isBusy else { return }
         lastPrompt = prompt; lastSeed = seed; lastWidth = width; lastHeight = height
         let dir = models.imagenDirectory
@@ -618,6 +620,8 @@ final class ImageGenerator: ObservableObject {
             // The output format follows the file extension (PNG lossless, JPG lighter).
             "-o", out.path,
         ]
+        let negative = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !negative.isEmpty { args += ["-n", negative] }
         // `proj` needs no extra weights (it projects the latents), so the preview
         // costs a rescale per interval and never a second model download.
         let preview = FileManager.default.temporaryDirectory
@@ -628,6 +632,7 @@ final class ImageGenerator: ObservableObject {
         // change it (0 keeps it, 1 regenerates from scratch).
         if !initImagePath.isEmpty {
             args += ["-i", initImagePath, "--strength", String(format: "%.2f", strength)]
+            if !maskPath.isEmpty { args += ["--mask", maskPath] }
         }
         let split = auxGPUIndex >= 0 && auxGPUIndex != gpuIndex && gpuIndex >= 0
             && MTLCopyAllDevices().count > 1
@@ -796,7 +801,11 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
     var customVAEPath = ""
     var customCfg = 7.0
     var prompt = ""
+    /// Ignored at CFG 1: the sampler never runs the unconditional branch there.
+    var negativePrompt = ""
     var initImagePath = ""
+    /// Inpainting mask for the init image: white repaints, black keeps.
+    var maskPath = ""
     var strength = 0.6
     var aspect = ImageAspect.square.rawValue
     /// Free "W:H" ratio used only when `aspect` is `.custom` (e.g. "21:9").
@@ -821,7 +830,9 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
         customVAEPath = (try? c.decode(String.self, forKey: .customVAEPath)) ?? ""
         customCfg = (try? c.decode(Double.self, forKey: .customCfg)) ?? 7.0
         prompt = (try? c.decode(String.self, forKey: .prompt)) ?? ""
+        negativePrompt = (try? c.decode(String.self, forKey: .negativePrompt)) ?? ""
         initImagePath = (try? c.decode(String.self, forKey: .initImagePath)) ?? ""
+        maskPath = (try? c.decode(String.self, forKey: .maskPath)) ?? ""
         strength = (try? c.decode(Double.self, forKey: .strength)) ?? 0.6
         aspect = (try? c.decode(String.self, forKey: .aspect)) ?? ImageAspect.square.rawValue
         customAspect = (try? c.decode(String.self, forKey: .customAspect)) ?? "21:9"
@@ -990,6 +1001,13 @@ final class ImageGenPool: ObservableObject {
         return (configs.first?.prompt ?? "").trimmingCharacters(in: .whitespaces)
     }
 
+    /// Same inheritance as `effectivePrompt`, for the negative prompt.
+    func effectiveNegativePrompt(for c: ImageInstanceConfig) -> String {
+        let own = c.negativePrompt.trimmingCharacters(in: .whitespaces)
+        if !own.isEmpty || c.id == configs.first?.id { return own }
+        return (configs.first?.negativePrompt ?? "").trimmingCharacters(in: .whitespaces)
+    }
+
     func remove(_ id: UUID) {
         guard configs.count > 1 else { return }
         generator(for: id).cancel()
@@ -1060,9 +1078,11 @@ final class ImageGenPool: ObservableObject {
             if let aux { busyGPUs.insert(aux) }
             let (w, h) = c.dimensions
             gen.generate(model: c.resolvedModel(for: hardware), models: models, prompt: job.text,
+                         negativePrompt: effectiveNegativePrompt(for: c),
                          width: w, height: h, steps: c.steps, seed: job.seed, format: c.formatValue,
                          offloadToCPU: c.offloadCPU, gpuIndex: c.gpuIndex, auxGPUIndex: aux ?? -1,
-                         initImagePath: job.initImagePath ?? c.initImagePath, strength: c.strength)
+                         initImagePath: job.initImagePath ?? c.initImagePath,
+                         maskPath: c.maskPath, strength: c.strength)
         }
         if queue.isEmpty && !anyBusy { queueActive = false }
     }
