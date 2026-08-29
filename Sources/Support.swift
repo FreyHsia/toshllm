@@ -190,6 +190,10 @@ enum SettingsKeys {
     static let videoRecipeVersion = "videoRecipeVersion"
     static let videoSize = "videoSize"
     static let videoGPU = "videoGPU"
+    /// Seeded from the model's own default; without it Wan burns the image out.
+    static let videoNegativePrompt = "videoNegativePrompt"
+    /// Seeded once, so emptying the negative on purpose survives a relaunch.
+    static let videoNegativeSeeded = "videoNegativeSeeded"
     /// Decode the frames in tiles (default on): fixed 3.4 GB instead of up to 16.
     static let videoVAETiling = "videoVAETiling"
     static let upscalerFlavor = "upscalerFlavor"

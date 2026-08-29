@@ -20,6 +20,8 @@ struct VideoControls: View {
     @AppStorage(SettingsKeys.videoSize) private var sizeLabel = ""
     @AppStorage(SettingsKeys.videoGPU) private var gpuIndex = -1
     @AppStorage(SettingsKeys.videoVAETiling) private var vaeTiling = true
+    @AppStorage(SettingsKeys.videoNegativePrompt) private var negativePrompt = ""
+    @AppStorage(SettingsKeys.videoNegativeSeeded) private var negativeSeeded = false
     @State private var prompt = ""
     @State private var seed = -1
     @State private var initImage = ""
@@ -45,16 +47,13 @@ struct VideoControls: View {
     private var nativeNote: String {
         let list = model.sizes.map(\.label).joined(separator: ", ")
         guard model.nativeFrames > 0 else {
-            return loc.t("Tamaños del modelo: \(list). A \(model.fps) fps.",
-                         "The model's sizes: \(list). At \(model.fps) fps.")
+            return loc.t("Tamaños del modelo: %@. A %@ fps.", "The model's sizes: %@. At %@ fps.", "\(list)", "\(model.fps)")
         }
         let secs = String(format: "%.1f", VideoGenLimits.seconds(frames: model.nativeFrames, fps: model.fps))
         if frames > model.nativeFrames {
-            return loc.t("Por encima de los \(model.nativeFrames) fotogramas que aprendió el modelo: el movimiento puede irse. Es límite del modelo, no de la app.",
-                         "Past the \(model.nativeFrames) frames the model learned: the motion may drift. That is the model's limit, not the app's.")
+            return loc.t("Por encima de los %@ fotogramas que aprendió el modelo: el movimiento puede irse. Es límite del modelo, no de la app.", "Past the %@ frames the model learned: the motion may drift. That is the model's limit, not the app's.", "\(model.nativeFrames)")
         }
-        return loc.t("Tamaños del modelo: \(list), \(model.nativeFrames) fotogramas (\(secs) s) a \(model.fps) fps.",
-                     "The model's sizes: \(list), \(model.nativeFrames) frames (\(secs) s) at \(model.fps) fps.")
+        return loc.t("Tamaños del modelo: %@, %@ fotogramas (%@ s) a %@ fps.", "The model's sizes: %@, %@ frames (%@ s) at %@ fps.", "\(list)", "\(model.nativeFrames)", "\(secs)", "\(model.fps)")
     }
 
     var body: some View {
@@ -69,6 +68,10 @@ struct VideoControls: View {
         }
         .onAppear {
             if modelName.isEmpty { modelName = VideoGenCatalog.recommended(vramGB: vram).name }
+            if !negativeSeeded {
+                negativePrompt = model.negativePrompt
+                negativeSeeded = true
+            }
             // Preserve manual choices after the one-time recipe migration.
             if recipeVersion < 1 {
                 steps = model.defaultSteps
@@ -78,6 +81,7 @@ struct VideoControls: View {
         .onChange(of: modelName) { _, _ in
             steps = model.defaultSteps
             sizeLabel = ""
+            if VideoGenCatalog.isDefaultNegative(negativePrompt) { negativePrompt = model.negativePrompt }
         }
     }
 
@@ -98,8 +102,7 @@ struct VideoControls: View {
 
                 if !installed { installBox }
                 if !model.fitsVRAMClass(vram) {
-                    Label(loc.t("Pide \(Int(model.minVRAMGB)) GB de VRAM y tienes \(Int(vram))",
-                                "Wants \(Int(model.minVRAMGB)) GB of VRAM and you have \(Int(vram))"),
+                    Label(loc.t("Pide %@ GB de VRAM y tienes %@", "Wants %@ GB of VRAM and you have %@", "\(Int(model.minVRAMGB))", "\(Int(vram))"),
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
@@ -117,8 +120,7 @@ struct VideoControls: View {
                     models.downloadImageComponent(urlString: comp.urlString, fileName: comp.fileName)
                 }
             } label: {
-                Label(loc.t("Descargar todo (\(String(format: "%.1f", missingGB)) GB)",
-                            "Download all (\(String(format: "%.1f", missingGB)) GB)"),
+                Label(loc.t("Descargar todo (%@ GB)", "Download all (%@ GB)", "\(String(format: "%.1f", missingGB))"),
                       systemImage: "arrow.down.circle.fill")
                     .frame(maxWidth: .infinity)
             }
@@ -166,6 +168,8 @@ struct VideoControls: View {
                     .frame(height: 80)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
 
+                negativePromptRow
+
                 if model.supportsI2V {
                     HStack {
                         Text(loc.t("Imagen inicial", "Init image")).font(.caption)
@@ -186,6 +190,30 @@ struct VideoControls: View {
                 }
             }
         }
+    }
+
+    private var negativePromptRow: some View {
+        let tip = loc.t("Lo que NO debe aparecer. Viene relleno con el negativo recomendado del modelo; vaciarlo suele quemar la imagen.",
+                        "What must NOT appear. Prefilled with the model's recommended negative; emptying it usually burns the image out.")
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                TextEditor(text: $negativePrompt)
+                    .font(.system(size: 11))
+                    .frame(height: 60)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                Button(loc.t("Restaurar el del modelo", "Restore the model's")) {
+                    negativePrompt = model.negativePrompt
+                }
+                .font(.caption).buttonStyle(.borderless)
+                .disabled(negativePrompt == model.negativePrompt)
+                .help(loc.t("Vuelve a poner el negativo recomendado de %@.",
+                            "Puts %@'s recommended negative back.", model.name))
+            }
+            .padding(.top, 4)
+        } label: {
+            Text(loc.t("Prompt negativo", "Negative prompt")).font(.caption)
+        }
+        .help(tip)
     }
 
     private var settingsCard: some View {
@@ -211,8 +239,7 @@ struct VideoControls: View {
                             "The temporal VAEs supported by the engine require 4n+1 frame counts."))
 
                 if let recommended = VideoGenLimits.recommendedVRAMGB(model: model, frames: frames) {
-                    Label(loc.t("Este ajuste recomienda \(Int(recommended)) GB de VRAM. En 12 GB queda menos de 2 GB libres para el escritorio y otras apps.",
-                                "This setting recommends \(Int(recommended)) GB of VRAM. On 12 GB, less than 2 GB remains for the desktop and other apps."),
+                    Label(loc.t("Este ajuste recomienda %@ GB de VRAM. En 12 GB queda menos de 2 GB libres para el escritorio y otras apps.", "This setting recommends %@ GB of VRAM. On 12 GB, less than 2 GB remains for the desktop and other apps.", "\(Int(recommended))"),
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
@@ -220,8 +247,8 @@ struct VideoControls: View {
                 LabeledContent(loc.t("Pasos", "Steps")) {
                     Stepper("\(steps)", value: $steps, in: 8...60, step: 2).frame(width: 130)
                 }
-                .help(loc.t("Recomendación para \(model.name): \(model.defaultSteps) pasos.",
-                            "Recommended for \(model.name): \(model.defaultSteps) steps."))
+                .help(loc.t("Recomendación para %@: %@ pasos.",
+                            "Recommended for %@: %@ steps.", model.name, String(model.defaultSteps)))
 
                 Toggle(loc.t("Decodificar por trozos", "Decode in tiles"), isOn: $vaeTiling)
                     .help(loc.t("Recomendado. Sin esto el decodificado aclara un fotograma de cada cuatro y el clip parpadea, y además pide hasta 16 GB en vez de 3.4. Cuesta un 26% del decodificado.",
@@ -230,8 +257,7 @@ struct VideoControls: View {
                 Text(nativeNote).font(.caption2).foregroundStyle(.secondary)
 
                 if vramFraction > 0.9 && VideoGenLimits.recommendedVRAMGB(model: model, frames: frames) == nil {
-                    Label(loc.t("Estimo ~\(Int(vramFraction * 100))% de la VRAM. Si falla, baja los fotogramas antes que el tamaño.",
-                                "I estimate ~\(Int(vramFraction * 100))% of VRAM. If it fails, drop the frame count before the size."),
+                    Label(loc.t("Estimo ~%@% de la VRAM. Si falla, baja los fotogramas antes que el tamaño.", "I estimate ~%@% of VRAM. If it fails, drop the frame count before the size.", "\(Int(vramFraction * 100))"),
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
@@ -258,7 +284,7 @@ struct VideoControls: View {
                     Text(stageText).font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     if let eta = gen.etaSeconds {
-                        Text(loc.t("~\(eta)s restantes", "~\(eta)s left"))
+                        Text(loc.t("~%@s restantes", "~%@s left", "\(eta)"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -266,6 +292,7 @@ struct VideoControls: View {
             } else {
                 Button {
                     gen.generate(model: model, models: models, prompt: prompt,
+                                 negativePrompt: negativePrompt,
                                  width: size.width, height: size.height, frames: frames,
                                  steps: steps, seed: seed, fps: model.fps, gpuIndex: gpuIndex,
                                  initImagePath: initImage)
@@ -285,7 +312,7 @@ struct VideoControls: View {
     private var stageText: String {
         switch gen.stage {
         case .loading:  return loc.t("Cargando el modelo…", "Loading the model…")
-        case .sampling: return loc.t("Generando \(gen.stepText)", "Sampling \(gen.stepText)")
+        case .sampling: return loc.t("Generando %@", "Sampling %@", "\(gen.stepText)")
         case .decoding: return loc.t("Decodificando los fotogramas…", "Decoding the frames…")
         }
     }
@@ -414,8 +441,7 @@ struct VideoCanvas: View {
                 Text("\(frameIndex + 1)/\(gen.frames.count)")
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             } else {
-                Text(loc.t("\(gen.frames.count) fotogramas · \(gen.lastDuration)s en generarse",
-                           "\(gen.frames.count) frames · \(gen.lastDuration)s to generate"))
+                Text(loc.t("%@ fotogramas · %@s en generarse", "%@ frames · %@s to generate", "\(gen.frames.count)", "\(gen.lastDuration)"))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }

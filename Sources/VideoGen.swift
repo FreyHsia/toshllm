@@ -200,6 +200,13 @@ enum VideoGenCatalog {
     static let all: [VideoGenModel] = [wan21T2V13B, wan22TI2V5B, wan21I2V14B,
                                        ltx23Distilled, hunyuanVideo15]
 
+    /// Still some model's untouched default, so a model switch may reseed it.
+    /// An emptied field is a deliberate choice and does not count.
+    static func isDefaultNegative(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && all.contains { $0.negativePrompt == t }
+    }
+
     /// Largest model the card can hold, falling back to the lightest.
     static func recommended(vramGB: Double) -> VideoGenModel {
         all.filter { $0.recommendable && $0.fitsVRAMClass(vramGB) }
@@ -323,6 +330,7 @@ final class VideoGenerator: ObservableObject {
     }
 
     func generate(model: VideoGenModel, models: ModelStore, prompt: String,
+                  negativePrompt: String,
                   width: Int, height: Int, frames frameCount: Int, steps: Int,
                   seed: Int, fps: Int, gpuIndex: Int,
                   initImagePath: String = "") {
@@ -343,7 +351,6 @@ final class VideoGenerator: ObservableObject {
         }
         args += [
             "-p", prompt,
-            "-n", model.negativePrompt,
             "--cfg-scale", String(format: "%.1f", model.cfgScale),
             "--flow-shift", String(format: "%.1f", model.flowShift),
             "--sampling-method", "euler",
@@ -360,6 +367,8 @@ final class VideoGenerator: ObservableObject {
             // a PNG sequence, not a container: the app animates the frames
             "-o", runDir.appendingPathComponent("frame_%03d.png").path,
         ]
+        let negative = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !negative.isEmpty { args += ["-n", negative] }
         if !initImagePath.isEmpty && model.supportsI2V {
             args += ["-i", initImagePath]
         }
