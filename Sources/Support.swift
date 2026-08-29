@@ -178,6 +178,8 @@ enum SettingsKeys {
     static let imagenModel = "imagenModel"
     static let imagenCustomModel = "imagenCustomModel"
     static let imagenCustomVAE = "imagenCustomVAE"
+    static let imagenCustomTextEncoder = "imagenCustomTextEncoder"
+    static let imagenCustomIsDiffusion = "imagenCustomIsDiffusion"
     static let imagenCustomCfg = "imagenCustomCfg"
     static let imagenInitImage = "imagenInitImage"
     static let imagenStrength = "imagenStrength"

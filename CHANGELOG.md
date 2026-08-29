@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Images: a custom model can now be a diffusion model, not just a full checkpoint.** Point the app at the diffusion file, its VAE and its text encoder, and models published that way (Z-Image, Flux 2, Qwen-Image) run like the catalogue ones.
+
 ### Fixed
 
 - **Images: models carrying bf16 weights now load on older cards.** Flux 2 aborted on a Radeon RX 500 or Vega with "cannot run the operation"; those weights are converted as they load, at the same size and with the picture unchanged. Reported by Slice.

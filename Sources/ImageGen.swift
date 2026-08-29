@@ -298,15 +298,20 @@ enum ImageGenCatalog {
     /// Build a model from user-picked files: a checkpoint (or diffusion model) and
     /// an optional VAE. Passed as a full checkpoint via --model, which covers most
     /// community SD/SDXL finetunes; minVRAMGB 0 so it's never blocked.
-    static func custom(modelPath: String, vaePath: String, steps: Int, cfg: Double) -> ImageGenModel {
+    static func custom(modelPath: String, vaePath: String, textEncoderPath: String = "",
+                       isDiffusion: Bool = false, steps: Int, cfg: Double) -> ImageGenModel {
         func gb(_ p: String) -> Double {
             let bytes = (try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? Int ?? 0
             return Double(bytes) / 1_073_741_824
         }
-        var comps = [ImageGenComponent(kind: .checkpoint, urlString: "",
+        var comps = [ImageGenComponent(kind: isDiffusion ? .diffusion : .checkpoint, urlString: "",
                                        fileName: modelPath, sizeGB: gb(modelPath))]
         if !vaePath.isEmpty {
             comps.append(ImageGenComponent(kind: .vae, urlString: "", fileName: vaePath, sizeGB: gb(vaePath)))
+        }
+        if !textEncoderPath.isEmpty {
+            comps.append(ImageGenComponent(kind: .textEncoder, urlString: "",
+                                           fileName: textEncoderPath, sizeGB: gb(textEncoderPath)))
         }
         // Assume the SD/SDXL UNet family (the common custom case) for the VRAM cap.
         return ImageGenModel(name: "Custom",
@@ -799,6 +804,12 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
     var modelID = ""
     var customModelPath = ""
     var customVAEPath = ""
+    /// Text encoder for custom models that ship the DiT alone (Z-Image, Flux 2,
+    /// Qwen-Image): those need an LLM encoder, a full checkpoint does not.
+    var customTextEncoderPath = ""
+    /// The custom file is a bare diffusion model (--diffusion-model) instead of a
+    /// full checkpoint (--model). The engine cannot tell them apart by extension.
+    var customIsDiffusion = false
     var customCfg = 7.0
     var prompt = ""
     /// Ignored at CFG 1: the sampler never runs the unconditional branch there.
@@ -828,6 +839,8 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
         modelID = (try? c.decode(String.self, forKey: .modelID)) ?? ""
         customModelPath = (try? c.decode(String.self, forKey: .customModelPath)) ?? ""
         customVAEPath = (try? c.decode(String.self, forKey: .customVAEPath)) ?? ""
+        customTextEncoderPath = (try? c.decode(String.self, forKey: .customTextEncoderPath)) ?? ""
+        customIsDiffusion = (try? c.decode(Bool.self, forKey: .customIsDiffusion)) ?? false
         customCfg = (try? c.decode(Double.self, forKey: .customCfg)) ?? 7.0
         prompt = (try? c.decode(String.self, forKey: .prompt)) ?? ""
         negativePrompt = (try? c.decode(String.self, forKey: .negativePrompt)) ?? ""
@@ -867,6 +880,8 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
     func resolvedModel(for hw: HardwareInfo) -> ImageGenModel {
         if isCustom {
             return ImageGenCatalog.custom(modelPath: customModelPath, vaePath: customVAEPath,
+                                          textEncoderPath: customTextEncoderPath,
+                                          isDiffusion: customIsDiffusion,
                                           steps: steps, cfg: customCfg)
         }
         return ImageGenCatalog.model(id: modelID)
@@ -939,6 +954,8 @@ final class ImageGenPool: ObservableObject {
         c.modelID = d.string(forKey: SettingsKeys.imagenModel) ?? ""
         c.customModelPath = d.string(forKey: SettingsKeys.imagenCustomModel) ?? ""
         c.customVAEPath = d.string(forKey: SettingsKeys.imagenCustomVAE) ?? ""
+        c.customTextEncoderPath = d.string(forKey: SettingsKeys.imagenCustomTextEncoder) ?? ""
+        c.customIsDiffusion = d.bool(forKey: SettingsKeys.imagenCustomIsDiffusion)
         c.customCfg = dbl(SettingsKeys.imagenCustomCfg, 7.0)
         c.prompt = d.string(forKey: SettingsKeys.imagenPrompt) ?? ""
         c.initImagePath = d.string(forKey: SettingsKeys.imagenInitImage) ?? ""

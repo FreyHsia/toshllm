@@ -898,14 +898,32 @@ struct ImageInstanceForm: View {
         }
     }
 
-    /// Custom model setup: point the app at a checkpoint (and optional VAE) the
-    /// user downloaded themselves, plus the CFG their model expects.
+    /// Custom model setup: point the app at a checkpoint or a bare diffusion model
+    /// (with its VAE and text encoder) the user downloaded themselves, plus the
+    /// CFG their model expects.
     private var customSetup: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Picker(loc.t("Tipo", "Kind"), selection: $cfg.customIsDiffusion) {
+                Text(loc.t("Checkpoint completo", "Full checkpoint")).tag(false)
+                Text(loc.t("Modelo de difusión", "Diffusion model")).tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .help(loc.t("Un checkpoint (SD, SDXL) lleva dentro el VAE y el codificador. Un modelo de difusión suelto (Z-Image, Flux 2, Qwen-Image) necesita además su VAE y su codificador de texto.",
+                        "A checkpoint (SD, SDXL) bundles its VAE and encoder. A bare diffusion model (Z-Image, Flux 2, Qwen-Image) also needs its VAE and text encoder."))
             filePickRow(loc.t("Archivo del modelo", "Model file"), path: $cfg.customModelPath,
                         types: ["safetensors", "gguf", "ckpt"])
-            filePickRow(loc.t("VAE (opcional)", "VAE (optional)"), path: $cfg.customVAEPath,
-                        types: ["safetensors", "gguf"])
+            filePickRow(cfg.customIsDiffusion ? "VAE" : loc.t("VAE (opcional)", "VAE (optional)"),
+                        path: $cfg.customVAEPath, types: ["safetensors", "gguf"])
+            if cfg.customIsDiffusion {
+                filePickRow(loc.t("Codificador de texto", "Text encoder"),
+                            path: $cfg.customTextEncoderPath, types: ["safetensors", "gguf"])
+                if cfg.customVAEPath.isEmpty || cfg.customTextEncoderPath.isEmpty {
+                    Label(loc.t("Un modelo de difusión no genera nada sin su VAE y su codificador de texto.",
+                                "A diffusion model renders nothing without its VAE and text encoder."),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
             HStack(spacing: 6) {
                 Text("CFG").font(.callout)
                 Spacer(minLength: 8)
@@ -914,8 +932,8 @@ struct ImageInstanceForm: View {
                     .help(loc.t("Guía. Modelos turbo ~1, normales ~7. Según la ficha del modelo.",
                                 "Guidance. Turbo models ~1, normal ~7. Per the model's card."))
             }
-            Text(loc.t("Formatos: .safetensors / .gguf. Ajusta pasos y CFG según tu modelo.",
-                       "Formats: .safetensors / .gguf. Set steps and CFG to match your model."))
+            Text(loc.t("Formatos: .safetensors / .gguf. Ajusta pasos y CFG según tu modelo (los turbo suelen querer CFG 1).",
+                       "Formats: .safetensors / .gguf. Set steps and CFG to match your model (turbo ones usually want CFG 1)."))
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
