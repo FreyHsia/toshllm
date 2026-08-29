@@ -76,8 +76,10 @@ final class SubtitleVideoExporter: ObservableObject {
             postProcessingAsVideoLayer: videoLayer, in: parentLayer
         )
 
-        guard let export = AVAssetExportSession(asset: composition,
-                                                presetName: AVAssetExportPresetHighestQuality) else {
+        try await Self.preserveColour(from: sourceVideo, on: videoComposition)
+
+        let preset = await Self.preset(for: composition, source: sourceVideo)
+        guard let export = AVAssetExportSession(asset: composition, presetName: preset) else {
             throw CocoaError(.fileWriteUnknown)
         }
         try? FileManager.default.removeItem(at: outputURL)
@@ -98,6 +100,33 @@ final class SubtitleVideoExporter: ObservableObject {
         if export.status != .completed {
             throw export.error ?? CocoaError(.fileWriteUnknown)
         }
+    }
+
+    /// Burning text in means re-encoding, but not necessarily down a generation:
+    /// an HEVC source re-encoded as H.264 pays for nothing.
+    nonisolated private static func preset(for composition: AVAsset,
+                                           source: AVAssetTrack) async -> String {
+        let available = AVAssetExportSession.exportPresets(compatibleWith: composition)
+        guard let formats = try? await source.load(.formatDescriptions),
+              formats.contains(where: { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_HEVC }),
+              available.contains(AVAssetExportPresetHEVCHighestQuality) else {
+            return AVAssetExportPresetHighestQuality
+        }
+        return AVAssetExportPresetHEVCHighestQuality
+    }
+
+    /// Without carrying the source's colour tags across, a wide-gamut or HDR clip
+    /// comes back flattened.
+    nonisolated private static func preserveColour(from source: AVAssetTrack,
+                                                   on composition: AVMutableVideoComposition) async throws {
+        guard let format = try await source.load(.formatDescriptions).first else { return }
+        let ext = CMFormatDescriptionGetExtensions(format) as? [CFString: Any]
+        guard let primaries = ext?[kCMFormatDescriptionExtension_ColorPrimaries] as? String,
+              let transfer = ext?[kCMFormatDescriptionExtension_TransferFunction] as? String,
+              let matrix = ext?[kCMFormatDescriptionExtension_YCbCrMatrix] as? String else { return }
+        composition.colorPrimaries = primaries
+        composition.colorTransferFunction = transfer
+        composition.colorYCbCrMatrix = matrix
     }
 
     nonisolated private static func subtitleLayer(for cue: SubtitleCue, size: CGSize,
