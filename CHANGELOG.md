@@ -19,6 +19,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** It wrote 1.6 tokens/s where the same model now writes 58, on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
 - **Answers split across three or more cards can no longer come back silently wrong.** An exchange that failed midway through the sum was counted twice, and a card could be told the work was done while another was still reading its memory. Thanks to [Mallory M.](https://github.com/malzzz).
+- **The subtitle size setting works across its whole range.** Below the middle of the slider every value rendered the same, because an internal floor was measured in points against a preview still rather than the video.
 - **A captioned video keeps the codec and the colour of the original.** An HEVC clip was re-encoded as H.264, and a wide-gamut or HDR one came back flattened.
 - **The transcript keeps the view you chose once a translation finishes.** It dropped to translation-only even with bilingual selected, and switching away and back was the only way to get it back.
 - **Long subtitles are no longer cut off in the exported video.** The caption box was a fixed height, so anything that needed more lines than fitted was clipped. It now grows to the text, and shrinks the text only when it would not fit on screen.

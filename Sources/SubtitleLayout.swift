@@ -24,11 +24,14 @@ enum SubtitleLayout {
         let textWidth = max(1, width - inset * 2)
         let maxTextHeight = max(1, frame.height * (1 - style.margin) - inset * 2)
 
-        var size = max(style.minPointSize, frame.height * style.relativeSize)
+        // The chosen size is the starting point, never clamped up: the floor only
+        // bounds the shrink, and cannot exceed what was asked for.
+        var size = max(1, frame.height * style.relativeSize)
+        let floor = min(size, max(1, frame.height * style.minRelativeSize))
         var attributed = string(text, style: style, pointSize: size)
         var measured = measure(attributed, width: textWidth)
-        while measured.height > maxTextHeight, size > style.minPointSize {
-            size = max(style.minPointSize, size - 1)
+        while measured.height > maxTextHeight, size > floor {
+            size = max(floor, size - 1)
             attributed = string(text, style: style, pointSize: size)
             measured = measure(attributed, width: textWidth)
         }

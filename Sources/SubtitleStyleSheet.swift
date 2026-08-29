@@ -128,7 +128,8 @@ struct SubtitleStyleSheet: View {
         let asset = AVURLAsset(url: sourceURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 1280, height: 1280)
+        // A small still would make the caption look different from the export.
+        generator.maximumSize = CGSize(width: 1920, height: 1920)
         // The middle of the clip beats the first frame, which is often black.
         let at = (try? await asset.load(.duration)).map { CMTime(seconds: $0.seconds / 2, preferredTimescale: 600) }
         guard let at, let cg = try? await generator.image(at: at).image else { render(); return }

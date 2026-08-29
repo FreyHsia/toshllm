@@ -27,8 +27,9 @@ struct SubtitleStyle: Codable, Equatable {
     var margin = 0.06
     /// Fraction of the frame width the text may occupy.
     var maxWidth = 0.86
-    /// Below this the text is never shrunk further, even if it has to be tall.
-    var minPointSize = 14.0
+    /// Floor for the shrink-to-fit, also a fraction of the height: an absolute
+    /// point size would mean something different on a still than on the video.
+    var minRelativeSize = 0.012
 
     static let `default` = SubtitleStyle()
 

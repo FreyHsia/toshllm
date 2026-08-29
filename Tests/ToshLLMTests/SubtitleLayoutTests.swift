@@ -36,7 +36,7 @@ final class SubtitleLayoutTests: XCTestCase {
         let text = String(repeating: "texto ", count: 400)
         let l = SubtitleLayout.layout(text: text, style: .default, frame: frame)
         XCTAssertLessThan(l.pointSize, frame.height * SubtitleStyle.default.relativeSize)
-        XCTAssertGreaterThanOrEqual(l.pointSize, SubtitleStyle.default.minPointSize)
+        XCTAssertGreaterThanOrEqual(l.pointSize, frame.height * SubtitleStyle.default.minRelativeSize - 1)
         // Past the minimum size the box grows rather than clip, but it stays on screen.
         XCTAssertLessThanOrEqual(l.box.maxY, frame.height)
         XCTAssertGreaterThanOrEqual(l.box.minY, 0)
@@ -60,17 +60,23 @@ final class SubtitleLayoutTests: XCTestCase {
 }
 
 extension SubtitleLayoutTests {
-    /// The chosen size has to survive across the slider's range; an internal cap
-    /// tighter than the screen made it stop responding on tall frames.
-    func testSizeSliderKeepsWorkingOnAPortraitFrame() {
-        let portrait = CGSize(width: 720, height: 1280)
+    /// The chosen size has to survive across the slider's range, at any frame
+    /// size: an absolute point floor pinned it on a small preview still.
+    func testSizeSliderKeepsWorkingOnASmallStill() {
+        assertSliderResponds(on: CGSize(width: 640, height: 360))
+        assertSliderResponds(on: CGSize(width: 720, height: 1280))
+        assertSliderResponds(on: CGSize(width: 3840, height: 2160))
+    }
+
+    private func assertSliderResponds(on portrait: CGSize) {
         let caption = "Y entonces le dije que no podíamos seguir así, que llevábamos meses dando vueltas al mismo asunto."
         var previous = 0.0
         for milli in stride(from: 20, through: 60, by: 5) {
             var style = SubtitleStyle.default
             style.relativeSize = Double(milli) / 1000
             let size = SubtitleLayout.layout(text: caption, style: style, frame: portrait).pointSize
-            XCTAssertGreaterThan(size, previous, "the slider stopped responding at \(milli)")
+            XCTAssertGreaterThan(size, previous,
+                                 "the slider stopped responding at \(milli) on \(Int(portrait.height))px")
             previous = size
         }
     }
