@@ -143,7 +143,7 @@ struct BenchmarksView: View {
 
     private var inheritanceLabel: String {
         if let id = selectedProfile, let p = profileStore.profiles.first(where: { $0.id == id }) {
-            return loc.t("Configuración del perfil «\(p.name)»", "Config from profile “\(p.name)”")
+            return loc.t("Configuración del perfil «%@»", "Config from profile “%@”", "\(p.name)")
         }
         return loc.t("Configuración heredada de Ajustes", "Config inherited from Settings")
     }
@@ -196,10 +196,14 @@ struct BenchmarksView: View {
                 field(loc.t("Modelo", "Model")) {
                     Picker("", selection: modelBinding) {
                         Text(loc.t("— elegir —", "— pick —")).tag("")
-                        ForEach(models.models) { m in
-                            Text(ModelName.forPath(m.url.path).display
-                                 + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""))
-                                .tag(m.url.path)
+                        ForEach(ModelFamilyGroup.grouped(models.models)) { group in
+                            Section(group.isOther ? loc.t("Otros", "Others") : group.family) {
+                                ForEach(group.models) { m in
+                                    Text(ModelName.forPath(m.url.path).display
+                                         + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""))
+                                        .tag(m.url.path)
+                                }
+                            }
                         }
                     }
                     .labelsHidden().frame(maxWidth: 480, alignment: .leading)
@@ -285,7 +289,7 @@ struct BenchmarksView: View {
                     HStack(spacing: 10) {
                         Label(bench.sweepStatus, systemImage: "scope")
                             .font(.callout).foregroundStyle(Color.appAccent)
-                        Button(loc.t("Aplicar ncmoe \(best)", "Apply ncmoe \(best)")) {
+                        Button(loc.t("Aplicar ncmoe %@", "Apply ncmoe %@", "\(best)")) {
                             cfg.ncmoe = best
                             ServerSettings.rememberNcmoe(best, forModel: cfg.modelPath)
                             bench.sweepBest = nil
@@ -466,8 +470,7 @@ struct BenchmarksView: View {
                   systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         } else {
-            Text(loc.t("Mide pp\(cfg.benchPPClamped) (prompt) y tg\(cfg.benchTGClamped) (generación), 2 repeticiones. Tarda varios minutos en modelos grandes.",
-                       "Measures pp\(cfg.benchPPClamped) (prompt) and tg\(cfg.benchTGClamped) (generation), 2 repetitions. Takes minutes on large models."))
+            Text(loc.t("Mide pp%@ (prompt) y tg%@ (generación), 2 repeticiones. Tarda varios minutos en modelos grandes.", "Measures pp%@ (prompt) and tg%@ (generation), 2 repetitions. Takes minutes on large models.", "\(cfg.benchPPClamped)", "\(cfg.benchTGClamped)"))
                 .font(.caption).foregroundStyle(.secondary)
             if !cfg.modelPath.isEmpty && ServerSettings.modelUsesMTP(at: cfg.modelPath) {
                 Label(loc.t("Ejecutar mide el decode crudo, sin MTP. Para la velocidad real de este modelo usa \"Generación real\".",
@@ -616,8 +619,7 @@ struct BenchmarksView: View {
         // would squash the generation bars, so each metric normalizes to its own max.
         let maxTG = recent.map(\.tg).max() ?? 1
         let maxPP = recent.map(\.pp).max() ?? 1
-        return Card(title: loc.t("Comparativa (últimas \(recent.count) corridas)",
-                                 "Comparison (last \(recent.count) runs)"), icon: "chart.bar") {
+        return Card(title: loc.t("Comparativa (últimas %@ corridas)", "Comparison (last %@ runs)", "\(recent.count)"), icon: "chart.bar") {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(recent) { r in
                     HStack(alignment: .center, spacing: 12) {

@@ -61,7 +61,7 @@ struct DashboardView: View {
     private var updateBanner: some View {
         if let version = updates.latestVersion {
             HStack {
-                Label(loc.t("ToshLLM \(version) está disponible", "ToshLLM \(version) is available"),
+                Label(loc.t("ToshLLM %@ está disponible", "ToshLLM %@ is available", "\(version)"),
                       systemImage: "arrow.down.app")
                     .fontWeight(.medium)
                 Spacer()
@@ -144,7 +144,7 @@ struct DashboardView: View {
         Button {
             let n = manager.servers.count + 1
             let new = withAnimation(.snappy) {
-                manager.addServer(name: loc.t("Servidor \(n)", "Server \(n)"), from: nil)
+                manager.addServer(name: loc.t("Servidor %@", "Server %@", "\(n)"), from: nil)
             }
             // The card is appended at the end of the grid, often below the fold;
             // scroll to it so the click visibly produces something.
@@ -171,8 +171,7 @@ struct DashboardView: View {
             if routerMode {
                 HStack(spacing: 8) {
                     Image(systemName: "shippingbox.and.arrow.backward").frame(width: 18).foregroundStyle(.secondary)
-                    Text(loc.t("Router: sirve los \(models.models.count) modelos descargados",
-                               "Router: serves all \(models.models.count) downloaded models"))
+                    Text(loc.t("Router: sirve los %@ modelos descargados", "Router: serves all %@ downloaded models", "\(models.models.count)"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
             } else {
@@ -185,11 +184,15 @@ struct DashboardView: View {
                         ncmoe = Estimator.ncmoeForSelection(path: p, models: models.models)
                     })) {
                         Text(loc.t("Sin modelo", "No model")).tag("")
-                        ForEach(models.models) {
-                            Text(ModelName.forPath($0.url.path).display
-                                 + (ModelTraitsCache.cached(for: $0.url.path)?
-                                        .pickerSuffix(spanish: loc.isSpanish) ?? ""))
-                                .tag($0.url.path)
+                        ForEach(ModelFamilyGroup.grouped(models.models)) { group in
+                            Section(group.isOther ? loc.t("Otros", "Others") : group.family) {
+                                ForEach(group.models) {
+                                    Text(ModelName.forPath($0.url.path).display
+                                         + (ModelTraitsCache.cached(for: $0.url.path)?
+                                                .pickerSuffix(spanish: loc.isSpanish) ?? ""))
+                                        .tag($0.url.path)
+                                }
+                            }
                         }
                     }
                     .labelsHidden()
@@ -208,7 +211,7 @@ struct DashboardView: View {
             if ServerSettings.modelIsMoE(at: modelPath) {
                 HStack(spacing: 8) {
                     Image(systemName: "cpu").frame(width: 18).foregroundStyle(.secondary)
-                    Text(loc.t("Expertos MoE en CPU: \(ncmoe)", "MoE experts on CPU: \(ncmoe)")).font(.callout)
+                    Text(loc.t("Expertos MoE en CPU: %@", "MoE experts on CPU: %@", "\(ncmoe)")).font(.callout)
                     Spacer(minLength: 8)
                     Stepper("", value: Binding(get: { ncmoe }, set: { v in
                         ncmoe = v
@@ -233,7 +236,7 @@ struct DashboardView: View {
                                     "With the whole model on the GPU, every token re-reads the weights from VRAM: generation speed depends on the card's bandwidth and the file size (a smaller quantization generates faster)."))
                 }
             }
-            row("number", loc.t("Peticiones: \(server.requestCount)", "Requests: \(server.requestCount)"))
+            row("number", loc.t("Peticiones: %@", "Requests: %@", "\(server.requestCount)"))
 
             // Quick access to the two settings most often changed when sharing the
             // server. Locked while running — they apply on the next start. Same row
@@ -448,8 +451,7 @@ struct MachineCard: View {
                 .replacingOccurrences(of: "(R)", with: "")
                 .replacingOccurrences(of: "(TM)", with: ""))
             row("square.grid.3x3",
-                loc.t("\(machine.physicalCores) núcleos / \(machine.logicalCores) hilos",
-                      "\(machine.physicalCores) cores / \(machine.logicalCores) threads"))
+                loc.t("%@ núcleos / %@ hilos", "%@ cores / %@ threads", "\(machine.physicalCores)", "\(machine.logicalCores)"))
             row("memorychip", String(format: "%.0f GB RAM", machine.ramGB))
             if machine.splitEligibleGPUs.count > 1 {
                 HStack(spacing: 8) {
@@ -486,8 +488,7 @@ struct MachineCard: View {
             // A Duo is one card with two GPUs, so the card count alone hides half of them.
             let dies = g.gpus == g.cards ? "" : " · \(g.gpus) GPUs"
             if g.cards == 1 && g.gpus == 1 { return "\(head) · \(g.vramGB) GB" }
-            return loc.t("\(head)\(dies) · \(g.vramGB) GB c/u",
-                         "\(head)\(dies) · \(g.vramGB) GB each")
+            return loc.t("%@%@ · %@ GB c/u", "%@%@ · %@ GB each", "\(head)", "\(dies)", "\(g.vramGB)")
         }
     }
 
@@ -495,7 +496,7 @@ struct MachineCard: View {
     private var gpuCountSummary: String {
         let gpus = machine.splitEligibleGPUs
         let total = gpus.reduce(0) { $0 + $1.vramGB }
-        return loc.t("\(gpus.count) GPUs · \(total) GB de VRAM", "\(gpus.count) GPUs · \(total) GB VRAM")
+        return loc.t("%@ GPUs · %@ GB de VRAM", "%@ GPUs · %@ GB VRAM", "\(gpus.count)", "\(total)")
     }
 
     private var gpuDetailPopover: some View {
@@ -524,8 +525,7 @@ struct MachineCard: View {
         let list = machine.gpus
             .map { "\($0.name) · \($0.vramGB) GB\($0.isExternal ? " · eGPU" : "")" }
             .joined(separator: "\n")
-        return loc.t("VRAM que reporta Metal, no la nominal de la caja. Solo se suma cuando repartes un modelo entre varias GPUs; un modelo que no reparta debe caber en una sola.\n\n\(list)",
-                     "VRAM as Metal reports it, not the number on the box. It only adds up when you split a model across several GPUs; a model that is not split has to fit in one.\n\n\(list)")
+        return loc.t("VRAM que reporta Metal, no la nominal de la caja. Solo se suma cuando repartes un modelo entre varias GPUs; un modelo que no reparta debe caber en una sola.\n\n%@", "VRAM as Metal reports it, not the number on the box. It only adds up when you split a model across several GPUs; a model that is not split has to fit in one.\n\n%@", "\(list)")
     }
 
     /// The memory behind a link is what a split model moves without touching RAM.
@@ -537,12 +537,10 @@ struct MachineCard: View {
         }
         if let only = groups.first, groups.count == 1 {
             let total = only.reduce(0) { $0 + $1.vramGB }
-            return loc.t("Infinity Fabric: \(only.count) GPUs enlazadas · \(total) GB",
-                         "Infinity Fabric: \(only.count) GPUs linked · \(total) GB")
+            return loc.t("Infinity Fabric: %@ GPUs enlazadas · %@ GB", "Infinity Fabric: %@ GPUs linked · %@ GB", "\(only.count)", "\(total)")
         }
         let totals = groups.map { String($0.reduce(0) { $0 + $1.vramGB }) }.joined(separator: " + ")
-        return loc.t("Infinity Fabric: \(groups.count) enlaces · \(totals) GB",
-                     "Infinity Fabric: \(groups.count) links · \(totals) GB")
+        return loc.t("Infinity Fabric: %@ enlaces · %@ GB", "Infinity Fabric: %@ links · %@ GB", "\(groups.count)", "\(totals)")
     }
 
     private var peerLinkRows: [String] {
@@ -560,7 +558,7 @@ struct MachineCard: View {
             let names = Set(members.map(\.name))
             let what = names.count == 1
                 ? "\(members.count) × \(members[0].name)"
-                : loc.t("\(members.count) GPUs", "\(members.count) GPUs")
+                : loc.t("%@ GPUs", "%@ GPUs", "\(members.count)")
             return "\(prefix): \(what) · \(total) GB"
         }
     }
@@ -647,7 +645,7 @@ struct GPUsCard: View {
         // Nothing on unlinked cards: the row tooltip spells that out.
         if let label = labels[g.peerGroupID] {
             let name = labels.count > 1 ? "Fabric \(label)" : "Fabric"
-            capsule(peerInUse ? name : loc.t("\(name) · sin usar", "\(name) · unused"),
+            capsule(peerInUse ? name : loc.t("%@ · sin usar", "%@ · unused", "\(name)"),
                     icon: peerInUse ? "link" : "link.badge.plus",
                     tint: peerInUse ? (peerColors[g.peerGroupID] ?? .accentColor) : .secondary)
         }
@@ -664,7 +662,7 @@ struct GPUsCard: View {
     }
 
     private func rowTooltip(_ g: GPUStat) -> String {
-        let vramUse = loc.t("VRAM en uso de \(g.name).", "VRAM in use on \(g.name).")
+        let vramUse = loc.t("VRAM en uso de %@.", "VRAM in use on %@.", "\(g.name)")
         let labels = peerLabels
         guard !labels.isEmpty else { return vramUse }
         guard let label = labels[g.peerGroupID] else {
@@ -672,8 +670,7 @@ struct GPUsCard: View {
                                    " No Infinity Fabric link: its copies go through system RAM.")
         }
         let peers = vram.gpus.filter { $0.peerGroupID == g.peerGroupID }.count
-        let linked = vramUse + loc.t(" Enlazada por Infinity Fabric con otras \(peers - 1) GPUs (grupo \(label)).",
-                                     " Linked by Infinity Fabric to \(peers - 1) other GPUs (group \(label)).")
+        let linked = vramUse + loc.t(" Enlazada por Infinity Fabric con otras %@ GPUs (grupo %@).", " Linked by Infinity Fabric to %@ other GPUs (group %@).", "\(peers - 1)", "\(label)")
         if peerInUse {
             return linked + loc.t(" Se están copiando activaciones entre ellas sin pasar por la RAM.",
                                   " Activations are being copied between them without going through RAM.")
@@ -764,8 +761,7 @@ struct AddedServerCard: View {
             if routerMode {
                 HStack(spacing: 8) {
                     Image(systemName: "shippingbox.and.arrow.backward").frame(width: 18).foregroundStyle(.secondary)
-                    Text(loc.t("Router: sirve los \(models.models.count) modelos descargados",
-                               "Router: serves all \(models.models.count) downloaded models"))
+                    Text(loc.t("Router: sirve los %@ modelos descargados", "Router: serves all %@ downloaded models", "\(models.models.count)"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
             } else {
@@ -779,11 +775,15 @@ struct AddedServerCard: View {
                         manager.persist()
                     })) {
                         Text(loc.t("Sin modelo", "No model")).tag("")
-                        ForEach(models.models) {
-                            Text(ModelName.forPath($0.url.path).display
-                                 + (ModelTraitsCache.cached(for: $0.url.path)?
-                                        .pickerSuffix(spanish: loc.isSpanish) ?? ""))
-                                .tag($0.url.path)
+                        ForEach(ModelFamilyGroup.grouped(models.models)) { group in
+                            Section(group.isOther ? loc.t("Otros", "Others") : group.family) {
+                                ForEach(group.models) {
+                                    Text(ModelName.forPath($0.url.path).display
+                                         + (ModelTraitsCache.cached(for: $0.url.path)?
+                                                .pickerSuffix(spanish: loc.isSpanish) ?? ""))
+                                        .tag($0.url.path)
+                                }
+                            }
                         }
                     }
                     .labelsHidden().disabled(busy)
@@ -811,7 +811,7 @@ struct AddedServerCard: View {
                 let moeValue = moePinned ? (c.profile?.ncmoe ?? gNcmoe) : gNcmoe
                 HStack(spacing: 8) {
                     Image(systemName: "cpu").frame(width: 18).foregroundStyle(.secondary)
-                    Text(loc.t("Expertos MoE en CPU: \(moeValue)", "MoE experts on CPU: \(moeValue)")).font(.callout)
+                    Text(loc.t("Expertos MoE en CPU: %@", "MoE experts on CPU: %@", "\(moeValue)")).font(.callout)
                     Spacer(minLength: 8)
                     Stepper("", value: Binding(
                         get: { moeValue },

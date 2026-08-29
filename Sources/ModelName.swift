@@ -128,6 +128,80 @@ struct ModelName {
         self.sizeToken = sizeToken
     }
 
+    /// Total parameters in billions from the size label ("0.6B" → 0.6, "8x7B" → 56,
+    /// "E4B" → 4, "70M" → 0.07). The A<n>B tag is active params and is ignored here.
+    var paramsB: Double? {
+        var token = sizeToken.uppercased()
+        if let a = token.range(of: "-A") { token = String(token[token.startIndex..<a.lowerBound]) }
+        var multiplier = 1.0
+        if let x = token.firstIndex(of: "X"), let n = Double(token[token.startIndex..<x]) {
+            multiplier = n
+            token = String(token[token.index(after: x)...])
+        }
+        if token.hasPrefix("E") { token = String(token.dropFirst()) }
+        let millions = token.hasSuffix("M")
+        guard let value = Double(token.dropLast()) else { return nil }
+        return multiplier * value / (millions ? 1000 : 1)
+    }
+
+    /// Family the picker groups under. Merges a maker's generations and its
+    /// architecture spellings, so Qwen3, Qwen2.5 and QwQ all land together.
+    var family: String {
+        let tokens = title.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        // The name splits into "gpt" + "oss", so the pair has to be read together.
+        if tokens.contains("gpt") && tokens.contains("oss") { return "GPT-OSS" }
+        for (key, name) in Self.families {
+            let hit = key.count <= 2
+                ? tokens.contains(key)
+                : tokens.contains { $0.hasPrefix(key) }
+            if hit { return name }
+        }
+        return Self.otherFamily
+    }
+
+    /// Bucket for makers the table does not know, so the picker does not fill up
+    /// with one-model sections. The view localises this one.
+    static let otherFamily = "Others"
+
+    /// Longest and most specific keys first: a token is matched by prefix, so
+    /// "gpt-oss" has to win before "gpt" and "bailing" before "ling".
+    private static let families: [(String, String)] = [
+        ("qwq", "Qwen"), ("qwen", "Qwen"),
+        ("chatglm", "GLM"), ("glm", "GLM"),
+        ("tinyllama", "Llama"), ("codellama", "Llama"), ("llama", "Llama"),
+        ("codegemma", "Gemma"), ("gemma", "Gemma"),
+        ("mixtral", "Mistral"), ("ministral", "Mistral"), ("magistral", "Mistral"),
+        ("devstral", "Mistral"), ("codestral", "Mistral"), ("mistral", "Mistral"),
+        ("deepseek", "DeepSeek"), ("dflash", "DeepSeek"),
+        ("phi", "Phi"), ("granite", "Granite"),
+        ("gpt", "GPT"),
+        ("olmo", "OLMo"), ("hunyuan", "Hunyuan"), ("falcon", "Falcon"),
+        ("nemotron", "Nemotron"),
+        ("command", "Command"), ("cohere", "Command"), ("aya", "Command"),
+        ("smol", "SmolLM"), ("stablelm", "StableLM"), ("stablecode", "StableLM"),
+        ("internlm", "InternLM"), ("exaone", "EXAONE"),
+        ("seed", "Seed"), ("kimi", "Kimi"), ("minimax", "MiniMax"),
+        ("minicpm", "MiniCPM"), ("ernie", "ERNIE"), ("dots", "dots"),
+        ("apriel", "Apriel"), ("bailing", "Ling"), ("ling", "Ling"),
+        ("openchat", "OpenChat"), ("vicuna", "Vicuna"), ("zephyr", "Zephyr"),
+        ("solar", "Solar"), ("orion", "Orion"), ("jamba", "Jamba"),
+        ("mamba", "Mamba"), ("rwkv", "RWKV"), ("arwkv", "RWKV"),
+        ("arcee", "Arcee"), ("afm", "Arcee"), ("apertus", "Apertus"),
+        ("arctic", "Arctic"), ("baichuan", "Baichuan"), ("bitnet", "BitNet"),
+        ("bloom", "BLOOM"), ("chameleon", "Chameleon"), ("codeshell", "CodeShell"),
+        ("cogvlm", "CogVLM"), ("dbrx", "DBRX"), ("deci", "Deci"),
+        ("dream", "Dream"), ("grok", "Grok"), ("grove", "GroveMoE"),
+        ("jais", "Jais"), ("laguna", "Laguna"), ("lfm", "LFM"),
+        ("llada", "LLaDA"), ("maincoder", "Maincoder"), ("mellum", "Mellum"),
+        ("mimo", "MiMo"), ("mpt", "MPT"), ("nanbeige", "Nanbeige"),
+        ("openelm", "OpenELM"), ("pangu", "PanGu"), ("plamo", "PLaMo"),
+        ("refact", "Refact"), ("smallthinker", "SmallThinker"),
+        ("starcoder", "StarCoder"), ("step", "Step"), ("xverse", "XVERSE"),
+        ("yi", "Yi"), ("plm", "PLM"), ("moonlight", "Kimi"),
+    ]
+
     /// Active parameters in billions from an A<n>B tag (e.g. "35B-A3B" → 3.0).
     static func activeParamsB(_ name: String) -> Double? {
         let ns = name as NSString

@@ -2130,7 +2130,7 @@ struct NativeChatView: View {
             }
             .sheet(item: $promptProject) { p in
                 PromptEditorSheet(
-                    title: loc.t("Prompt del proyecto \"\(p.name)\"", "Project prompt for \"\(p.name)\""),
+                    title: loc.t("Prompt del proyecto \"%@\"", "Project prompt for \"%@\"", "\(p.name)"),
                     hint: loc.t("Lo heredan todas las conversaciones del proyecto que no tengan prompt propio.",
                                 "Inherited by every conversation in the project without its own prompt."),
                     initial: p.systemPrompt
@@ -2321,10 +2321,10 @@ struct NativeChatView: View {
                             chat.switchBranch(branch.id)
                         } label: {
                             if branch.id == chat.current?.activeBranchID {
-                                Label(loc.t("Rama \(index + 1)", "Branch \(index + 1)"),
+                                Label(loc.t("Rama %@", "Branch %@", "\(index + 1)"),
                                       systemImage: "checkmark")
                             } else {
-                                Text(loc.t("Rama \(index + 1)", "Branch \(index + 1)"))
+                                Text(loc.t("Rama %@", "Branch %@", "\(index + 1)"))
                             }
                         }
                     }
@@ -2831,10 +2831,14 @@ struct NativeChatView: View {
 
             if routerMode {
                 Picker(selection: $chatSelectedModel) {
-                    ForEach(models.models) { m in
-                        Text(ModelName.forPath(m.url.path).display
-                             + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""))
-                            .tag(ServerSettings.routerAlias(for: m.url.path))
+                    ForEach(ModelFamilyGroup.grouped(models.models)) { group in
+                        Section(group.isOther ? loc.t("Otros", "Others") : group.family) {
+                            ForEach(group.models) { m in
+                                Text(ModelName.forPath(m.url.path).display
+                                     + (ModelTraitsCache.cached(for: m.url.path)?.pickerSuffix(spanish: loc.isSpanish) ?? ""))
+                                    .tag(ServerSettings.routerAlias(for: m.url.path))
+                            }
+                        }
                     }
                 } label: {
                     Label(loc.t("Modelo", "Model"), systemImage: "shippingbox")
@@ -3073,8 +3077,8 @@ struct NativeChatView: View {
                               systemImage: p.systemPrompt.isEmpty ? "folder" : "folder.fill")
                     }
                     .buttonStyle(.link).font(.caption)
-                    .help(loc.t("Prompt compartido por las conversaciones del proyecto \"\(p.name)\".",
-                                "Prompt shared by the conversations in project \"\(p.name)\"."))
+                    .help(loc.t("Prompt compartido por las conversaciones del proyecto \"%@\".",
+                                "Prompt shared by the conversations in project \"%@\".", p.name))
                 }
             }
             Text(activePromptCaption)
@@ -3110,7 +3114,7 @@ struct NativeChatView: View {
         }
         if let p = chat.project(id: chat.current?.projectID),
            !p.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return loc.t("Activo: el prompt del proyecto \"\(p.name)\".", "Active: project \"\(p.name)\"'s prompt.")
+            return loc.t("Activo: el prompt del proyecto \"%@\".", "Active: project \"%@\"'s prompt.", "\(p.name)")
         }
         return systemPrompt.isEmpty
             ? loc.t("Sin prompt de sistema.", "No system prompt.")
@@ -3220,11 +3224,11 @@ struct NativeChatView: View {
                         Button(loc.t("Reanudar descarga", "Resume download"),
                                systemImage: "arrow.down.circle", action: download.resume)
                     } else {
-                        Label(loc.t("Descargando \(selected.name)…", "Downloading \(selected.name)…"),
+                        Label(loc.t("Descargando %@…", "Downloading %@…", "\(selected.name)"),
                               systemImage: "arrow.down.circle")
                     }
                 } else {
-                    Button(loc.t("Descargar \(selected.name)", "Download \(selected.name)"),
+                    Button(loc.t("Descargar %@", "Download %@", "\(selected.name)"),
                            systemImage: "arrow.down.circle") {
                         models.downloadWhisperModel(selected)
                     }
@@ -3551,19 +3555,18 @@ struct NativeChatView: View {
                     .font(.caption)
                     .padding(.horizontal, 9).padding(.vertical, 5)
                     .background(.quaternary.opacity(0.5), in: Capsule())
-                    .help(loc.t("Se enviará al modelo junto con tu mensaje (~\(a.estimatedTokens) tokens).",
-                                "Sent to the model along with your message (~\(a.estimatedTokens) tokens)."))
+                    .help(loc.t("Se enviará al modelo junto con tu mensaje (~%@ tokens).",
+                                "Sent to the model along with your message (~%@ tokens).",
+                                String(a.estimatedTokens)))
                 }
                 if attachmentsExceedContext {
-                    Label(loc.t("Adjuntos ~\(attachmentTokens / 1000)k tokens > contexto \(contextLimit / 1000)k: sube el contexto en Ajustes o quita archivos",
-                                "Attachments ~\(attachmentTokens / 1000)k tokens > context \(contextLimit / 1000)k: raise the context in Settings or remove files"),
+                    Label(loc.t("Adjuntos ~%@k tokens > contexto %@k: sube el contexto en Ajustes o quita archivos", "Attachments ~%@k tokens > context %@k: raise the context in Settings or remove files", "\(attachmentTokens / 1000)", "\(contextLimit / 1000)"),
                           systemImage: "exclamationmark.octagon.fill")
                         .font(.caption2).foregroundStyle(.red)
                         .help(loc.t("Lo adjunto no cabe en el contexto configurado, así que el envío fallará con 'contexto lleno'. Sube el contexto en Ajustes, quita archivos o inicia un chat nuevo.",
                                     "The attachments don't fit the configured context, so sending will fail with 'context full'. Raise the context in Settings, remove files or start a new chat."))
                 } else if attachmentsTooLarge {
-                    Label(loc.t("Adjuntos ~\(attachmentTokens / 1000)k tokens: pueden llenar el contexto (\(contextLimit / 1000)k)",
-                                "Attachments ~\(attachmentTokens / 1000)k tokens: may fill the context (\(contextLimit / 1000)k)"),
+                    Label(loc.t("Adjuntos ~%@k tokens: pueden llenar el contexto (%@k)", "Attachments ~%@k tokens: may fill the context (%@k)", "\(attachmentTokens / 1000)", "\(contextLimit / 1000)"),
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption2).foregroundStyle(.orange)
                         .help(loc.t("El total estimado supera la mitad del contexto configurado en Ajustes; con el historial podría llenarlo.",
@@ -3670,15 +3673,13 @@ struct NativeChatView: View {
                 // Microphone dictation cannot advance the file queue.
                 if (dictation.isDictating || dictation.isTranscribing || appleDictation.isDictating),
                    transcriptionPending == 0 {
-                    errors.append(loc.t("\(name): termina primero el dictado del micrófono",
-                                        "\(name): finish microphone dictation first"))
+                    errors.append(loc.t("%@: termina primero el dictado del micrófono", "%@: finish microphone dictation first", "\(name)"))
                     continue
                 }
                 let model = WhisperModel.model(id: whisperModelID)
                 guard models.whisperModelInstalled(model) else {
                     models.downloadWhisperModel(model)
-                    errors.append(loc.t("\(name): descarga primero \(model.name) para transcribirlo",
-                                        "\(name): download \(model.name) first to transcribe it"))
+                    errors.append(loc.t("%@: descarga primero %@ para transcribirlo", "%@: download %@ first to transcribe it", "\(name)", "\(model.name)"))
                     continue
                 }
                 let pendingID = UUID()
@@ -3695,20 +3696,19 @@ struct NativeChatView: View {
             }
 
             guard let data = try? Data(contentsOf: url) else {
-                errors.append(loc.t("\(name): no se pudo leer", "\(name): couldn't read it")); continue
+                errors.append(loc.t("%@: no se pudo leer", "%@: couldn't read it", "\(name)")); continue
             }
             guard data.count <= Self.maxAttachBytes else {
-                errors.append(loc.t("\(name): demasiado grande (máx 40 MB)", "\(name): too large (max 40 MB)")); continue
+                errors.append(loc.t("%@: demasiado grande (máx 40 MB)", "%@: too large (max 40 MB)", "\(name)")); continue
             }
 
             // Images → vision (only if the loaded model has a multimodal projector).
             if ["png", "jpg", "jpeg", "heic", "heif", "gif", "bmp", "tiff", "tif", "webp"].contains(ext) {
                 guard visionAvailable else {
-                    errors.append(loc.t("\(name): el modelo actual no admite imágenes (carga un modelo con visión y su mmproj)",
-                                        "\(name): the current model can't read images (load a vision model with its mmproj)")); continue
+                    errors.append(loc.t("%@: el modelo actual no admite imágenes (carga un modelo con visión y su mmproj)", "%@: the current model can't read images (load a vision model with its mmproj)", "\(name)")); continue
                 }
                 guard let uri = Self.imageDataURI(from: data, maxMegapixels: maxImageMegapixels) else {
-                    errors.append(loc.t("\(name): no se pudo procesar la imagen", "\(name): couldn't process the image")); continue
+                    errors.append(loc.t("%@: no se pudo procesar la imagen", "%@: couldn't process the image", "\(name)")); continue
                 }
                 images.append(uri); continue
             }
@@ -3716,7 +3716,7 @@ struct NativeChatView: View {
             var text: String
             if ext == "pdf" || data.prefix(5) == Data("%PDF-".utf8) {
                 guard let pdf = PDFDocument(data: data) else {
-                    errors.append(loc.t("\(name): no se pudo abrir el PDF", "\(name): couldn't open the PDF")); continue
+                    errors.append(loc.t("%@: no se pudo abrir el PDF", "%@: couldn't open the PDF", "\(name)")); continue
                 }
                 if pdfAsImages && visionAvailable {
                     ocrPending += 1
@@ -3727,8 +3727,7 @@ struct NativeChatView: View {
                         ocrPending -= 1
                         if pages.isEmpty {
                             attachError = (attachError.map { $0 + "\n" } ?? "")
-                                + loc.t("\(name): no se pudieron renderizar sus páginas",
-                                        "\(name): its pages couldn't be rendered")
+                                + loc.t("%@: no se pudieron renderizar sus páginas", "%@: its pages couldn't be rendered", "\(name)")
                         }
                     }
                     continue
@@ -3749,10 +3748,9 @@ struct NativeChatView: View {
                         if ocr.isEmpty {
                             attachments.remove(at: idx)
                             attachError = (attachError.map { $0 + "\n" } ?? "")
-                                + loc.t("\(name): el OCR no encontró texto", "\(name): OCR found no text")
+                                + loc.t("%@: el OCR no encontró texto", "%@: OCR found no text", "\(name)")
                         } else {
-                            attachments[idx].content = loc.t("[Texto extraído por OCR — \(name)]\n\n",
-                                                             "[Text extracted via OCR — \(name)]\n\n") + ocr
+                            attachments[idx].content = loc.t("[Texto extraído por OCR — %@]\n\n", "[Text extracted via OCR — %@]\n\n", "\(name)") + ocr
                         }
                     }
                     continue
@@ -3764,10 +3762,9 @@ struct NativeChatView: View {
                 // printable strings (symbols, embedded text) instead.
                 let s = Self.printableStrings(from: data, limit: Self.maxAttachChars)
                 guard !s.isEmpty else {
-                    errors.append(loc.t("\(name): binario sin texto legible", "\(name): binary with no readable text")); continue
+                    errors.append(loc.t("%@: binario sin texto legible", "%@: binary with no readable text", "\(name)")); continue
                 }
-                text = loc.t("[Cadenas extraídas de un binario — \(name)]\n\n",
-                             "[Strings extracted from a binary — \(name)]\n\n") + s
+                text = loc.t("[Cadenas extraídas de un binario — %@]\n\n", "[Strings extracted from a binary — %@]\n\n", "\(name)") + s
             }
 
             if text.count > Self.maxAttachChars {
@@ -3802,8 +3799,7 @@ struct NativeChatView: View {
                 ? String(transcript.prefix(Self.maxAttachChars))
                     + loc.t("\n\n[…transcripción truncada…]", "\n\n[…transcript truncated…]")
                 : transcript
-            attachments[idx].content = loc.t("[Transcripción local — \(pending.name)]\n\n",
-                                             "[Local transcript — \(pending.name)]\n\n") + clipped
+            attachments[idx].content = loc.t("[Transcripción local — %@]\n\n", "[Local transcript — %@]\n\n", "\(pending.name)") + clipped
         }
         startNextFileTranscription()
     }
@@ -4230,7 +4226,7 @@ struct ConversationListView: View {
         }
         .sheet(item: $promptProject) { p in
             PromptEditorSheet(
-                title: loc.t("Prompt del proyecto \"\(p.name)\"", "Project prompt for \"\(p.name)\""),
+                title: loc.t("Prompt del proyecto \"%@\"", "Project prompt for \"%@\"", "\(p.name)"),
                 hint: loc.t("Lo heredan todas las conversaciones del proyecto que no tengan prompt propio.",
                             "Inherited by every conversation in the project without its own prompt."),
                 initial: p.systemPrompt
@@ -4252,8 +4248,7 @@ struct ConversationListView: View {
             Text(archiveMessage ?? "")
         }
         .confirmationDialog(
-            loc.t("¿Borrar las \(chat.conversations.count) conversaciones?",
-                  "Delete all \(chat.conversations.count) conversations?"),
+            loc.t("¿Borrar las %@ conversaciones?", "Delete all %@ conversations?", "\(chat.conversations.count)"),
             isPresented: $confirmDeleteAll, titleVisibility: .visible
         ) {
             Button(loc.t("Borrar todas", "Delete all"), role: .destructive) { chat.deleteAll() }
@@ -4278,8 +4273,7 @@ struct ConversationListView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let count = try chat.importArchiveData(Data(contentsOf: url))
-            archiveMessage = loc.t("Se importaron \(count) conversaciones nuevas.",
-                                   "Imported \(count) new conversations.")
+            archiveMessage = loc.t("Se importaron %@ conversaciones nuevas.", "Imported %@ new conversations.", "\(count)")
         } catch {
             archiveMessage = error.localizedDescription
         }
