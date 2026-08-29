@@ -15,8 +15,9 @@ moving a file.
 
 ## `llama/`
 
-Seven patches, split by the files they touch, and together they reconstruct the ported tree byte
-for byte. A change goes into whichever one already owns its file; the sets are disjoint.
+`0001` to `0007` are the port to upstream `ca3d5a3e1`, split by the files they touch. They are a
+baseline, not somewhere to add things: **a new change gets its own numbered patch after them**,
+one patch per change, so each one can be read, measured and reverted on its own.
 
 | | area |
 |---|---|
@@ -28,8 +29,12 @@ for byte. A change goes into whichever one already owns its file; the sets are d
 | `0006-common-and-spec` | `common/` |
 | `0007-tools-and-build` | `tools/`, `tests/`, top level CMake |
 
-This replaced the old per-area folders (`llama/metal/`, `llama/core/`, `llama/model/`,
-`llama/server/`) and their running numbering when the engine was ported to upstream `ca3d5a3e1`.
+Only touch one of the seven when the change belongs to the port itself. Together with everything
+numbered after them they reconstruct the built tree byte for byte, which is what the round-trip
+check below verifies.
+
+The seven replaced the old per-area folders (`llama/metal/`, `llama/core/`, `llama/model/`,
+`llama/server/`) at the port; the running numbering they used did not go away.
 
 ## `shared-metal/`
 
