@@ -91,10 +91,13 @@ enum GGUFFile {
         path.lowercased().contains("mmproj")
     }
 
-    /// A DFlash or MTP speculative-decoding draft.
+    /// A DFlash, DSpark or MTP speculative-decoding draft. DSpark is DFlash with
+    /// `dsv4_hc_mult > 0`, so the architecture catches it, but not if the header
+    /// cannot be read.
     static func isDraft(_ path: String) -> Bool {
         let name = URL(fileURLWithPath: path).lastPathComponent.lowercased()
-        if name.contains("dflash") || name.hasPrefix("mtp-") || name.hasSuffix(".mtp.gguf") {
+        if name.contains("dflash") || name.contains("dspark")
+            || name.hasPrefix("mtp-") || name.hasSuffix(".mtp.gguf") {
             return true
         }
         // Drafts ship under many names, so the name alone lets them into the picker.

@@ -5,9 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Retouch one area of a photo instead of the whole frame.** Paint over the init image and only what you paint is regenerated: measured on a Radeon RX 6700 XT, the rest of the picture moves 5.3 against the 5.2 floor of the encode and decode round trip.
+- **A negative prompt for images and video.** Video comes prefilled with the model's recommended one and can be replaced or emptied; in images it only takes effect above CFG 1, and the app says so on the models that ignore it.
+
+### Improved
+
+- **Model menus group by family.** Every Qwen together, every Llama together, each ordered by size, with makers the app does not recognise under Others.
+
 ### Fixed
 
-- **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** The engine handed the weights to the GPU as system memory, so every token read them back across the bus: 1.6 tokens/s where the same model writes 58. A card without unified memory now keeps its own copy either way. Measured on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
+- **Tooltips carrying a number or a name now translate.** Any text with a value in it stayed English in Japanese and Italian, whatever the language setting said. Reported by [playexit](https://github.com/playexit).
+- **Speculative drafts named DSpark stay out of the model list.** They are drafts, not models to run.
+
+- **Leaving "Copy weights to VRAM" off no longer collapses speed on a discrete card.** It wrote 1.6 tokens/s where the same model now writes 58, on a Radeon Pro Vega II with Qwen3-8B. Thanks to [Mallory M.](https://github.com/malzzz).
 
 ## [0.86] - 2026-08-28
 
