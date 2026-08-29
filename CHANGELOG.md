@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Images: models carrying bf16 weights now load on older cards.** Flux 2 aborted on a Radeon RX 500 or Vega with "cannot run the operation"; those weights are converted as they load, at the same size and with the picture unchanged. Reported by Slice.
+
 ## [0.86.1] - 2026-08-29
 
 ### Added

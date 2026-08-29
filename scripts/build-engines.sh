@@ -312,6 +312,10 @@ build_image_engine() {
     # Read tensors with pread: stdio refills 4 KiB at a time and the load ran at a tenth
     # of what the disk gives.
     git apply -p1 "$ROOT/patches/image/0051-image-loader-pread.patch"
+    # Convert bf16 weights on load when the device has no bfloat: the Metal backend
+    # rejects every op that touches them, and a weight already placed in the device
+    # buffer aborts the load instead of falling back.
+    git apply -p1 "$ROOT/patches/image/0052-image-bf16-promote-without-bfloat.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
