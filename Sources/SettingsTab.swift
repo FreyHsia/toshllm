@@ -37,6 +37,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
+    @AppStorage(SettingsKeys.splitGroupSize) private var splitGroupSize = 0
     @AppStorage(SettingsKeys.mgpuEvents) private var mgpuEvents = true
     @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = true
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
@@ -126,6 +127,11 @@ struct SettingsView: View {
     private var splitTargetCount: Int {
         if splitSelection.count >= 2 { return splitSelection.count }
         return multiGPUCount > 0 ? min(multiGPUCount, hardware.gpus.count) : hardware.gpus.count
+    }
+    /// Group sizes that divide the split evenly and leave more than one group.
+    private var splitGroupOptions: [Int] {
+        let n = splitTargetCount
+        return (2..<n).filter { n % $0 == 0 }
     }
     /// macOS exposes the bridge nowhere else: linked GPUs share a Metal peer group.
     private var hasPeerLink: Bool { !hardware.peerGroups.isEmpty }
@@ -514,6 +520,16 @@ struct SettingsView: View {
                         }
                         .infoTip(loc.t("Por capas: cada GPU se queda unas capas enteras y trabajan por turnos. Es lo más rápido generando y lo más probado. Por tensores: las dos GPUs trabajan a la vez dentro de cada capa, así que leen el prompt mucho más rápido, pero se ponen de acuerdo en cada capa y esa espera cuesta lo mismo por token generado: en un modelo pequeño se come la ganancia, y en uno grande (decenas de GB) sale ganando en las dos cosas.",
                                     "By layers: each GPU keeps whole layers and they take turns. Fastest at generating, and the best tested. By tensors: both GPUs work at once inside every layer, so they read the prompt much faster, but they sync up on every layer and that wait costs the same on each generated token: on a small model it eats the gain, on a big one (tens of GB) it wins at both."))
+                        if splitMode == "tensor" && splitTargetCount >= 4 {
+                            Picker(loc.t("GPUs por grupo", "GPUs per group"), selection: $splitGroupSize) {
+                                Text(loc.t("Todas juntas", "All together")).tag(0)
+                                ForEach(splitGroupOptions, id: \.self) { n in
+                                    Text("\(n)").tag(n)
+                                }
+                            }
+                            .infoTip(loc.t("Reparte las GPUs en grupos: dentro de cada grupo el modelo se corta por tensores y entre grupos por capas. Así las GPUs solo se esperan dentro de su grupo, no todas con todas, que es lo que frena la generación cuando son cuatro. Medido en cuatro Radeon Pro W6800X con un 35B MoE: en grupos de dos lee 1617 y genera 47, contra 1500 y 24 con todas juntas, y contra 1249 y 67 repartiendo solo por capas. Con dos GPUs no cambia nada.",
+                                        "Splits the GPUs into groups: inside a group the model is cut by tensors, between groups by layers. That way cards only wait for the others in their group instead of all of them, which is what slows generation down with four. Measured on four Radeon Pro W6800X with a 35B MoE: groups of two read 1617 and generate 47, against 1500 and 24 with all together, and against 1249 and 67 splitting only by layers. With two GPUs it changes nothing."))
+                        }
                         Toggle(loc.t("Traspaso rápido entre GPUs",
                                      "Fast hand-off between GPUs"), isOn: $mgpuEvents)
                             .infoTip(loc.t("Pasa los datos de una GPU a otra sin vaciar las colas de las dos en cada copia. Repartiendo por capas no cambia nada; repartiendo por tensores es la mayor parte de la velocidad de generación (medido +59% en dos GPUs). Apágalo solo para diagnosticar.",

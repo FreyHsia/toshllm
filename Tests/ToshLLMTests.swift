@@ -1967,6 +1967,76 @@ final class CompactionTests: XCTestCase {
         XCTAssertEqual(messages[cutoff!].role, "user")
     }
 
+    func testCutoffKeepsATailWorthTheTokenBudget() {
+        // Four short turns are nothing; four long ones can be the whole window.
+        var messages = makeMessages(2)
+        messages.append(ChatMessage(role: "user", content: String(repeating: "x", count: 8_000)))
+        messages.append(ChatMessage(role: "assistant", content: String(repeating: "y", count: 8_000)))
+        messages += makeMessages(2)
+        let byPosition = ChatStore.compactionCutoff(messages: messages, alreadyCompacted: 0)
+        let byTokens = ChatStore.compactionCutoff(messages: messages, alreadyCompacted: 0,
+                                                  keepTokens: 1_000)
+        XCTAssertNotNil(byTokens)
+        XCTAssertLessThan(byTokens!, byPosition!,
+                          "con un turno enorme al final hay que compactar más atrás")
+    }
+
+    func testSummaryIsClampedWhenTheTranscriptShrinks() {
+        var c = Conversation(title: "t", messages: makeMessages(4))
+        c.summary = "resumen"
+        c.summarizedCount = 8
+        c.messages.removeLast(2)
+        ChatStore.clampSummary(&c)
+        XCTAssertEqual(c.summarizedCount, 6,
+                       "un resumen que cubre más mensajes de los que quedan silencia el resto")
+        let history = ChatStore.requestHistory(system: "", summary: c.summary,
+                                               messages: c.messages, from: c.summarizedCount ?? 0)
+        XCTAssertEqual(history.count, 1, "solo el system con el resumen, sin mensajes perdidos")
+    }
+
+    func testArchivedRangesAreLeftOutOfTheHistoryAndClampedOnTruncation() {
+        var c = Conversation(title: "t", messages: makeMessages(5))   // 10 messages
+        c.archived = [ArchivedBlock(from: 2, to: 4, note: "tema cerrado")]
+        let history = ChatStore.requestHistory(system: "", summary: nil,
+                                               messages: c.messages, from: 0, archived: c.archived)
+        XCTAssertEqual(history.count, 8, "los dos archivados no se envían")
+        XCTAssertFalse(history.contains { ($0["content"] as? String) == "pregunta 1" })
+
+        c.messages.removeLast(7)   // leaves 3
+        ChatStore.clampSummary(&c)
+        XCTAssertEqual(c.archived?.first?.to, 3, "el bloque se recorta al nuevo final")
+    }
+
+    func testArchiveRangeIsClippedToWhatCanBeArchived() {
+        // Asking to archive everything is answered by archiving everything that
+        // can be: the last exchange stays, so the reply in flight keeps its turn.
+        let all = ChatMemoryService.validate(from: 0, to: 9, messageCount: 10, summarized: 0)
+        XCTAssertEqual(all?.from, 0)
+        XCTAssertEqual(all?.to, 8, "el último intercambio se queda fuera")
+
+        let clipped = ChatMemoryService.validate(from: 0, to: 5, messageCount: 10, summarized: 4)
+        XCTAssertEqual(clipped?.from, 4, "no toca lo que el resumen ya cubre")
+        XCTAssertEqual(clipped?.to, 6)
+
+        XCTAssertNil(ChatMemoryService.validate(from: 5, to: 2, messageCount: 10, summarized: 0),
+                     "rango invertido")
+        XCTAssertNil(ChatMemoryService.validate(from: 8, to: 9, messageCount: 10, summarized: 0),
+                     "solo el intercambio en curso: no queda nada que archivar")
+        XCTAssertNil(ChatMemoryService.validate(from: 0, to: 1, messageCount: 2, summarized: 0),
+                     "una conversación de un solo intercambio")
+    }
+
+    func testRecallMatchesIgnoringCaseAndAccents() {
+        let blocks = [ArchivedBlock(from: 0, to: 3, note: "n")]
+        let texts = [0: "Migramos la BASE de datos", 1: "otra cosa", 2: "el índice quedó listo"]
+        XCTAssertEqual(ChatMemoryService.matches(query: "base datos", in: blocks,
+                                                 texts: texts, limit: 4), [0])
+        XCTAssertEqual(ChatMemoryService.matches(query: "indice", in: blocks,
+                                                 texts: texts, limit: 4), [2])
+        XCTAssertTrue(ChatMemoryService.matches(query: "inexistente", in: blocks,
+                                                texts: texts, limit: 4).isEmpty)
+    }
+
     func testCutoffNilWhenTooLittleWouldBeGained() {
         XCTAssertNil(ChatStore.compactionCutoff(messages: makeMessages(2), alreadyCompacted: 0))
         XCTAssertNil(ChatStore.compactionCutoff(messages: makeMessages(6), alreadyCompacted: 8))

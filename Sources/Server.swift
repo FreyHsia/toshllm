@@ -145,6 +145,11 @@ struct ServerSettings {
     /// whole layers, `tensor` splits every matmul so both work on the same token,
     /// which costs one allreduce per layer and only pays off on a big model.
     var splitMode: String = "layer"
+    /// GPUs per tensor-parallel group when splitting by tensors. 0 or 1 means one
+    /// group with every card, which is the plain tensor split. A smaller group
+    /// splits tensors inside it and layers between groups, which keeps most of the
+    /// prompt speed without paying the per-layer wait across every card.
+    var splitGroupSize: Int = 0
     /// Hand off activations between GPUs with shared Metal events instead of
     /// draining both queues on every copy (TOSH_MGPU_EVENTS). Inert on a layer
     /// split; on a tensor split it is most of the generation speed.
@@ -181,6 +186,13 @@ struct ServerSettings {
     /// and a tensor split the model cannot take falls back instead of aborting.
     var effectiveSplitMode: String {
         (splitMode == "tensor" && tensorSplitLimit.map { splitDeviceCount <= $0 } != false) ? "tensor" : "layer"
+    }
+
+    /// The group size to pass, or nil when it would be a no-op or an invalid split.
+    var effectiveSplitGroupSize: Int? {
+        let n = splitDeviceCount
+        guard splitGroupSize > 1, splitGroupSize < n, n % splitGroupSize == 0 else { return nil }
+        return splitGroupSize
     }
 
     /// GPUs the split will span, matching how the launch environment picks them.
@@ -625,6 +637,11 @@ struct ServerSettings {
         // A layer split has nothing for it to carry.
         if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" { env["TOSH_MGPU_PEER"] = "1" }
         if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
+        // Groups only mean anything inside a tensor split, and only when they are
+        // smaller than the split itself and divide it evenly.
+        if effectiveSplitMode == "tensor", let g = effectiveSplitGroupSize {
+            env["TOSH_MGPU_TENSOR_GROUP"] = String(g)
+        }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
         if effectiveDynamicMoe {
@@ -766,6 +783,7 @@ struct ServerSettings {
             multiGPU: bool(SettingsKeys.multiGPU, false),
             multiGPUCount: int(SettingsKeys.multiGPUCount, 0),
             splitMode: d.string(forKey: SettingsKeys.splitMode) ?? "layer",
+            splitGroupSize: d.integer(forKey: SettingsKeys.splitGroupSize),
             mgpuEvents: bool(SettingsKeys.mgpuEvents, true),
             mgpuPeer: bool(SettingsKeys.mgpuPeer, true),
             forcePrivateBuffers: bool(SettingsKeys.forcePrivateBuffers, false),
