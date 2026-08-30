@@ -5,8 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **LLMs: the model can be split by tensor within groups of GPUs and by layer between them.** Splitting every tensor across four cards reads a prompt fast but generates at a quarter of the speed, because each card waits for the others twice per layer. Grouping them keeps most of both: measured on four Radeon Pro W6800X dies with an 8B, reading improved 59% over a layer split while generation kept 81% of it. Set `TOSH_MGPU_TENSOR_GROUP` to the group size.
+
 ### Fixed
 
+- **LLMs: with more than one GPU group, all the weights ended up on one of them.** Every group named its buffers the same, and the loader tells them apart by name, so half the work ran where the weights were not: wrong output, and in some models none at all.
 - **LLMs: multi-GPU generation no longer pays a penalty for splitting the model.** The engine kept pipeline parallelism switched off on every Mac because Accelerate reports no async support, so the cards took turns instead of overlapping. Measured on four Radeon Pro W6800X dies: generation improved 9.3% on an 8B and 13.1% on a 4B, with the same output.
 
 ## [0.86.2] - 2026-08-29
