@@ -428,36 +428,23 @@ struct QueueFeedView: View {
     /// queue controls below.
     private var composer: some View {
         VStack(spacing: 8) {
-            // TextField(axis:) clips past its line cap and doesn't reflow on
-            // window resize on macOS, so this is a TextEditor sized by a hidden
-            // mirror of the text: grows with the content up to maxHeight, then
-            // scrolls inside. Cmd+Return queues the prompt.
-            // lineLimit caps the mirror's ideal height; a maxHeight frame would
-            // pin the field at the cap regardless of content.
-            Text(draft.isEmpty ? " " : draft + " ")
-                .font(.body).lineLimit(8).hidden()
-                .padding(.horizontal, 5).padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(minHeight: 44)
-                .overlay {
-                    TextEditor(text: $draft)
-                        .font(.body).scrollContentBackground(.hidden)
-                        .padding(.vertical, 4)
-                        .onKeyPress(.return, phases: .down) { press in
-                            guard press.modifiers.contains(.command) else { return .ignored }
-                            add()
-                            return .handled
-                        }
-                }
-                .overlay(alignment: .topLeading) {
-                    if draft.isEmpty {
-                        Text(loc.t("Prompt para la cola…", "Prompt for the queue…"))
-                            .font(.body).foregroundStyle(.tertiary)
-                            .padding(.horizontal, 9).padding(.vertical, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
+            // A vertical TextField grows and scrolls natively on macOS. The old
+            // implementation mirrored the draft into a hidden Text to size a
+            // TextEditor, which forced the input view to relayout on every
+            // keystroke and dropped the IME composition state (pinyin candidates
+            // vanished while typing with an input method). Cmd+Return queues.
+            TextField(loc.t("Prompt para la cola…", "Prompt for the queue…"),
+                      text: $draft, axis: .vertical)
+                .lineLimit(1...8)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .padding(.horizontal, 9).padding(.vertical, 8)
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers.contains(.command) else { return .ignored }
+                    add()
+                    return .handled
+                }
             HStack(spacing: 14) {
                 HStack(spacing: 4) {
                     Text(loc.t("Destino", "Target")).font(.caption).foregroundStyle(.secondary)
