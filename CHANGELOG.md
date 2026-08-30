@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: the model can be split by tensor within groups of GPUs and by layer between them.** Splitting every tensor across four cards reads a prompt fast but generates at a quarter of the speed, because each card waits for the others twice per layer. Grouping them keeps most of both: measured on four Radeon Pro W6800X dies with an 8B, reading improved 59% over a layer split while generation kept 81% of it. Set `TOSH_MGPU_TENSOR_GROUP` to the group size.
 
+- **LLMs: handing a tensor from one GPU group to another no longer goes through system memory.** Each card takes its own slice straight from its counterpart: reading improved 2.2% on an 8B and 1.2% on a 35B MoE.
 - **LLMs: groups of GPUs now overlap with each other while a prompt is read.** A group could not signal when its work was done, so the engine waited instead of letting the next one start: reading improved 2.8% on an 8B and on a 35B MoE.
 
 ### Fixed
