@@ -101,6 +101,7 @@ enum SettingsKeys {
     static let multiGPU = "multiGPU"
     static let multiGPUCount = "multiGPUCount"
     static let splitMode = "splitMode"
+    static let splitGroupSize = "splitGroupSize"
     static let mgpuEvents = "mgpuEvents"
     static let mgpuPeer = "mgpuPeer"
     static let forcePrivateBuffers = "forcePrivateBuffers"
@@ -224,7 +225,7 @@ enum SettingsKeys {
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts,
         dynamicMoe, dynamicMoeSlots, dynamicMoePrefetch, dynamicMoePolicy, routerMode, routerModelsMax,
-        persistCache, multiGPU, multiGPUCount, splitMode, mgpuEvents, mgpuPeer,
+        persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,
         menuBarIcon, menuBarGPU, autoStart, updateAutoCheck, appAccent,
         chatTemp, chatMaxTokens, chatSystem, chatThinking, chatReasoningEffort,

@@ -7,15 +7,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **LLMs: the model can be split by tensor within groups of GPUs and by layer between them.** Splitting every tensor across four cards reads a prompt fast but generates at a quarter of the speed, because each card waits for the others twice per layer. Grouping them keeps most of both: measured on four Radeon Pro W6800X dies with an 8B, reading improved 59% over a layer split while generation kept 81% of it. Set `TOSH_MGPU_TENSOR_GROUP` to the group size.
+- **LLMs: the model can be split by tensor within groups of GPUs and by layer between them.** Splitting every tensor across four cards reads a prompt fast but generates at a quarter of the speed, because each card waits for the others twice per layer. Grouping them keeps most of both: the cards only wait for the others in their own group. Pick it in Settings under **How to split it → GPUs per group**, available from four cards up.
+
+  Measured on four Radeon Pro W6800X dies against the engine in 0.86.2, `pp512` / `tg64` in tokens per second:
+
+  | Model | Split | 0.86.2 | now |
+  |---|---|---|---|
+  | Qwen3.8-27B (dense) | by layers | 264 / 22.8 | 280 / 23.6 |
+  | | by tensors | 612 / 14.5 | 632 / 14.5 |
+  | | **in groups of two** | — | **480 / 24.3** |
+  | Qwen3.6-35B-A3B (MoE) | by layers | 1186 / 62.8 | 1245 / 67.1 |
+  | | by tensors | 1497 / 23.7 | 1531 / 22.6 |
+  | | **in groups of two** | — | **1623 / 48.9** |
+  | Qwen3.8-Flash-Next | by layers | 469 / 26.3 | 494 / 31.3 |
+  | | by tensors | 695 / 14.1 | 676 / 13.8 |
+  | | **in groups of two** | — | **624 / 25.1** |
+
+  On the MoE the groups win outright: they read faster than any other split and generate twice what splitting every tensor does. On the two dense models they sit in between, buying prompt speed with generation. Splitting by layers still generates fastest, and now does so 3% to 19% faster than before.
 
 - **LLMs: a single GPU also generates faster now.** The engine only created its synchronisation events when several cards were in play, so with one card every hand-off to the CPU drained the GPU instead of waiting on an event. Measured on a Radeon Pro W6800X: generation improved 3.4% on a 4B, 2.0% on an 8B and 2.4% on a 35B MoE, and reading a prompt improved 2.1% on the MoE. Same output, half a megabyte more memory.
 - **LLMs: a manual split across cards is now honoured when the GPUs are grouped.** Every group read the same leading numbers of the list, so the later cards' share was ignored; a group now takes its own part of it.
 - **LLMs: handing a tensor from one GPU group to another no longer goes through system memory.** Each card takes its own slice straight from its counterpart: reading improved 2.2% on an 8B and 1.2% on a 35B MoE.
 - **LLMs: groups of GPUs now overlap with each other while a prompt is read.** A group could not signal when its work was done, so the engine waited instead of letting the next one start: reading improved 2.8% on an 8B and on a 35B MoE.
 
+- **Chat: the model can manage its own context.** Three tools it can call on its own: `memory_list` shows the turns of the conversation with their index, `memory_archive` sets a range aside so it stops being sent with every request, and `memory_recall` searches what was archived and brings it back verbatim. Nothing is deleted: the turns stay in the transcript, on disk and in an export, they are just left out of the request until they matter again. They are ordinary tools, so an external client through the API sees them like any other. Requested in #82.
+
 ### Fixed
 
+- **Chat: a summary could silence every message written after it.** Regenerating or dropping the last exchange right after summarizing left the summary claiming more turns than the conversation had, and from then on the request carried the summary and nothing else, so new messages never reached the model. Editing or deleting a message already handled this; the other two paths did not.
+- **Chat: summarizing now frees context instead of turns.** It kept the last four messages verbatim whatever they weighed, so four long tool results could be most of the window and compacting freed almost nothing. It now keeps a tail worth about a quarter of the context.
 - **LLMs: with more than one GPU group, all the weights ended up on one of them.** Every group named its buffers the same, and the loader tells them apart by name, so half the work ran where the weights were not: wrong output, and in some models none at all.
 - **LLMs: multi-GPU generation no longer pays a penalty for splitting the model.** The engine kept pipeline parallelism switched off on every Mac because Accelerate reports no async support, so the cards took turns instead of overlapping. Measured on four Radeon Pro W6800X dies: generation improved 9.3% on an 8B and 13.1% on a 4B, with the same output.
 

@@ -63,6 +63,11 @@ enum ChatJSONL {
         if let value = conversation.systemPrompt { header["toshSystemPrompt"] = value }
         if let value = conversation.summary { header["toshSummary"] = value }
         if let value = conversation.summarizedCount { header["toshSummarizedCount"] = value }
+        if let blocks = conversation.archived, !blocks.isEmpty,
+           let data = try? JSONEncoder().encode(blocks),
+           let json = try? JSONSerialization.jsonObject(with: data) {
+            header["toshArchived"] = json
+        }
         if let value = conversation.enabledToolNames { header["toshEnabledToolNames"] = value }
 
         let root: [String: Any] = [
@@ -159,6 +164,11 @@ enum ChatJSONL {
             pinned: header["pinned"] as? Bool,
             systemPrompt: header["toshSystemPrompt"] as? String,
             enabledToolNames: header["toshEnabledToolNames"] as? [String])
+        if let json = header["toshArchived"],
+           let data = try? JSONSerialization.data(withJSONObject: json),
+           let blocks = try? JSONDecoder().decode([ArchivedBlock].self, from: data) {
+            conversation.archived = ChatMemoryService.clamped(blocks, toCount: currentMessages.count)
+        }
         if allPaths.count > 1 {
             let branches = allPaths.enumerated().map { ChatBranch(name: "Branch \($0.offset + 1)", messages: $0.element) }
             conversation.branches = branches
