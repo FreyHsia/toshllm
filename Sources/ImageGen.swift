@@ -299,7 +299,9 @@ enum ImageGenCatalog {
     /// an optional VAE. Passed as a full checkpoint via --model, which covers most
     /// community SD/SDXL finetunes; minVRAMGB 0 so it's never blocked.
     static func custom(modelPath: String, vaePath: String, textEncoderPath: String = "",
-                       isDiffusion: Bool = false, steps: Int, cfg: Double) -> ImageGenModel {
+                       isDiffusion: Bool = false, steps: Int, cfg: Double,
+                       samplingMethod: String = "", scheduler: String = "",
+                       clipSkip: Int = 0) -> ImageGenModel {
         func gb(_ p: String) -> Double {
             let bytes = (try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? Int ?? 0
             return Double(bytes) / 1_073_741_824
@@ -313,13 +315,35 @@ enum ImageGenCatalog {
             comps.append(ImageGenComponent(kind: .textEncoder, urlString: "",
                                            fileName: textEncoderPath, sizeGB: gb(textEncoderPath)))
         }
+        // Custom models may specify the sampler/scheduler/clip-skip their
+        // checkpoint was tuned with; empty values fall back to the engine
+        // defaults so a plain checkpoint keeps behaving as before.
+        var extra: [String] = []
+        if !samplingMethod.isEmpty { extra += ["--sampling-method", samplingMethod] }
+        if !scheduler.isEmpty { extra += ["--scheduler", scheduler] }
+        if clipSkip > 0 { extra += ["--clip-skip", String(clipSkip)] }
         // Assume the SD/SDXL UNet family (the common custom case) for the VRAM cap.
         return ImageGenModel(name: "Custom",
             detailES: "Tu propio modelo. Ajusta pasos y CFG según su ficha.",
             detailEN: "Your own model. Set steps and CFG to match its card.",
             components: comps, defaultSteps: steps, cfgScale: cfg, minVRAMGB: 0,
-            attnVRAMSq: 3.4e-12)
+            attnVRAMSq: 3.4e-12, extraArgs: extra)
     }
+}
+
+/// Sampler and scheduler constants for the custom model UI. The lists match
+/// sd-cli --sampling-method and --scheduler; the non-gated subset is shown.
+enum ImageGenSamplers {
+    /// Sampling methods the custom model picker offers. Only the common ones
+    /// are listed; the engine supports more (res_multistep, res_2s, er_sde,
+    /// euler_cfg_pp, euler_a_cfg_pp, euler_ge, dpm++2m_sde_bt, lms, ipndm,
+    /// ipndm_v, ddim_trailing) — users who need those can add them via --extra.
+    static let all = ["euler", "euler_a", "heun", "dpm2", "dpm++2s_a",
+                      "dpm++2m", "dpm++2mv2", "lcm", "tcd", "dpm++2m_sde"]
+    /// Denoiser sigma schedulers.
+    static let schedulers = ["karras", "exponential", "ays", "sgm_uniform",
+                             "simple", "smoothstep", "kl_optimal", "lcm",
+                             "logit_normal", "beta"]
 }
 
 /// Resolution and command-buffer limits derived from the detected GPU. Large
@@ -830,6 +854,16 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
     var seed = -1
     var format = ImageFormat.png.rawValue
     var offloadCPU = false
+    /// Custom models only: sd-cli sampling method, empty = engine default
+    /// (euler for Flux/SD3/Wan, euler_a otherwise). Lets tuned community
+    /// models run with the sampler they were trained for.
+    var samplingMethod = ""
+    /// Custom models only: denoiser sigma scheduler, empty = engine default.
+    /// e.g. "karras" for Illustrious/NoobAI SDXL finetunes.
+    var scheduler = ""
+    /// Custom models only: CLIP skip, 0 = engine default (1 for SD1.x, 2 for
+    /// SD2.x/Illustrious). Some SDXL finetunes are trained with clip-skip 2.
+    var clipSkip = 0
 
     init() {}
 
@@ -856,6 +890,9 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
         seed = (try? c.decode(Int.self, forKey: .seed)) ?? -1
         format = (try? c.decode(String.self, forKey: .format)) ?? ImageFormat.png.rawValue
         offloadCPU = (try? c.decode(Bool.self, forKey: .offloadCPU)) ?? false
+        samplingMethod = (try? c.decode(String.self, forKey: .samplingMethod)) ?? ""
+        scheduler = (try? c.decode(String.self, forKey: .scheduler)) ?? ""
+        clipSkip = (try? c.decode(Int.self, forKey: .clipSkip)) ?? 0
     }
 
     var isCustom: Bool { modelID == ImageGenCatalog.customID }
@@ -882,7 +919,9 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
             return ImageGenCatalog.custom(modelPath: customModelPath, vaePath: customVAEPath,
                                           textEncoderPath: customTextEncoderPath,
                                           isDiffusion: customIsDiffusion,
-                                          steps: steps, cfg: customCfg)
+                                          steps: steps, cfg: customCfg,
+                                          samplingMethod: samplingMethod,
+                                          scheduler: scheduler, clipSkip: clipSkip)
         }
         return ImageGenCatalog.model(id: modelID)
             ?? ImageGenCatalog.recommended(for: hw)

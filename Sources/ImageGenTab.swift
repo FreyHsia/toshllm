@@ -919,6 +919,29 @@ struct ImageInstanceForm: View {
                     .help(loc.t("Guía. Modelos turbo ~1, normales ~7. Según la ficha del modelo.",
                                 "Guidance. Turbo models ~1, normal ~7. Per the model's card."))
             }
+            Picker(loc.t("Muestreador", "Sampler"), selection: $cfg.samplingMethod) {
+                Text(loc.t("Predeterminado", "Default")).tag("")
+                ForEach(ImageGenSamplers.all, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .help(loc.t("Método de muestreo para este modelo. Déjalo en Predeterminado salvo que la ficha del modelo indique otro (p. ej. euler_a para afinados SDXL).",
+                        "Sampling method for this model. Leave Default unless the model's card specifies one (e.g. euler_a for SDXL finetunes)."))
+            Picker(loc.t("Programador", "Scheduler"), selection: $cfg.scheduler) {
+                Text(loc.t("Predeterminado", "Default")).tag("")
+                ForEach(ImageGenSamplers.schedulers, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .help(loc.t("Programador de sigma del denoiser. karras suele mejorar los afinados SDXL tipo Illustrious/NoobAI.",
+                        "Denoiser sigma scheduler. karras usually helps SDXL finetunes like Illustrious/NoobAI."))
+            HStack(spacing: 6) {
+                Text("CLIP skip").font(.callout)
+                Spacer(minLength: 8)
+                Stepper(value: $cfg.clipSkip, in: 0...4) { Text(cfg.clipSkip == 0
+                    ? loc.t("Predeterminado", "Default") : "\(cfg.clipSkip)").monospacedDigit() }
+                    .frame(width: 130)
+                    .help(loc.t("Omite las últimas capas de CLIP. Algunos afinados SDXL se entrenan con clip-skip 2.",
+                                "Skip the last CLIP layers. Some SDXL finetunes are trained with clip-skip 2."))
+            }
             Text(loc.t("Formatos: .safetensors / .gguf. Ajusta pasos y CFG según tu modelo (los turbo suelen querer CFG 1).",
                        "Formats: .safetensors / .gguf. Set steps and CFG to match your model (turbo ones usually want CFG 1)."))
                 .font(.caption2).foregroundStyle(.secondary)
