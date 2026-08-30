@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **LLMs: multi-GPU generation no longer pays a penalty for splitting the model.** The engine kept pipeline parallelism switched off on every Mac because Accelerate reports no async support, so the cards took turns instead of overlapping. Measured on four Radeon Pro W6800X dies: generation improved 9.3% on an 8B and 13.1% on a 4B, with the same output.
+
 ## [0.86.2] - 2026-08-29
 
 ### Added
