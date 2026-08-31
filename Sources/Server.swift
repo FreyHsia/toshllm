@@ -119,6 +119,11 @@ struct ServerSettings {
     /// (GGML_SCHED_PREFETCH_EXPERTS) and keep CPU experts unpacked so their
     /// matmuls can offload (GGML_CPU_NO_REPACK).
     var prefetchExperts: Bool = true
+    /// Prefill micro-batch (--ubatch-size); 0 leaves the engine's 512. Only worth
+    /// raising with experts on CPU: each micro-batch pays one expert upload over
+    /// the bus, so a long prompt pays it once per batch instead of once per token.
+    /// Costs VRAM linearly (~0.5 GiB per 512 on a 35B), so it is not a default.
+    var ubatch: Int = 0
     /// Experimental bounded-VRAM expert cache. Compiled into the bundled engine,
     /// but completely inert unless this persisted user choice is enabled.
     var dynamicMoe: Bool = false
@@ -323,6 +328,7 @@ struct ServerSettings {
             "--port", String(port),
         ]
         if !effectiveDynamicMoe && ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
+        if let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
         let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
         if effectiveDynamicMoe {
@@ -546,6 +552,7 @@ struct ServerSettings {
         if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
         if !effectiveDynamicMoe && ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
+        if let ub = effectiveUbatch { args += ["-ub", String(ub), "-b", String(ub)] }
         if effectiveDynamicMoe { args += ["-ot", Self.dynamicMoeTensorOverride] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
@@ -773,6 +780,7 @@ struct ServerSettings {
             specMTP: bool(SettingsKeys.specMTP, false),
             faAmd: bool(SettingsKeys.faAmd, defaultFaAmd),
             prefetchExperts: bool(SettingsKeys.prefetchExperts, true),
+            ubatch: int(SettingsKeys.ubatch, 0),
             dynamicMoe: bool(SettingsKeys.dynamicMoe, false),
             dynamicMoeSlots: int(SettingsKeys.dynamicMoeSlots, 8),
             dynamicMoePrefetch: int(SettingsKeys.dynamicMoePrefetch, 4),
@@ -875,6 +883,14 @@ struct ServerSettings {
         guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
         guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
         return .cache
+    }
+    /// MoE only: measured up to twice the prefill with experts on CPU (one expert
+    /// upload per batch instead of per 512 tokens) and ~10% with the model whole on
+    /// the card. A dense model measures slower with it, so it stays gated.
+    var effectiveUbatch: Int? {
+        guard ubatch > 0, !effectiveDynamicMoe else { return nil }
+        guard routerMode || Self.modelIsMoE(at: modelPath) else { return nil }
+        return ubatch
     }
     var effectiveDynamicMoe: Bool {
         guard dynamicMoe && dynamicMoeUIUnlocked,
@@ -1181,6 +1197,13 @@ struct ServerSettings {
     /// Gates the `--n-cpu-moe` control, which a dense model ignores.
     nonisolated static func modelIsMoE(at path: String) -> Bool {
         GGUFMetadataCache.metadata(at: path)?.isMoE ?? false
+    }
+
+    /// Micro-batch sizes offered in the UI. 0 leaves the engine's own 512.
+    nonisolated static let ubatchOptions = [0, 1024, 2048, 4096]
+
+    nonisolated static func ubatchLabel(_ value: Int, loc: Localizer) -> String {
+        value == 0 ? loc.t("512 (por defecto)", "512 (default)") : String(value)
     }
 
     /// Remembers the ncmoe the user settled on for a MoE model, so selecting
