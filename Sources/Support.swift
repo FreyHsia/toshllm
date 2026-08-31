@@ -69,6 +69,10 @@ enum SettingsKeys {
     static let noMmap = "noMmap"
     static let jinja = "jinja"
     static let vramReserve = "vramReserve"
+    /// Fork: RAM overcommit factor for MoE expert offload. 0.72 is the upstream
+    /// conservative default (never touch swap); raising toward 1.0 lets a model
+    /// run with its experts mostly in RAM, leaning on the OS swap when needed.
+    static let ramOvercommit = "ramOvercommit"
     static let gpuIndex = "gpuIndex"
     /// Comma-separated physical GPU indices to split across (2+ entries).
     static let gpuList = "gpuList"

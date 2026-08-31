@@ -33,6 +33,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
     @AppStorage(SettingsKeys.jinja) private var jinja = true
     @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 1024
+    // Fork: RAM overcommit % for MoE experts (72 = upstream safe default).
+    @AppStorage(SettingsKeys.ramOvercommit) private var ramOvercommit = 72
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
@@ -646,6 +648,16 @@ struct SettingsView: View {
                         value: $vramReserve, in: 256...4096, step: 256)
                     .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
                                 "VRAM left free for the system and UI. 1024 MB is a safe margin."))
+                // Fork: RAM overcommit for MoE expert offload. Upstream caps at
+                // 0.72 (never swap); raising it lets large MoE run with experts in
+                // RAM, leaning on the OS swap — slow but usable on low-VRAM cards.
+                Stepper(value: $ramOvercommit, in: 72...100, step: 2) {
+                    Text(ramOvercommit == 72
+                        ? loc.t("RAM de expertos: límite seguro", "Expert RAM: safe limit")
+                        : loc.t("RAM de expertos: %@%% (permite swap)", "Expert RAM: %@%% (allows swap)", "\(ramOvercommit)"))
+                }
+                    .infoTip(loc.t("Cuánta RAM se puede usar para expertos MoE fuera de VRAM. 72% = conservador (nunca toca swap). Subir hacia 100% permite usar swap: más modelos caben, pero la generación se ralentiza mucho cuando el sistema empieza a paginar.",
+                                "How much RAM MoE experts may use beyond VRAM. 72% = conservative (never touches swap). Raising toward 100% allows swap: more models fit, but generation slows a lot once the system starts paging."))
                 Toggle(loc.t("Copiar pesos a VRAM (--no-mmap, recomendado)",
                              "Copy weights to VRAM (--no-mmap, recommended)"), isOn: $noMmap)
                     .infoTip(loc.t("Copia los pesos a la VRAM en vez de leerlos por PCIe en cada token. En GPU dedicada multiplica la velocidad (~6×). Desactívalo solo para depurar.",

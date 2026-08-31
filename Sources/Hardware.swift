@@ -333,7 +333,14 @@ enum Estimator {
         let cpuExpertsGB = expertsGB - gpuExpertsGB
         let ramNeed = cpuExpertsGB + 1.0
 
-        if ramNeed > hw.ramGB * 0.72 {
+        // Fork: the RAM ceiling is a tunable overcommit factor (default 0.72 =
+        // upstream conservative behavior). Raising it lets large MoE models run
+        // with more experts in RAM, leaning on the OS swap when it exceeds the
+        // physical budget — slow but usable on low-VRAM cards.
+        let ramOvercommit = UserDefaults.standard.double(forKey: SettingsKeys.ramOvercommit) == 0
+            ? 0.72
+            : UserDefaults.standard.double(forKey: SettingsKeys.ramOvercommit)
+        if ramNeed > hw.ramGB * ramOvercommit {
             return MemoryEstimate(vramGB: vramBudget, ramGB: ramNeed, suggestedNcmoe: spec.layers,
                                   level: .no, expectedSpeed: "—")
         }
