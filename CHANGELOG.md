@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Interface: the window no longer stutters every three seconds.** The VRAM reading rebuilt both windows and the menu bar on every sample, whether or not the figure had changed.
+
 ## [0.86.3] - 2026-08-30
 
 ### Added
