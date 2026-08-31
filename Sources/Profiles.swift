@@ -46,6 +46,7 @@ struct Profile: Codable, Identifiable {
     var uiMcpProxy: Bool? = nil
     var routerMode: Bool? = nil
     var routerModelsMax: Int? = nil
+    var ubatch: Int? = nil
     /// Added servers inherit the global settings except these fields. nil (any
     /// profile saved before this existed) means every field applies, as before.
     var pinned: [String]? = nil
@@ -60,6 +61,7 @@ struct Profile: Codable, Identifiable {
         static let embeddings = "embeddings"
         static let uiMcpProxy  = "uiMcpProxy"
         static let router     = "router"
+        static let ubatch     = "ubatch"
     }
 }
 
@@ -166,6 +168,7 @@ final class ProfileStore: ObservableObject {
         if let v = p.uiMcpProxy { d.set(v, forKey: SettingsKeys.uiMcpProxy) }
         if let v = p.routerMode { d.set(v, forKey: SettingsKeys.routerMode) }
         if let v = p.routerModelsMax { d.set(v, forKey: SettingsKeys.routerModelsMax) }
+        if let v = p.ubatch { d.set(v, forKey: SettingsKeys.ubatch) }
         switch p.engine {
         case "bundled", "turbo": d.set("bundled", forKey: SettingsKeys.engineKind)
         case let .some(path) where !path.isEmpty:
@@ -222,7 +225,8 @@ extension ServerSettings {
                 cacheReuse: cacheReuse, loadVision: loadVision,
                 localNetworkDiscovery: localNetworkDiscovery,
                 gpuList: gpuList, embeddings: embeddings, uiMcpProxy: uiMcpProxy,
-                routerMode: routerMode, routerModelsMax: routerModelsMax)
+                routerMode: routerMode, routerModelsMax: routerModelsMax,
+                ubatch: ubatch)
     }
 
     /// Load a profile's config into this struct without touching UserDefaults,
@@ -238,6 +242,7 @@ extension ServerSettings {
         if let v = p.reasoningInline { reasoningInline = v }
         if let v = p.parallelSlots { parallelSlots = v }
         if let v = p.faAmd { faAmd = v }
+        if let v = p.ubatch { ubatch = v }
         if let v = p.dynamicMoe { dynamicMoe = v }
         if let v = p.dynamicMoeSlots { dynamicMoeSlots = v }
         if let v = p.dynamicMoePrefetch { dynamicMoePrefetch = v }
@@ -267,6 +272,7 @@ extension ServerSettings {
         if pinned.contains(Profile.Pin.model) { modelPath = p.modelPath; ncmoe = p.ncmoe }
         if pinned.contains(Profile.Pin.moe) { ncmoe = p.ncmoe }
         if pinned.contains(Profile.Pin.ctx) { ctx = p.ctx }
+        if pinned.contains(Profile.Pin.ubatch), let v = p.ubatch { ubatch = v }
         if pinned.contains(Profile.Pin.gpu) { gpuIndex = p.gpuIndex; gpuList = p.gpuList ?? [] }
         if pinned.contains(Profile.Pin.discovery), let v = p.localNetworkDiscovery { localNetworkDiscovery = v }
         if pinned.contains(Profile.Pin.vision), let v = p.loadVision { loadVision = v }
