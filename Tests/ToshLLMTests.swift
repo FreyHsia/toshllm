@@ -1552,6 +1552,47 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "-fa")! + 1], "1")
         XCTAssertEqual(s.environment["TOSH_FA_AMD"], "1")
     }
+
+    func testMicroBatchOnlyAppliesToMoEModels() throws {
+        let model = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tosh-ubatch-\(UUID().uuidString).gguf")
+        try writeMinimalMoEGGUF(model)
+        defer { try? FileManager.default.removeItem(at: model) }
+
+        var s = makeSettings()
+        s.ubatch = 2048
+
+        // a dense model measures slower with a big micro-batch, MoE gains with the experts
+        // wherever they are, so the gate is the model and not where they run
+        XCTAssertNil(s.effectiveUbatch)
+        XCTAssertFalse(s.arguments.contains("--ubatch-size"))
+        XCTAssertFalse(s.benchmarkArguments.contains("-ub"))
+
+        s.modelPath = model.path
+        s.ncmoe = 0
+        XCTAssertEqual(s.effectiveUbatch, 2048, "a MoE whole on the card gains too")
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--ubatch-size")! + 1], "2048")
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--batch-size")! + 1], "2048")
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ub")! + 1], "2048")
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-b")! + 1], "2048")
+
+        s.ubatch = 0
+        XCTAssertNil(s.effectiveUbatch, "0 leaves the engine's own default")
+        XCTAssertFalse(s.arguments.contains("--ubatch-size"))
+    }
+
+    func testMicroBatchSurvivesAProfileRoundTrip() {
+        var s = makeSettings()
+        s.ncmoe = 24
+        s.ubatch = 1024
+
+        let profile = s.makeProfile(name: "moe")
+        XCTAssertEqual(profile.ubatch, 1024)
+
+        var restored = makeSettings()
+        restored.apply(profile)
+        XCTAssertEqual(restored.ubatch, 1024)
+    }
 }
 
 // MARK: - Chat
