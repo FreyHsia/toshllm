@@ -102,6 +102,7 @@ jobs:
       # repository secrets are configured; otherwise releases stay ad-hoc
       # signed and users must approve the app once in System Settings.
       - name: Sign and notarize (if secrets configured)
+        id: sign
         if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -117,16 +118,31 @@ jobs:
           echo "$CERT_P12" | base64 -d > /tmp/cert.p12
           security create-keychain -p ci tosh.keychain
           security default-keychain -s tosh.keychain
+          security list-keychains -d user -s tosh.keychain login.keychain-db
           security unlock-keychain -p ci tosh.keychain
           security import /tmp/cert.p12 -k tosh.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci tosh.keychain
           IDENTITY=$(security find-identity -v -p codesigning tosh.keychain | grep -oE '"Developer ID Application:[^"]+"' | head -1 | tr -d '"')
-          codesign --force --options runtime --deep -s "$IDENTITY" dist/ToshLLM.app
-          ditto -c -k --keepParent dist/ToshLLM.app /tmp/ToshLLM.zip
+          [ -n "$IDENTITY" ] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+
+          # Sign inside out: --deep is deprecated and does not apply the hardened
+          # runtime to the engine binaries, which notarization rejects.
+          APP=dist/ToshLLM.app
+          for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"*; do
+            [ -f "$exe" ] || continue
+            case "$exe" in *.metallib) continue;; esac
+            codesign --force --timestamp --options runtime -s "$IDENTITY" "$exe"
+          done
+          codesign --force --timestamp --options runtime -s "$IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          ditto -c -k --keepParent "$APP" /tmp/ToshLLM.zip
           xcrun notarytool submit /tmp/ToshLLM.zip \
             --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
             --password "$NOTARY_PASSWORD" --wait
-          xcrun stapler staple dist/ToshLLM.app
+          xcrun stapler staple "$APP"
+          spctl -a -vvv -t exec "$APP"
 
       # The DMG is only consumed by releases; packaging + uploading it on every
       # push/PR just burns time and artifact storage. Only tags and manual runs
@@ -137,6 +153,26 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           [[ "$VERSION" == v* ]] || VERSION="dev-${GITHUB_SHA::7}"
           ./scripts/make-dmg.sh "$VERSION"
+
+      # The app inside is already stapled, but an unsigned disk image still warns
+      # on mount, so the DMG gets its own signature and ticket.
+      - name: Sign and notarize DMG
+        if: steps.sign.outputs.identity != '' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        env:
+          IDENTITY: ${{ steps.sign.outputs.identity }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          security unlock-keychain -p ci tosh.keychain
+          for dmg in dist/*.dmg; do
+            codesign --force --timestamp -s "$IDENTITY" "$dmg"
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+              --password "$NOTARY_PASSWORD" --wait
+            xcrun stapler staple "$dmg"
+            spctl -a -vvv -t open --context context:primary-signature "$dmg"
+          done
 
       - name: Upload artifact
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
