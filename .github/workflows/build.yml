@@ -13,6 +13,11 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      notarize:
+        description: "Sign and notarize (adds up to an hour of Apple queue)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -100,11 +105,11 @@ jobs:
         run: TOSH_ARCH=x86_64 ./make-app.sh
 
       # Developer ID signing + notarization, skipped when the secrets are absent.
-      # Only releases need a ticket and each submission can cost an hour in Apple's
-      # queue, so PR and branch builds keep the ad-hoc signature.
+      # A submission can cost an hour in Apple's queue, so only tags get one;
+      # everything else keeps the ad-hoc signature unless a manual run opts in.
       - name: Sign and notarize (if secrets configured)
         id: sign
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.notarize
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -160,7 +165,7 @@ jobs:
       # The app inside is already stapled, but an unsigned disk image still warns
       # on mount, so the DMG gets its own signature and ticket.
       - name: Sign and notarize DMG
-        if: steps.sign.outputs.identity != '' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        if: steps.sign.outputs.identity != ''
         env:
           IDENTITY: ${{ steps.sign.outputs.identity }}
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
