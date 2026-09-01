@@ -1058,6 +1058,7 @@ index cc28c8a73..5a36db884 100644
      void grow_to(size_t target_size);
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 index d9241022c..e054d9783 100644
+index d9241022c..69748dd9b 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -1,10 +1,26 @@
@@ -1087,7 +1088,25 @@ index d9241022c..e054d9783 100644
  
  #include <algorithm>
  #include <array>
-@@ -538,16 +554,20 @@ llama_model_loader::llama_model_loader(
+@@ -405,16 +421,17 @@ namespace GGUFMeta {
+ 
+     template<typename T>
+     bool llama_model_loader::get_arr(enum llm_kv kid, T & result, bool required) {
+         return get_arr(llm_kv(kid), result, required);
+     }
+ 
+     template bool llama_model_loader::get_arr<std::vector<std::string>>(enum llm_kv kid, std::vector<std::string> & result, bool required);
+     template bool llama_model_loader::get_arr<std::array<int32_t, 512>>(enum llm_kv kid, std::array<int32_t, 512> & result, bool required);
++    template bool llama_model_loader::get_arr<std::array<int,     4>>(enum llm_kv kid, std::array<int,     4>   & result, bool required);
+     template bool llama_model_loader::get_arr<std::vector<int32_t>>(enum llm_kv kid, std::vector<int32_t> & result, bool required);
+     template bool llama_model_loader::get_arr<std::array<uint32_t, LLAMA_MAX_LAYERS>>(enum llm_kv kid, std::array<uint32_t, LLAMA_MAX_LAYERS> & result, bool required);
+     template bool llama_model_loader::get_arr<std::vector<uint32_t>>(enum llm_kv kid, std::vector<uint32_t> & result, bool required);
+     template bool llama_model_loader::get_arr<std::array<uint64_t, LLAMA_MAX_PLE_NGRAM>>(enum llm_kv kid, std::array<uint64_t, LLAMA_MAX_PLE_NGRAM> & result, bool required);
+     template bool llama_model_loader::get_arr<std::array<uint64_t, LLAMA_MAX_PLE_HEADS>>(enum llm_kv kid, std::array<uint64_t, LLAMA_MAX_PLE_HEADS> & result, bool required);
+ 
+     template<typename T>
+     bool llama_model_loader::get_key(const std::string & key, T & result, bool required) {
+@@ -538,16 +555,20 @@ llama_model_loader::llama_model_loader(
          FILE * file,
          llama_load_mode load_mode,
          bool check_tensors,
@@ -1108,7 +1127,7 @@ index d9241022c..e054d9783 100644
      if (param_overrides_p != nullptr) {
          for (const struct llama_model_kv_override * p = param_overrides_p; p->key[0] != 0; p++) {
              kv_overrides.insert({std::string(p->key), *p});
-@@ -1075,16 +1095,17 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+@@ -1075,16 +1096,17 @@ struct ggml_tensor * llama_model_loader::create_tensor(
          const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
      auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
          auto it = ctx_map.find(buft);
@@ -1126,7 +1145,7 @@ index d9241022c..e054d9783 100644
              ggml_init_params params = {
                  /*.mem_size   =*/ ctx_size,
                  /*.mem_buffer =*/ NULL,
-@@ -1327,16 +1348,110 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+@@ -1327,16 +1349,110 @@ struct ggml_tensor * llama_model_loader::create_tensor(
          ggml_tensor * t = ggml_get_tensor(ctx, tn.str().c_str());
          if (t) {
              return t;
@@ -1237,7 +1256,7 @@ index d9241022c..e054d9783 100644
      } else {
          n_created++;
      }
-@@ -1705,23 +1820,39 @@ bool llama_model_loader::load_all_data(
+@@ -1705,23 +1821,39 @@ bool llama_model_loader::load_all_data(
      if (validation_failed) {
          throw std::runtime_error("found tensors with invalid data");
      }
@@ -1539,9 +1558,28 @@ index 61db93af8..25cd9d52e 100644
  
 diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
 index 309dd4324..2f8b65619 100644
+index 309dd4324..ad4981cfd 100644
 --- a/src/models/qwen35.cpp
 +++ b/src/models/qwen35.cpp
-@@ -530,18 +530,20 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+@@ -1,14 +1,16 @@
+ #include "models.h"
+ #include "llama-memory-recurrent.h"
+ 
+ void llama_model_qwen35::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
+-    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
++    // Some exports carry only the non-zero sections; rope_sections is zero-filled
++    // beforehand, so a shorter array lands identical to the padded four-entry form.
++    ml.get_arr(LLM_KV_ROPE_DIMENSION_SECTIONS, hparams.rope_sections, true);
+ 
+     // Load linear attention (gated delta net) parameters
+     ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
+     ml.get_key(LLM_KV_SSM_INNER_SIZE,     hparams.ssm_d_inner);
+     ml.get_key(LLM_KV_SSM_STATE_SIZE,     hparams.ssm_d_state);
+     ml.get_key(LLM_KV_SSM_TIME_STEP_RANK, hparams.ssm_dt_rank);
+     ml.get_key(LLM_KV_SSM_GROUP_COUNT,    hparams.ssm_n_group);
+ 
+@@ -530,18 +532,20 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
      inp->h = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
      ggml_set_input(inp->h);
      ggml_set_name(inp->h, "mtp_h_input");
@@ -1563,7 +1601,7 @@ index 309dd4324..2f8b65619 100644
  
      ggml_tensor * e_norm = build_norm(tok_embd, layer.nextn.enorm, nullptr, LLM_NORM_RMS, il);
      cb(e_norm, "mtp_enorm", il);
-@@ -587,16 +589,21 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+@@ -587,16 +591,21 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
  
      Qcur = ggml_rope_multi(ctx0, Qcur, inp_pos, nullptr,
              n_rot, sections, rope_type, n_ctx_orig, freq_base, freq_scale,
@@ -1587,9 +1625,31 @@ index 309dd4324..2f8b65619 100644
  
 diff --git a/src/models/qwen35moe.cpp b/src/models/qwen35moe.cpp
 index 38f2a5798..85db58e4f 100644
+index 38f2a5798..e8620562e 100644
 --- a/src/models/qwen35moe.cpp
 +++ b/src/models/qwen35moe.cpp
-@@ -594,18 +594,20 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
+@@ -1,17 +1,19 @@
+ #include "models.h"
+ #include "llama-memory-recurrent.h"
+ 
+ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
+     ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp, false);
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
+ 
+-    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
++    // Some exports carry only the non-zero sections; rope_sections is zero-filled
++    // beforehand, so a shorter array lands identical to the padded four-entry form.
++    ml.get_arr(LLM_KV_ROPE_DIMENSION_SECTIONS, hparams.rope_sections, true);
+ 
+     // Load linear attention (gated delta net) parameters
+     ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
+     ml.get_key(LLM_KV_SSM_INNER_SIZE,     hparams.ssm_d_inner);
+     ml.get_key(LLM_KV_SSM_STATE_SIZE,     hparams.ssm_d_state);
+     ml.get_key(LLM_KV_SSM_TIME_STEP_RANK, hparams.ssm_dt_rank);
+     ml.get_key(LLM_KV_SSM_GROUP_COUNT,    hparams.ssm_n_group);
+ 
+@@ -594,18 +596,20 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
      inp->h = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
      ggml_set_input(inp->h);
      ggml_set_name(inp->h, "mtp_h_input");
@@ -1611,7 +1671,7 @@ index 38f2a5798..85db58e4f 100644
  
      ggml_tensor * e_norm = build_norm(tok_embd, layer.nextn.enorm, nullptr, LLM_NORM_RMS, il);
      cb(e_norm, "mtp_enorm", il);
-@@ -651,16 +653,21 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
+@@ -651,16 +655,21 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
  
      Qcur = ggml_rope_multi(ctx0, Qcur, inp_pos, nullptr,
              n_rot, sections, rope_type, n_ctx_orig, freq_base, freq_scale,
