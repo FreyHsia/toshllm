@@ -77,6 +77,9 @@ enum SettingsKeys {
     static let agentToolsEnabled = "agentToolsEnabled"
     static let toolsRuntime = "toolsRuntime"
     static let jsSandboxEnabled = "jsSandboxEnabled"
+    /// memory_list / memory_archive / memory_recall. Off for setups where an
+    /// external memory server already covers the job and the model mixes the two.
+    static let memoryToolsEnabled = "memoryToolsEnabled"
     static let mcpServers = "mcpServers"
     static let uiMcpProxy = "uiMcpProxy"
     static let cacheTypeK = "cacheTypeK"
@@ -223,7 +226,8 @@ enum SettingsKeys {
         audioGlossary, audioTranslationModel, audioVADMode,
         audioVADProfile, audioVADThreshold, audioVADMinSpeechMS,
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
-        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, mcpServers, uiMcpProxy,
+        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled,
+        memoryToolsEnabled, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts, ubatch,
         dynamicMoe, dynamicMoeSlots, dynamicMoePrefetch, dynamicMoePolicy, routerMode, routerModelsMax,

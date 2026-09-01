@@ -3,6 +3,17 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Installation: the app is signed and notarized by Apple.** It opens on first launch, without approving it in System Settings.
+- **Chat: the conversation memory tools can be turned off.** A switch in Settings under **Agents and attachments** hides all three at once, for setups where an external memory server already does the job.
+
+### Fixed
+
+- **Chat: the conversation memory tools now appear in the tool list.** `memory_list`, `memory_archive` and `memory_recall` were sent to the model but missing from the tools popover, so they could not be turned off one by one. Reported in #82.
+
 ## [0.86.4] - 2026-08-31
 
 ### Improved

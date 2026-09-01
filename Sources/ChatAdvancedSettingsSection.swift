@@ -11,6 +11,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.agentToolsEnabled) private var agentToolsEnabled = false
     @AppStorage(SettingsKeys.toolsRuntime) private var toolsRuntime = ""
     @AppStorage(SettingsKeys.jsSandboxEnabled) private var jsSandboxEnabled = false
+    @AppStorage(SettingsKeys.memoryToolsEnabled) private var memoryToolsEnabled = true
     @AppStorage(SettingsKeys.chatSystem) private var systemPrompt = ""
     @AppStorage(SettingsKeys.chatTopP) private var topP = 0.95
     @AppStorage(SettingsKeys.chatMinP) private var minP = 0.05
@@ -227,6 +228,10 @@ struct ChatAdvancedSettingsSection: View {
                            isOn: $jsSandboxEnabled)
                         .infoTip(loc.t("Añade una herramienta que ejecuta JavaScript en un entorno aislado para cálculos o transformaciones de datos.",
                                        "Adds a tool that runs JavaScript in a sandbox for calculations or data transforms."))
+                    Toggle(loc.t("Memoria de la conversación", "Conversation memory"),
+                           isOn: $memoryToolsEnabled)
+                        .infoTip(loc.t("Da al modelo tres herramientas para gestionar su propio contexto: listar la conversación, archivar lo terminado y recuperarlo cuando vuelve a hacer falta. Desactívalo si usas un servidor de memoria externo y el modelo confunde los dos.",
+                                       "Gives the model three tools to manage its own context: list the conversation, archive what is finished and recall it when it matters again. Turn it off if you use an external memory server and the model confuses the two."))
                     integerStepper(loc.t("Turnos máximos del agente", "Maximum agent turns"),
                                    value: $agenticMaxTurns, range: 1...100,
                                    help: loc.t("Máximo de rondas herramienta→respuesta que el agente encadena en un turno antes de detenerse.",
@@ -366,6 +371,6 @@ struct ChatAdvancedSettingsSection: View {
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
-        toolsRuntime = ""
+        memoryToolsEnabled = true; toolsRuntime = ""
     }
 }
