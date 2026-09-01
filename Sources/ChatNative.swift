@@ -89,6 +89,15 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 
     /// Content as sent over the wire: attached files as fenced blocks first,
     /// then the typed text.
+    /// Rough token cost of this turn, for deciding how much history to keep
+    /// verbatim. Same chars/4 rule the attachment badge uses, plus what the
+    /// attachments themselves carry.
+    var estimatedTokens: Int {
+        let text = role == "assistant" ? parts.body : wireContent
+        let attached = (attachments ?? []).reduce(0) { $0 + $1.estimatedTokens }
+        return max(1, text.count / 4) + attached
+    }
+
     var wireContent: String {
         guard let attachments, !attachments.isEmpty else { return content }
         let blocks = attachments.filter { $0.mediaKind == nil }.map { a in
@@ -137,6 +146,9 @@ struct Conversation: Identifiable, Codable {
     var enabledToolNames: [String]? = nil
     /// Working directory the server tools run in. Empty/nil falls back to the project's.
     var workingDirectory: String? = nil
+    /// Ranges the model set aside with memory_archive: still in `messages` and on
+    /// disk, just not sent with each request. Optional so older JSON still decodes.
+    var archived: [ArchivedBlock]? = nil
     /// Last exchange's context tokens, per chat so the bar follows the open
     /// conversation and persists with the KV cache. Optional for old JSON.
     var contextUsed: Int? = nil
@@ -745,6 +757,7 @@ final class ChatStore: ObservableObject {
                                           summary: conversations[i].summary,
                                           messages: conversations[i].messages,
                                           from: conversations[i].summarizedCount ?? 0,
+                                          archived: conversations[i].archived,
                                           modalities: modalities)
         if let continuationInstruction {
             history.append(["role": "user", "content": continuationInstruction])
@@ -882,6 +895,7 @@ final class ChatStore: ObservableObject {
                         }
                     }
                     if javaScriptEnabled { availableTools.append(JavaScriptSandboxService.tool) }
+                    availableTools.append(contentsOf: ChatMemoryService.tools)
                     availableTools += await ToshMCPService.shared.discoverTools()
                     if let enabledToolNames {
                         let selected = Set(enabledToolNames)
@@ -1112,6 +1126,7 @@ final class ChatStore: ObservableObject {
                conversations[i].messages[j].role == "assistant" {
                 if text.isEmpty && toolCalls.isEmpty {
                     conversations[i].messages.removeLast()
+                    Self.clampSummary(&conversations[i])
                 } else {
                     conversations[i].messages[j].content = text
                     conversations[i].messages[j].genSpeed = speed
@@ -1289,6 +1304,11 @@ final class ChatStore: ObservableObject {
                         serverID: serverID, name: remoteName, arguments: arguments)
                 } else if request.name == JavaScriptSandboxService.toolName {
                     result = await JavaScriptSandboxService.execute(arguments: arguments)
+                } else if ChatMemoryService.toolNames.contains(request.name) {
+                    result = await MainActor.run {
+                        self?.runMemoryTool(request.name, arguments: arguments)
+                            ?? ToolExecutionResult(content: "No open conversation.", isError: true)
+                    }
                 } else if request.name == "exec_shell_command" {
                     result = try await ChatToolsService.executeStreaming(
                         name: request.name, arguments: arguments, port: context.port,
@@ -1466,6 +1486,7 @@ final class ChatStore: ObservableObject {
     /// stripped of reasoning blocks (saves context).
     nonisolated static func requestHistory(system: String, summary: String?,
                                            messages: [ChatMessage], from start: Int,
+                                           archived: [ArchivedBlock]? = nil,
                                            modalities: ModelModalities? = nil) -> [[String: Any]] {
         var history: [[String: Any]] = []
         var sys = system.trimmingCharacters(in: .whitespaces)
@@ -1475,7 +1496,9 @@ final class ChatStore: ObservableObject {
         }
         if !sys.isEmpty { history.append(["role": "system", "content": sys]) }
         let safeStart = min(max(0, start), messages.count)
-        history += messages[safeStart...].compactMap { m -> [String: Any]? in
+        let skipped = ChatMemoryService.archivedIndices(archived)
+        history += messages[safeStart...].enumerated().compactMap { offset, m -> [String: Any]? in
+            guard !skipped.contains(safeStart + offset) else { return nil }
             if m.role == "tool", let callID = m.toolCallID {
                 return ["role": "tool", "tool_call_id": callID, "content": m.content]
             }
@@ -1533,8 +1556,23 @@ final class ChatStore: ObservableObject {
     /// most recent exchanges verbatim and lands on a user message so the
     /// remaining history starts a full turn. Nil when too little would be
     /// gained over what is already compacted.
-    nonisolated static func compactionCutoff(messages: [ChatMessage], alreadyCompacted: Int) -> Int? {
+    nonisolated static func compactionCutoff(messages: [ChatMessage], alreadyCompacted: Int,
+                                             keepTokens: Int = 0) -> Int? {
+        // Keeping a fixed number of messages verbatim says nothing about how much
+        // context they hold: four turns of tool output can be most of the window,
+        // and compacting then frees almost nothing. Walk back from the end until
+        // the kept tail is worth about a quarter of the context, with the old
+        // four-message floor underneath it.
         var cutoff = messages.count - 4
+        if keepTokens > 0 {
+            var kept = 0
+            var i = messages.count - 1
+            while i >= 0, kept < keepTokens {
+                kept += messages[i].estimatedTokens
+                i -= 1
+            }
+            cutoff = min(cutoff, i + 1)
+        }
         while cutoff > 0 && messages[cutoff].role != "user" { cutoff -= 1 }
         guard cutoff >= alreadyCompacted + 2 else { return nil }
         return cutoff
@@ -1544,6 +1582,100 @@ final class ChatStore: ObservableObject {
     /// summarize the older turns with the model itself; future requests send
     /// the summary plus the recent messages. The full transcript stays
     /// visible and persisted.
+    // MARK: model-managed memory (memory_list / memory_archive / memory_recall)
+
+    /// Runs one of the memory tools against the open conversation. Everything the
+    /// model needs is already in the transcript, so archiving only records a range
+    /// and recall reads it back: nothing is deleted and nothing leaves the app.
+    func runMemoryTool(_ name: String, arguments: [String: Any]) -> ToolExecutionResult {
+        guard let i = currentIndex else {
+            return ToolExecutionResult(content: "No open conversation.", isError: true)
+        }
+        switch name {
+        case ChatMemoryService.listName:   return memoryList(i)
+        case ChatMemoryService.archiveName: return memoryArchive(i, arguments: arguments)
+        case ChatMemoryService.recallName:  return memoryRecall(i, arguments: arguments)
+        default:
+            return ToolExecutionResult(content: "Unknown memory tool.", isError: true)
+        }
+    }
+
+    private func memoryList(_ i: Int) -> ToolExecutionResult {
+        let c = conversations[i]
+        let skipped = ChatMemoryService.archivedIndices(c.archived)
+        var lines: [String] = []
+        if let covered = c.summarizedCount, covered > 0 {
+            lines.append("0-\(covered - 1): already summarized, cannot be archived")
+        }
+        for (index, m) in c.messages.enumerated() where index >= (c.summarizedCount ?? 0) {
+            let text = m.role == "assistant" ? m.parts.body : m.wireContent
+            let state = skipped.contains(index) ? " [archived]" : ""
+            lines.append("\(index) \(m.role)\(state): \(ChatMemoryService.preview(text))")
+        }
+        if let blocks = c.archived, !blocks.isEmpty {
+            lines.append("")
+            lines.append("Archived ranges:")
+            for b in blocks { lines.append("  \(b.from)-\(b.to - 1): \(b.note)") }
+        }
+        return ToolExecutionResult(content: lines.joined(separator: "\n"), isError: false)
+    }
+
+    private func memoryArchive(_ i: Int, arguments: [String: Any]) -> ToolExecutionResult {
+        guard let from = (arguments["from_index"] as? NSNumber)?.intValue,
+              let to = (arguments["to_index"] as? NSNumber)?.intValue else {
+            return ToolExecutionResult(content: "from_index and to_index are required.", isError: true)
+        }
+        let note = (arguments["note"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let range = ChatMemoryService.validate(from: from, to: to,
+                                                     messageCount: conversations[i].messages.count,
+                                                     summarized: conversations[i].summarizedCount ?? 0) else {
+            return ToolExecutionResult(
+                content: "That range cannot be archived: it must be inside the conversation and leave the last exchange in place.",
+                isError: true)
+        }
+        var blocks = conversations[i].archived ?? []
+        blocks.append(ArchivedBlock(from: range.from, to: range.to,
+                                    note: note.isEmpty ? "archived" : note))
+        conversations[i].archived = blocks
+        conversations[i].updated = Date()
+        save()
+        AppLog.chat.info("archived messages \(range.from)..<\(range.to)")
+        let freed = conversations[i].messages[range.from..<range.to]
+            .reduce(0) { $0 + $1.estimatedTokens }
+        return ToolExecutionResult(
+            content: "Archived turns \(range.from)-\(range.to - 1), about \(freed) tokens freed. Use memory_recall to bring them back.",
+            isError: false)
+    }
+
+    private func memoryRecall(_ i: Int, arguments: [String: Any]) -> ToolExecutionResult {
+        guard let query = (arguments["query"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
+            return ToolExecutionResult(content: "query is required.", isError: true)
+        }
+        let limit = max(1, min(20, (arguments["max_results"] as? NSNumber)?.intValue ?? 4))
+        let c = conversations[i]
+        guard let blocks = c.archived, !blocks.isEmpty else {
+            return ToolExecutionResult(content: "Nothing has been archived in this conversation.",
+                                       isError: false)
+        }
+        var texts: [Int: String] = [:]
+        for index in ChatMemoryService.archivedIndices(blocks) where index < c.messages.count {
+            let m = c.messages[index]
+            texts[index] = m.role == "assistant" ? m.parts.body : m.wireContent
+        }
+        let hits = ChatMemoryService.matches(query: query, in: blocks, texts: texts, limit: limit)
+        guard !hits.isEmpty else {
+            return ToolExecutionResult(content: "No archived turn matches \"\(query)\".", isError: false)
+        }
+        var out = ""
+        for index in hits {
+            let line = "[\(index)] \(c.messages[index].role): \(texts[index] ?? "")\n\n"
+            if out.count + line.count > ChatMemoryService.maximumRecallCharacters { break }
+            out += line
+        }
+        return ToolExecutionResult(content: out, isError: false)
+    }
+
     private func compactIfNeeded(conversation id: UUID, port: Int) {
         let d = UserDefaults.standard
         let enabled = d.object(forKey: SettingsKeys.chatAutoCompact) == nil
@@ -1555,7 +1687,8 @@ final class ChatStore: ObservableObject {
               let used = conversations[i].contextUsed, Double(used) / Double(limit) > 0.7 else { return }
         let start = conversations[i].summarizedCount ?? 0
         guard let cutoff = Self.compactionCutoff(messages: conversations[i].messages,
-                                                 alreadyCompacted: start) else { return }
+                                                 alreadyCompacted: start,
+                                                 keepTokens: limit / 4) else { return }
         compact(conversation: id, index: i, from: start, through: cutoff, port: port)
     }
 
@@ -1705,8 +1838,19 @@ final class ChatStore: ObservableObject {
         }
         guard conversations[i].messages.last?.role == "user" else { return nil }
         let message = conversations[i].messages.removeLast()
+        Self.clampSummary(&conversations[i])
         save()
         return message
+    }
+
+    /// A summary that claims more messages than are left would silence every
+    /// message after it: the request history starts at that index and finds
+    /// nothing. Any edit that shortens the transcript has to bring it back.
+    nonisolated static func clampSummary(_ c: inout Conversation) {
+        c.archived = ChatMemoryService.clamped(c.archived, toCount: c.messages.count)
+        guard let covered = c.summarizedCount else { return }
+        if covered > c.messages.count { c.summarizedCount = c.messages.count }
+        if c.summarizedCount == 0 { c.summary = nil; c.summarizedCount = nil }
     }
 
     func editMessage(_ messageID: UUID) -> ChatMessage? {
@@ -1718,6 +1862,7 @@ final class ChatStore: ObservableObject {
                                messages: Array(conversations[i].messages[..<j]))
         conversations[i].summary = nil
         conversations[i].summarizedCount = nil
+        conversations[i].archived = nil
         conversations[i].updated = Date()
         conversations[i].contextUsed = nil
         save()
@@ -1730,6 +1875,7 @@ final class ChatStore: ObservableObject {
         conversations[i].messages.removeSubrange(j...)
         conversations[i].summary = nil
         conversations[i].summarizedCount = nil
+        conversations[i].archived = nil
         conversations[i].updated = Date()
         conversations[i].contextUsed = nil
         save()
@@ -1747,6 +1893,7 @@ final class ChatStore: ObservableObject {
               conversations[i].activateBranch(branchID) else { return }
         conversations[i].summary = nil
         conversations[i].summarizedCount = nil
+        conversations[i].archived = nil
         conversations[i].updated = Date()
         conversations[i].contextUsed = nil
         save()

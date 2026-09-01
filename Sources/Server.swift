@@ -119,6 +119,11 @@ struct ServerSettings {
     /// (GGML_SCHED_PREFETCH_EXPERTS) and keep CPU experts unpacked so their
     /// matmuls can offload (GGML_CPU_NO_REPACK).
     var prefetchExperts: Bool = true
+    /// Prefill micro-batch (--ubatch-size); 0 leaves the engine's 512. Only worth
+    /// raising with experts on CPU: each micro-batch pays one expert upload over
+    /// the bus, so a long prompt pays it once per batch instead of once per token.
+    /// Costs VRAM linearly (~0.5 GiB per 512 on a 35B), so it is not a default.
+    var ubatch: Int = 0
     /// Experimental bounded-VRAM expert cache. Compiled into the bundled engine,
     /// but completely inert unless this persisted user choice is enabled.
     var dynamicMoe: Bool = false
@@ -145,6 +150,11 @@ struct ServerSettings {
     /// whole layers, `tensor` splits every matmul so both work on the same token,
     /// which costs one allreduce per layer and only pays off on a big model.
     var splitMode: String = "layer"
+    /// GPUs per tensor-parallel group when splitting by tensors. 0 or 1 means one
+    /// group with every card, which is the plain tensor split. A smaller group
+    /// splits tensors inside it and layers between groups, which keeps most of the
+    /// prompt speed without paying the per-layer wait across every card.
+    var splitGroupSize: Int = 0
     /// Hand off activations between GPUs with shared Metal events instead of
     /// draining both queues on every copy (TOSH_MGPU_EVENTS). Inert on a layer
     /// split; on a tensor split it is most of the generation speed.
@@ -181,6 +191,13 @@ struct ServerSettings {
     /// and a tensor split the model cannot take falls back instead of aborting.
     var effectiveSplitMode: String {
         (splitMode == "tensor" && tensorSplitLimit.map { splitDeviceCount <= $0 } != false) ? "tensor" : "layer"
+    }
+
+    /// The group size to pass, or nil when it would be a no-op or an invalid split.
+    var effectiveSplitGroupSize: Int? {
+        let n = splitDeviceCount
+        guard splitGroupSize > 1, splitGroupSize < n, n % splitGroupSize == 0 else { return nil }
+        return splitGroupSize
     }
 
     /// GPUs the split will span, matching how the launch environment picks them.
@@ -311,6 +328,7 @@ struct ServerSettings {
             "--port", String(port),
         ]
         if !effectiveDynamicMoe && ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
+        if let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
         let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
         if effectiveDynamicMoe {
@@ -534,6 +552,7 @@ struct ServerSettings {
         if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
         if !effectiveDynamicMoe && ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
+        if let ub = effectiveUbatch { args += ["-ub", String(ub), "-b", String(ub)] }
         if effectiveDynamicMoe { args += ["-ot", Self.dynamicMoeTensorOverride] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
@@ -625,6 +644,11 @@ struct ServerSettings {
         // A layer split has nothing for it to carry.
         if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" { env["TOSH_MGPU_PEER"] = "1" }
         if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
+        // Groups only mean anything inside a tensor split, and only when they are
+        // smaller than the split itself and divide it evenly.
+        if effectiveSplitMode == "tensor", let g = effectiveSplitGroupSize {
+            env["TOSH_MGPU_TENSOR_GROUP"] = String(g)
+        }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
         if effectiveDynamicMoe {
@@ -756,6 +780,7 @@ struct ServerSettings {
             specMTP: bool(SettingsKeys.specMTP, false),
             faAmd: bool(SettingsKeys.faAmd, defaultFaAmd),
             prefetchExperts: bool(SettingsKeys.prefetchExperts, true),
+            ubatch: int(SettingsKeys.ubatch, 0),
             dynamicMoe: bool(SettingsKeys.dynamicMoe, false),
             dynamicMoeSlots: int(SettingsKeys.dynamicMoeSlots, 8),
             dynamicMoePrefetch: int(SettingsKeys.dynamicMoePrefetch, 4),
@@ -766,6 +791,7 @@ struct ServerSettings {
             multiGPU: bool(SettingsKeys.multiGPU, false),
             multiGPUCount: int(SettingsKeys.multiGPUCount, 0),
             splitMode: d.string(forKey: SettingsKeys.splitMode) ?? "layer",
+            splitGroupSize: d.integer(forKey: SettingsKeys.splitGroupSize),
             mgpuEvents: bool(SettingsKeys.mgpuEvents, true),
             mgpuPeer: bool(SettingsKeys.mgpuPeer, true),
             forcePrivateBuffers: bool(SettingsKeys.forcePrivateBuffers, false),
@@ -857,6 +883,14 @@ struct ServerSettings {
         guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
         guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
         return .cache
+    }
+    /// MoE only: measured up to twice the prefill with experts on CPU (one expert
+    /// upload per batch instead of per 512 tokens) and ~10% with the model whole on
+    /// the card. A dense model measures slower with it, so it stays gated.
+    var effectiveUbatch: Int? {
+        guard ubatch > 0, !effectiveDynamicMoe else { return nil }
+        guard routerMode || Self.modelIsMoE(at: modelPath) else { return nil }
+        return ubatch
     }
     var effectiveDynamicMoe: Bool {
         guard dynamicMoe && dynamicMoeUIUnlocked,
@@ -1163,6 +1197,13 @@ struct ServerSettings {
     /// Gates the `--n-cpu-moe` control, which a dense model ignores.
     nonisolated static func modelIsMoE(at path: String) -> Bool {
         GGUFMetadataCache.metadata(at: path)?.isMoE ?? false
+    }
+
+    /// Micro-batch sizes offered in the UI. 0 leaves the engine's own 512.
+    nonisolated static let ubatchOptions = [0, 1024, 2048, 4096]
+
+    nonisolated static func ubatchLabel(_ value: Int, loc: Localizer) -> String {
+        value == 0 ? loc.t("512 (por defecto)", "512 (default)") : String(value)
     }
 
     /// Remembers the ncmoe the user settled on for a MoE model, so selecting

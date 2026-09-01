@@ -92,6 +92,8 @@ enum SettingsKeys {
     static let specMTP = "specMTP"
     static let faAmd = "faAmd"
     static let prefetchExperts = "prefetchExperts"
+    /// Micro-batch size (--ubatch-size). 0 keeps the engine default of 512.
+    static let ubatch = "ubatch"
     static let dynamicMoe = "dynamicMoe"
     static let dynamicMoeSlots = "dynamicMoeSlots"
     static let dynamicMoePrefetch = "dynamicMoePrefetch"
@@ -105,6 +107,7 @@ enum SettingsKeys {
     static let multiGPU = "multiGPU"
     static let multiGPUCount = "multiGPUCount"
     static let splitMode = "splitMode"
+    static let splitGroupSize = "splitGroupSize"
     static let mgpuEvents = "mgpuEvents"
     static let mgpuPeer = "mgpuPeer"
     static let forcePrivateBuffers = "forcePrivateBuffers"
@@ -226,9 +229,9 @@ enum SettingsKeys {
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
         extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
-        parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts,
+        parallelSlots, reasoningInline, specMTP, faAmd, prefetchExperts, ubatch,
         dynamicMoe, dynamicMoeSlots, dynamicMoePrefetch, dynamicMoePolicy, routerMode, routerModelsMax,
-        persistCache, multiGPU, multiGPUCount, splitMode, mgpuEvents, mgpuPeer,
+        persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,
         menuBarIcon, menuBarGPU, autoStart, updateAutoCheck, appAccent,
         chatTemp, chatMaxTokens, chatSystem, chatThinking, chatReasoningEffort,

@@ -43,21 +43,12 @@ private func defaultsMigrationExtraArgs() -> String? {
 @main
 struct ToshLLMApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var manager = ServerManager.shared
-    // The active instance, observed directly so state changes drive the UI. One
-    // server today; switching the active one is handled when the multi-server UI lands.
-    @StateObject private var server = ServerManager.shared.active
-    @StateObject private var models = ModelStore()
-    @StateObject private var vram = VRAMMonitor()
-    @StateObject private var loc = Localizer()
-    @StateObject private var bench = BenchmarkController()
-    @StateObject private var search = SearchStore()
-    @StateObject private var profiles = ProfileStore()
-    @StateObject private var updates = UpdateChecker()
-    @StateObject private var modelUpdates = ModelUpdateChecker()
-    @StateObject private var control = ControlPanelState()
+    // Plain references: a property wrapper here would subscribe the scene body to
+    // every publish and rebuild both windows. Only the menus need to follow a
+    // change, and that is the language.
+    private let obj = AppObjects.shared
+    @ObservedObject private var loc = AppObjects.shared.loc
     @AppStorage(SettingsKeys.menuBarIcon) private var menuBarIcon = true
-    @AppStorage(SettingsKeys.menuBarGPU) private var menuBarGPU = "panel"
 
     init() {
         // Release VRAM held by an engine orphaned by a previous force-quit.
@@ -84,26 +75,6 @@ struct ToshLLMApp: App {
     @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
     @Environment(\.openWindow) private var openWindow
 
-    /// A crashed engine used to look exactly like a stopped one from here, which is
-    /// the one state worth noticing from another app.
-    private var menuBarIconName: String {
-        switch server.state {
-        case .running:  return "cpu.fill"
-        case .starting: return "cpu.badge.clock"
-        case .failed:   return "exclamationmark.triangle.fill"
-        case .stopped:  return "cpu"
-        }
-    }
-
-    private var menuBarStateLabel: String {
-        switch server.state {
-        case .running:  return loc.t("ToshLLM: servidor activo", "ToshLLM: server running")
-        case .starting: return loc.t("ToshLLM: iniciando", "ToshLLM: starting")
-        case .failed:   return loc.t("ToshLLM: el motor falló", "ToshLLM: the engine failed")
-        case .stopped:  return loc.t("ToshLLM: servidor parado", "ToshLLM: server stopped")
-        }
-    }
-
     /// The chat font shortcuts already existed on hidden buttons, which made them
     /// undiscoverable and scene-local; they are AppStorage, so a command reaches them.
     @CommandsBuilder private var appCommands: some Commands {
@@ -124,7 +95,7 @@ struct ToshLLMApp: App {
         }
         CommandGroup(replacing: .help) {
             Button(loc.t("Documentación de ToshLLM", "ToshLLM documentation")) {
-                control.section = .docs
+                obj.control.section = .docs
                 openWindow(id: "control")
             }
             Button(loc.t("Reportar un problema", "Report an issue")) {
@@ -142,22 +113,22 @@ struct ToshLLMApp: App {
         // for "new conversation" instead of "new window".
         Window("ToshLLM", id: "chat") {
             ChatMainView()
-                .environmentObject(server)
-                .environmentObject(manager)
-                .environmentObject(models)
-                .environmentObject(vram)
+                .environmentObject(obj.server)
+                .environmentObject(obj.manager)
+                .environmentObject(obj.models)
+                .environmentObject(obj.vram)
                 .environmentObject(loc)
-                .environmentObject(bench)
-                .environmentObject(search)
-                .environmentObject(profiles)
-                .environmentObject(updates)
-                .environmentObject(modelUpdates)
-                .environmentObject(control)
+                .environmentObject(obj.bench)
+                .environmentObject(obj.search)
+                .environmentObject(obj.profiles)
+                .environmentObject(obj.updates)
+                .environmentObject(obj.modelUpdates)
+                .environmentObject(obj.control)
                 .tint(AppTheme.accent(appAccentRaw))
                 .frame(minWidth: 760, minHeight: 540)
                 .task {
-                    await updates.check()
-                    updates.startPeriodicChecks()
+                    await obj.updates.check()
+                    obj.updates.startPeriodicChecks()
                 }
         }
         .defaultSize(width: 1240, height: 820)
@@ -166,36 +137,29 @@ struct ToshLLMApp: App {
         Window(loc.t("Configuración", "Configuration"), id: "control") {
             ControlPanelView()
                 .tint(AppTheme.accent(appAccentRaw))
-                .environmentObject(server)
-                .environmentObject(manager)
-                .environmentObject(models)
-                .environmentObject(vram)
+                .environmentObject(obj.server)
+                .environmentObject(obj.manager)
+                .environmentObject(obj.models)
+                .environmentObject(obj.vram)
                 .environmentObject(loc)
-                .environmentObject(bench)
-                .environmentObject(search)
-                .environmentObject(profiles)
-                .environmentObject(updates)
-                .environmentObject(modelUpdates)
-                .environmentObject(control)
+                .environmentObject(obj.bench)
+                .environmentObject(obj.search)
+                .environmentObject(obj.profiles)
+                .environmentObject(obj.updates)
+                .environmentObject(obj.modelUpdates)
+                .environmentObject(obj.control)
                 .frame(minWidth: 980, minHeight: 640)
         }
         .defaultSize(width: 1080, height: 700)
 
         MenuBarExtra(isInserted: $menuBarIcon) {
             MenuBarView()
-                .environmentObject(server)
-                .environmentObject(manager)
+                .environmentObject(obj.server)
+                .environmentObject(obj.manager)
                 .environmentObject(loc)
-                .environmentObject(vram)
+                .environmentObject(obj.vram)
         } label: {
-            // "icon" mode shows aggregate VRAM next to the glyph; per-GPU bars
-            // live in the panel.
-            if menuBarGPU == "icon", vram.totalMB > 0 {
-                Label("\(Int(vram.fraction * 100))%", systemImage: menuBarIconName)
-            } else {
-                Label(menuBarStateLabel, systemImage: menuBarIconName)
-                    .labelStyle(.iconOnly)
-            }
+            MenuBarLabel(server: obj.server, vram: obj.vram, loc: obj.loc)
         }
         .menuBarExtraStyle(.window)
     }

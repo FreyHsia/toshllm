@@ -255,6 +255,16 @@ struct BenchmarksView: View {
                             }
                             .help(loc.t("Solo modelos MoE: capas cuyos expertos corren en CPU. Se siembra con el valor recomendado para tu hardware; subirlo descarga más a CPU, bajarlo arriesga saturar la VRAM.",
                                         "MoE models only: layers whose experts run on the CPU. Seeded with the value recommended for your hardware; raising offloads more to CPU, lowering risks saturating VRAM."))
+                            field(loc.t("Micro-lote", "Micro-batch")) {
+                                Picker("", selection: $cfg.ubatch) {
+                                    ForEach(ServerSettings.ubatchOptions, id: \.self) { n in
+                                        Text(ServerSettings.ubatchLabel(n, loc: loc)).tag(n)
+                                    }
+                                }
+                                .labelsHidden().frame(width: 132)
+                            }
+                            .help(loc.t("Tokens de prompt que la GPU procesa de una vez. Con expertos en CPU cada micro-lote los sube por el bus, así que uno más grande lo paga menos veces: medido en una Radeon RX 6700 XT con un 35B, leer 2048 tokens pasa de 475 a 886. Con el modelo entero en la tarjeta la mejora ronda el 10%. Cuesta VRAM, cerca de 0.5 GB por cada 512.",
+                                        "Prompt tokens the GPU processes at once. With experts on the CPU every micro-batch uploads them over the bus, so a larger one pays that less often: measured on a Radeon RX 6700 XT with a 35B, reading 2048 tokens goes from 475 to 886. With the model whole on the card the gain is around 10%. It costs VRAM, around 0.5 GB per 512."))
                         }
                         if benchAdvanced {
                             field("Prompt · -p") {

@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.serverBinary) private var serverBinary = ""
     @AppStorage(SettingsKeys.faAmd) private var faAmd = ServerSettings.defaultFaAmd
     @AppStorage(SettingsKeys.prefetchExperts) private var prefetchExperts = true
+    @AppStorage(SettingsKeys.ubatch) private var ubatch = 0
+    @AppStorage(SettingsKeys.routerMode) private var routerMode = false
     @AppStorage(SettingsKeys.dynamicMoe) private var dynamicMoe = false
     @AppStorage(SettingsKeys.dynamicMoeSlots) private var dynamicMoeSlots = 8
     @AppStorage(SettingsKeys.dynamicMoePrefetch) private var dynamicMoePrefetch = 4
@@ -39,6 +41,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
+    @AppStorage(SettingsKeys.splitGroupSize) private var splitGroupSize = 0
     @AppStorage(SettingsKeys.mgpuEvents) private var mgpuEvents = true
     @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = true
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
@@ -128,6 +131,14 @@ struct SettingsView: View {
     private var splitTargetCount: Int {
         if splitSelection.count >= 2 { return splitSelection.count }
         return multiGPUCount > 0 ? min(multiGPUCount, hardware.gpus.count) : hardware.gpus.count
+    }
+    /// Mesh widths that divide the split evenly and leave more than one row.
+    /// Two GPUs have none: a row of two is the whole split and a row of one is
+    /// a layer split, both already offered above.
+    private var splitGroupOptions: [Int] {
+        let n = splitTargetCount
+        guard n > 2 else { return [] }
+        return (2..<n).filter { n % $0 == 0 }
     }
     /// macOS exposes the bridge nowhere else: linked GPUs share a Metal peer group.
     private var hasPeerLink: Bool { !hardware.peerGroups.isEmpty }
@@ -516,6 +527,16 @@ struct SettingsView: View {
                         }
                         .infoTip(loc.t("Por capas: cada GPU se queda unas capas enteras y trabajan por turnos. Es lo más rápido generando y lo más probado. Por tensores: las dos GPUs trabajan a la vez dentro de cada capa, así que leen el prompt mucho más rápido, pero se ponen de acuerdo en cada capa y esa espera cuesta lo mismo por token generado: en un modelo pequeño se come la ganancia, y en uno grande (decenas de GB) sale ganando en las dos cosas.",
                                     "By layers: each GPU keeps whole layers and they take turns. Fastest at generating, and the best tested. By tensors: both GPUs work at once inside every layer, so they read the prompt much faster, but they sync up on every layer and that wait costs the same on each generated token: on a small model it eats the gain, on a big one (tens of GB) it wins at both."))
+                        if splitMode == "tensor" && !splitGroupOptions.isEmpty {
+                            Picker(loc.t("TensorMesh: ancho de la malla", "TensorMesh: mesh width"), selection: $splitGroupSize) {
+                                Text(loc.t("Sin malla", "No mesh")).tag(0)
+                                ForEach(splitGroupOptions, id: \.self) { n in
+                                    Text("\(n)").tag(n)
+                                }
+                            }
+                            .infoTip(loc.t("Organiza las GPUs en una malla: dentro de cada fila el modelo se corta por tensores y entre filas por capas. Así cada tarjeta solo espera a las de su fila, no a todas, que es lo que hunde la generación al pasar de dos tarjetas a cuatro. Medido en cuatro Radeon Pro W6800X con un 8B: con filas de dos genera 57 contra 30 con las cuatro juntas. Lo que consigue es usar cuatro tarjetas a la velocidad de dos, no ir más rápido que dos: una fila de dos rinde igual que un reparto por tensores con solo dos tarjetas (1624 contra 1667 leyendo, 57 contra 58 generando). Sirve para ganar la VRAM de cuatro sin pagar su lentitud.",
+                                        "Arranges the GPUs as a mesh: inside a row the model is cut by tensors, between rows by layers. Each card then waits only for the others in its row instead of all of them, which is what sinks generation when going from two cards to four. Measured on four Radeon Pro W6800X with an 8B: rows of two generate 57 against 30 with all four together. What it buys is four cards at the speed of two, not more speed than two: a row of two matches a plain tensor split on two cards (1624 against 1667 reading, 57 against 58 generating). Use it to get the VRAM of four without their slowdown."))
+                        }
                         Toggle(loc.t("Traspaso rápido entre GPUs",
                                      "Fast hand-off between GPUs"), isOn: $mgpuEvents)
                             .infoTip(loc.t("Pasa los datos de una GPU a otra sin vaciar las colas de las dos en cada copia. Repartiendo por capas no cambia nada; repartiendo por tensores es la mayor parte de la velocidad de generación (medido +59% en dos GPUs). Apágalo solo para diagnosticar.",
@@ -808,6 +829,15 @@ struct SettingsView: View {
                     Toggle(loc.t("Prefetch de expertos MoE (prompt)", "MoE expert prefetch (prompt)"), isOn: $prefetchExperts)
                         .infoTip(loc.t("Para modelos MoE con expertos en RAM (ncmoe > 0): sube los pesos de expertos a la GPU por una cola Metal paralela, solapando la subida con el cómputo. De 1.8× a 4.4× de velocidad de prompt medida (35B, gemma-4-26B, gpt-oss) sin costo de generación; el primer prompt tras cargar el modelo es algo más lento mientras se preparan los buffers.",
                                     "For MoE models with experts in RAM (ncmoe > 0): uploads expert weights to the GPU through a parallel Metal queue, overlapping the upload with compute. Measured 1.8×-4.4× prompt speed (35B, gemma-4-26B, gpt-oss) at no generation cost; the first prompt after loading the model is slightly slower while buffers warm up."))
+                    if routerMode || ServerSettings.modelIsMoE(at: modelPath) {
+                        Picker(loc.t("Micro-lote del prompt", "Prompt micro-batch"), selection: $ubatch) {
+                            ForEach(ServerSettings.ubatchOptions, id: \.self) { n in
+                                Text(ServerSettings.ubatchLabel(n, loc: loc)).tag(n)
+                            }
+                        }
+                        .infoTip(loc.t("Cuántos tokens de prompt procesa la GPU de una vez. Solo aporta en modelos MoE, y cuánto depende de dónde estén los expertos. Con expertos en CPU cada micro-lote los sube por el bus, así que uno más grande paga ese viaje menos veces: medido en una Radeon RX 6700 XT, leer 2048 tokens pasa de 475 a 886 tokens por segundo en un 35B, y de 546 a 1133 en un 30B. Con el modelo entero en la tarjeta la mejora ronda el 10%, igual con una GPU que repartido entre varias. La generación no cambia en ningún caso. A cambio ocupa VRAM, cerca de 0.5 GB por cada 512 tokens de micro-lote, así que si vas justo tendrás que bajar los expertos en CPU para compensar.",
+                                    "How many prompt tokens the GPU processes at once. It only helps MoE models, and how much depends on where the experts live. With experts on the CPU every micro-batch uploads them over the bus, so a larger one pays that trip fewer times: measured on a Radeon RX 6700 XT, reading 2048 tokens goes from 475 to 886 tokens per second on a 35B, and from 546 to 1133 on a 30B. With the model whole on the card the gain is around 10%, the same on one GPU as split across several. Generation is unchanged in every case. In exchange it takes VRAM, around 0.5 GB per 512 tokens of micro-batch, so if you are tight you will have to lower the experts on CPU to make room."))
+                    }
                 }
                 Picker(loc.t("Peticiones simultáneas", "Concurrent requests"), selection: $parallelSlots) {
                     Text(loc.t("1 (recomendado)", "1 (recommended)")).tag(1)

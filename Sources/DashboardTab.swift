@@ -16,6 +16,8 @@ struct DashboardView: View {
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
     @AppStorage(SettingsKeys.ncmoe) private var ncmoe = 0
     @AppStorage(SettingsKeys.port) private var port = 8080
+    @AppStorage(SettingsKeys.ctx) private var ctx = 16384
+    @AppStorage(SettingsKeys.ubatch) private var ubatch = 0
     @AppStorage(SettingsKeys.localNetworkDiscovery) private var localNetworkDiscovery = false
     @AppStorage(SettingsKeys.apiKeyEnabled) private var apiKeyEnabled = false
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
@@ -222,6 +224,20 @@ struct DashboardView: View {
                 }
                 .help(loc.t("Capas MoE cuyos expertos corren en CPU (RAM). Súbelo si la VRAM se satura, bájalo si te sobra. Se aplica al reiniciar el servidor.",
                             "MoE layers whose experts run on the CPU (RAM). Raise it if VRAM saturates, lower it if you have headroom. Applies when the server restarts."))
+                HStack(spacing: 8) {
+                    Image(systemName: "square.stack.3d.down.right").frame(width: 18).foregroundStyle(.secondary)
+                    Text(loc.t("Micro-lote", "Micro-batch")).font(.callout)
+                    Spacer(minLength: 8)
+                    Picker("", selection: $ubatch) {
+                        ForEach(ServerSettings.ubatchOptions, id: \.self) { n in
+                            Text(ServerSettings.ubatchLabel(n, loc: loc)).tag(n)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                    .disabled(server.state == .running || server.state == .starting)
+                }
+                .help(loc.t("Tokens de prompt que la GPU procesa de una vez. Uno más grande lee el prompt más rápido a cambio de VRAM, cerca de 0,5 GB por cada 512. Se aplica al reiniciar el servidor.",
+                            "Prompt tokens the GPU processes at once. A larger one reads the prompt faster in exchange for VRAM, around 0.5 GB per 512. Applies when the server restarts."))
             }
             if !modelPath.isEmpty && !routerMode {
                 if ncmoe > 0 && ServerSettings.modelIsMoE(at: modelPath) {
@@ -259,6 +275,19 @@ struct DashboardView: View {
             }
             .help(loc.t("Puerto local del servidor (API y chat web).",
                         "Local server port (API and web chat).") + restartNote)
+            HStack(spacing: 8) {
+                Image(systemName: "doc.plaintext").frame(width: 18).foregroundStyle(.secondary)
+                Text(loc.t("Contexto", "Context")).font(.callout)
+                Spacer(minLength: 8)
+                Picker("", selection: $ctx) {
+                    ForEach([4096, 8192, 16384, 32768, 65536, 131072, 262144], id: \.self) { n in
+                        Text("\(n / 1024)k").tag(n)
+                    }
+                }
+                .labelsHidden().fixedSize().disabled(serverBusy)
+            }
+            .help(loc.t("Contexto máximo del servidor: cuántos tokens caben entre prompt e historial. Más contexto ocupa más memoria para la caché KV.",
+                        "The server's maximum context: how many tokens fit across the prompt and the history. More context takes more memory for the KV cache.") + restartNote)
             HStack(spacing: 8) {
                 Image(systemName: "wifi").frame(width: 18).foregroundStyle(.secondary)
                 Text(loc.t("Descubrible en red local", "Discoverable on local network")).font(.callout)
@@ -752,6 +781,7 @@ struct AddedServerCard: View {
     @AppStorage(SettingsKeys.uiMcpProxy) private var gUiMcpProxy = false
     @AppStorage(SettingsKeys.routerMode) private var gRouterMode = false
     @AppStorage(SettingsKeys.routerModelsMax) private var gRouterModelsMax = 1
+    @AppStorage(SettingsKeys.ubatch) private var gUbatch = 0
 
     var body: some View {
         let busy = c.state == .running || c.state == .starting
@@ -821,6 +851,21 @@ struct AddedServerCard: View {
                 }
                 .help(loc.t("Capas MoE cuyos expertos corren en CPU (RAM). Hereda el de Ajustes hasta que lo cambies aquí.",
                             "MoE layers whose experts run on the CPU (RAM). Follows Settings until you change it here."))
+                HStack(spacing: 8) {
+                    Image(systemName: "square.stack.3d.down.right").frame(width: 18).foregroundStyle(.secondary)
+                    Text(loc.t("Micro-lote", "Micro-batch")).font(.callout)
+                    Spacer(minLength: 8)
+                    Picker("", selection: Binding(
+                        get: { isPinned(Profile.Pin.ubatch) ? (c.profile?.ubatch ?? gUbatch) : gUbatch },
+                        set: { c.profile?.ubatch = $0; pin(Profile.Pin.ubatch); manager.persist() })) {
+                        ForEach(ServerSettings.ubatchOptions, id: \.self) { n in
+                            Text(ServerSettings.ubatchLabel(n, loc: loc)).tag(n)
+                        }
+                    }
+                    .labelsHidden().fixedSize().disabled(busy)
+                }
+                .help(loc.t("Tokens de prompt que la GPU procesa de una vez. Uno más grande lee el prompt más rápido a cambio de VRAM. Hereda el de Ajustes hasta que lo cambies aquí.",
+                            "Prompt tokens the GPU processes at once. A larger one reads the prompt faster in exchange for VRAM. Follows Settings until you change it here."))
             }
             HStack(spacing: 8) {
                 Image(systemName: "number.square").frame(width: 18).foregroundStyle(.secondary)

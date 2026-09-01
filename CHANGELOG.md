@@ -3,6 +3,57 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.86.4] - 2026-08-31
+
+### Improved
+
+- **LLMs: Q6_K, Q3_K and Q2_K models generate faster.** Around 3% on Q6_K and 1% on the other two, with identical output.
+- **LLMs: mixture-of-experts models that store their experts in MXFP4, such as gpt-oss, generate about 3% faster.**
+
+### Fixed
+
+- **LLMs: Qwen3.5 models from other catalogues now load.** Files that declare three rope sections instead of four were rejected on open. Reported in #84.
+- **Interface: the window no longer stutters every three seconds.** The VRAM reading rebuilt both windows and the menu bar on every sample, whether or not the figure had changed.
+
+## [0.86.3] - 2026-08-30
+
+### Added
+
+- **LLMs: TensorMesh, the GPUs arranged as a mesh: split by tensor along one axis and by layer along the other.** Splitting every tensor across four cards reads a prompt fast but generates at a quarter of the speed, because each card waits for the others twice per layer. A mesh keeps most of both: a card only waits for the others in its own row. Pick the row width in Settings under **How to split it → TensorMesh**.
+
+  Measured on four Radeon Pro W6800X dies against the engine in 0.86.2, `pp512` / `tg64` in tokens per second:
+
+  | Model | Split | 0.86.2 | now |
+  |---|---|---|---|
+  | Qwen3.8-27B (dense) | by layers | 264 / 22.8 | 280 / 23.6 |
+  | | by tensors | 612 / 14.5 | 632 / 14.5 |
+  | | **mesh, rows of two** | n/a | **480 / 24.3** |
+  | Qwen3.6-35B-A3B (MoE) | by layers | 1186 / 62.8 | 1245 / 67.1 |
+  | | by tensors | 1497 / 23.7 | 1531 / 22.6 |
+  | | **mesh, rows of two** | n/a | **1623 / 48.9** |
+  | Qwen3.8-Flash-Next | by layers | 469 / 26.3 | 494 / 31.3 |
+  | | by tensors | 695 / 14.1 | 676 / 13.8 |
+  | | **mesh, rows of two** | n/a | **624 / 25.1** |
+
+  On the MoE the mesh wins outright: they read faster than any other split and generate twice what splitting every tensor does. On the two dense models they sit in between, buying prompt speed with generation. Splitting by layers still generates fastest, and now does so 3% to 19% faster than before.
+
+  **What the mesh buys is four cards at the speed of two, not more speed than two.** A row of two behaves exactly like a tensor split on a two-card machine. On an 8B, rows of two across four cards read 1624 and generate 57, against 1667 and 58 on two cards, so the gain is recovering the generation four cards lose (30 with all four together) while keeping their VRAM. On a two-GPU machine there is no mesh to build: a tensor split there already is this shape, which is why the setting only appears once a row width that divides the split exists. Output is identical across all of them, checked against a single GPU by perplexity and by generating the same text word for word.
+
+- **LLMs: a single GPU also generates faster now.** Measured on a Radeon Pro W6800X: 3.4% on a 4B, 2.0% on an 8B and 2.4% on a 35B MoE, with prompts 2.1% faster on the MoE.
+- **LLMs: a manual split across cards is now honoured with TensorMesh.** Each row takes its own part of the list instead of the same leading numbers.
+- **LLMs: handing a tensor between mesh rows no longer goes through system memory.** Reading a prompt improved 2.2% on an 8B and 1.2% on a 35B MoE.
+- **LLMs: mesh rows now overlap while a prompt is read.** Reading improved 2.8% on an 8B and on a 35B MoE.
+- **LLMs: a bigger prompt micro-batch for MoE models, in Settings.** Reading 2048 tokens on a Radeon RX 6700 XT improved from 475 to 886 tokens per second on a 35B with experts on the CPU, and around 10% with the model whole on the card, at about 0.5 GB of VRAM per 512 tokens.
+- **Chat: the model can manage its own context.** It can list the conversation, set a range aside so it stops being sent with every request, and search it back verbatim when it matters again. Nothing is deleted, and an external client through the API sees these as ordinary tools. Requested in #82.
+
+### Fixed
+
+- **Chat: a summary could silence every message written after it.** Regenerating or dropping the last exchange right after summarizing left new messages out of the request.
+- **Chat: summarizing now frees context instead of turns.** It kept the last four messages whatever they weighed; it now keeps a tail worth about a quarter of the context.
+- **LLMs: a long prompt no longer fails when the model is split by tensors.** Models that share one set of keys across several queries refused to start above a certain prompt size; reading is also 13% faster on four cards, with the same output.
+- **LLMs: with more than one mesh row, all the weights ended up on one of them.** Half the work ran where the weights were not: wrong output, and in some models none at all.
+- **LLMs: cards now overlap instead of taking turns when the model is split.** Measured on four Radeon Pro W6800X dies: generation improved 9.3% on an 8B and 13.1% on a 4B, with the same output.
+
 ## [0.86.2] - 2026-08-29
 
 ### Added
