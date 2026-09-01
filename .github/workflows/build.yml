@@ -138,8 +138,10 @@ jobs:
           codesign --force --timestamp --options runtime -s "$IDENTITY" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
 
-          ditto -c -k --keepParent "$APP" /tmp/ToshLLM.zip
-          xcrun notarytool submit /tmp/ToshLLM.zip \
+          # Name it per variant: the notary history lists submissions by filename.
+          ZIP=/tmp/ToshLLM-${{ matrix.variant }}.zip
+          ditto -c -k --keepParent "$APP" "$ZIP"
+          xcrun notarytool submit "$ZIP" \
             --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
             --password "$NOTARY_PASSWORD" --wait
           xcrun stapler staple "$APP"
