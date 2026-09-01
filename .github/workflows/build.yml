@@ -41,7 +41,8 @@ jobs:
     if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v')
     name: Build ${{ matrix.variant }} (x86_64)
     runs-on: macos-26
-    timeout-minutes: 90
+    # Apple's notary queue took 66 min on this account's first submission.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -98,12 +99,12 @@ jobs:
         if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
         run: TOSH_ARCH=x86_64 ./make-app.sh
 
-      # Optional Developer ID signing + notarization. Runs only when the
-      # repository secrets are configured; otherwise releases stay ad-hoc
-      # signed and users must approve the app once in System Settings.
+      # Developer ID signing + notarization, skipped when the secrets are absent.
+      # Only releases need a ticket and each submission can cost an hour in Apple's
+      # queue, so PR and branch builds keep the ad-hoc signature.
       - name: Sign and notarize (if secrets configured)
         id: sign
-        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
