@@ -3,10 +3,16 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.86.4] - 2026-08-31
+
+### Improved
+
+- **LLMs: Q6_K, Q3_K and Q2_K models generate faster.** Around 3% on Q6_K and 1% on the other two, with identical output.
+- **LLMs: mixture-of-experts models that store their experts in MXFP4, such as gpt-oss, generate about 3% faster.**
 
 ### Fixed
 
+- **LLMs: Qwen3.5 models from other catalogues now load.** Files that declare three rope sections instead of four were rejected on open. Reported in #84.
 - **Interface: the window no longer stutters every three seconds.** The VRAM reading rebuilt both windows and the menu bar on every sample, whether or not the figure had changed.
 
 ## [0.86.3] - 2026-08-30
