@@ -105,8 +105,8 @@ struct BenchmarkShareConsentSheet: View {
                               systemImage: "exclamationmark.shield.fill")
                             .font(.headline)
                             .foregroundStyle(.orange)
-                        Text(loc.t("Las versiones actuales usan una firma de desarrollo temporal. Después de recompilar o actualizar, macOS puede pedir la contraseña de inicio de sesión para confirmar que la nueva compilación puede usar la clave existente.",
-                                   "Current builds use a temporary development signature. After rebuilding or updating, macOS may ask for your login password to confirm that the new build may use the existing key."))
+                        Text(loc.t("Si compilas ToshLLM tú mismo, la app usa una firma temporal. Después de recompilar, macOS puede pedir la contraseña de inicio de sesión para confirmar que la nueva compilación puede usar la clave existente.",
+                                   "If you build ToshLLM yourself, the app uses a temporary signature. After rebuilding, macOS may ask for your login password to confirm that the new build may use the existing key."))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -115,8 +115,8 @@ struct BenchmarkShareConsentSheet: View {
                               systemImage: "hand.raised.fill")
                             .font(.callout)
                             .bold()
-                        Text(loc.t("Cuando ToshLLM se distribuya con una firma Developer ID estable y notarizada por Apple, las actualizaciones normales conservarán la misma identidad y este aviso no debería repetirse.",
-                                   "Once ToshLLM is distributed with a stable Developer ID signature and Apple notarization, normal updates will preserve the same identity and this prompt should no longer repeat."))
+                        Text(loc.t("Las versiones publicadas van firmadas con un Developer ID estable, así que conservan la misma identidad al actualizar y no vuelven a preguntar.",
+                                   "Published releases are signed with a stable Developer ID, so they keep the same identity across updates and do not ask again."))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

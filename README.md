@@ -126,13 +126,11 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 1. **[Download the latest `.dmg`](https://github.com/engeldlgado/toshllm/releases/latest)**, open it, and drag **ToshLLM** to Applications.
 2. The app is fully self-contained — the inference engines ship inside the bundle. No Homebrew, no Python, nothing else to install.
 
-> **First launch (Gatekeeper):** releases aren't notarized with an Apple
-> Developer ID yet, so macOS blocks the first open. Go to
-> **System Settings → Privacy & Security** and click **"Open Anyway"**, or run:
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/ToshLLM.app
-> ```
-> You only need to do this once per update. Notarized releases are planned.
+> **First launch:** from 0.86.5 the app is signed with an Apple Developer ID and
+> notarized by Apple, so it opens straight away with no warning and nothing to
+> approve. On **0.86.4 and earlier** macOS blocks the first open: go to
+> **System Settings → Privacy & Security** and click **"Open Anyway"**, or run
+> `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
 
 > **Older Macs without AVX2 (e.g. Mac Pro 5,1 and other pre-2013 Xeons):** the normal build needs the AVX2 CPU instructions and will crash on launch with "illegal hardware instruction" on those machines. Each release also ships a dedicated **no-AVX2 build** — download the `.dmg` whose name ends in **`-noavx2`**. It updates on its own channel, so once installed it will only ever offer you no-AVX2 builds.
 
@@ -489,7 +487,7 @@ Funciones nuevas, aún en validación — actívalas en Ajustes, pero pueden ten
 
 Descarga el `.dmg` desde [Releases](https://github.com/engeldlgado/toshllm/releases/latest), ábrelo y arrastra **ToshLLM** a Aplicaciones. Todo viene incluido — sin Homebrew, sin Python.
 
-> **Primer arranque (Gatekeeper):** las versiones aún no están notarizadas, así que macOS bloqueará la primera apertura. Ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`. Solo se hace una vez por actualización.
+> **Primer arranque:** desde la 0.86.5 la app va firmada con un Apple Developer ID y notarizada por Apple, así que se abre directamente, sin avisos ni nada que aprobar. En la **0.86.4 y anteriores** macOS bloquea la primera apertura: ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
 
 > **Macs antiguos sin AVX2 (p. ej. Mac Pro 5,1 y otros Xeon anteriores a 2013):** el build normal necesita las instrucciones AVX2 y arranca con "illegal hardware instruction" en esas máquinas. Cada versión publica además un **build sin AVX2** — descarga el `.dmg` cuyo nombre termina en **`-noavx2`**. Se actualiza por su propio canal, así que una vez instalado solo te ofrecerá builds sin AVX2.
 
