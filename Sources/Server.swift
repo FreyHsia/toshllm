@@ -920,7 +920,21 @@ struct ServerSettings {
         if let ring = dynamicMoeOptimizationProfile?.ringSlots {
             return (max(1, budget - ring), ring)
         }
-        let fixed = min(max(info.activeExpertCount, 1), budget)
+        // The experts left out of the slots are wrapped as one host resource and read by the
+        // fetch kernel, so they have to stay under what the card can keep resident: past it the
+        // reservation is refused outright, and just below it generation collapses.
+        var floor = 1
+        if let size = GGUFFile.totalSize(at: modelPath), let gpu = dynamicMoeGPU {
+            let mib = UInt64(1024 * 1024)
+            let shared = min(size, UInt64(Double(UInt64(1024) * mib) * 1.3))
+            let expertBytes = size > shared ? size - shared : 0
+            let ceiling = UInt64(max(0, gpu.vramMB)) * mib * 3 / 4
+            if expertBytes > ceiling {
+                floor = Int((Double(info.expertCount) *
+                    (1.0 - Double(ceiling)/Double(expertBytes))).rounded(.up))
+            }
+        }
+        let fixed = min(max(max(info.activeExpertCount, floor), 1), budget)
         return (fixed, max(0, budget - fixed))
     }
 
