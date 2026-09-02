@@ -661,7 +661,8 @@ struct ServerSettings {
             if dynamicMoeExecutionRoute == .split {
                 let profile = dynamicMoeOptimizationProfile
                 env["TOSH_MOE_SPLIT_BANK"] = "1"
-                env["TOSH_MOE_SPLIT_RING"] = String(profile?.ringSlots ?? max(8, dynamicMoeModelInfo?.activeExpertCount ?? 1))
+                env["TOSH_MOE_SLOTS"] = String(dynamicMoeSlotSplit.fixed)
+                env["TOSH_MOE_SPLIT_RING"] = String(dynamicMoeSlotSplit.ring)
                 env["TOSH_MOE_BOUNDED_STAGE"] = "1"
                 env["TOSH_MOE_BOUNDED_STAGE_FORCE"] = "1"
                 env["TOSH_MOE_DOUBLE_BUFFER"] = "1"
@@ -690,7 +691,8 @@ struct ServerSettings {
         // the backend skip cache creation. Keep the model-derived/clamped value even
         // when an old Extra arguments recipe still contains TOSH_MOE_SLOTS.
         if effectiveDynamicMoe {
-            env["TOSH_MOE_SLOTS"] = String(effectiveDynamicMoeSlots)
+            env["TOSH_MOE_SLOTS"] = String(dynamicMoeExecutionRoute == .split
+                ? dynamicMoeSlotSplit.fixed : effectiveDynamicMoeSlots)
         }
         return env.compactMapValues { $0 }
     }
@@ -909,6 +911,19 @@ struct ServerSettings {
         }
         return min(max(dynamicMoeSlots, 1), 256)
     }
+    /// Splits the affordable slot budget between the permanently resident experts and the
+    /// LRU ring. Measured on a 35B-A3B: at the same VRAM, moving the budget into the ring is
+    /// worth +53% of generation, and it flattens out once only the active experts stay fixed.
+    var dynamicMoeSlotSplit: (fixed: Int, ring: Int) {
+        let budget = effectiveDynamicMoeSlots
+        guard let info = dynamicMoeModelInfo, budget > 0 else { return (budget, 0) }
+        if let ring = dynamicMoeOptimizationProfile?.ringSlots {
+            return (max(1, budget - ring), ring)
+        }
+        let fixed = min(max(info.activeExpertCount, 1), budget)
+        return (fixed, max(0, budget - fixed))
+    }
+
     var effectiveDynamicMoePrefetch: Int {
         if dynamicMoePolicy == "auto", let profile = dynamicMoeOptimizationProfile {
             return profile.prefetch
