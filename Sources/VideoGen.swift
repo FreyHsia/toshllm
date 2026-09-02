@@ -144,8 +144,8 @@ enum VideoGenCatalog {
     /// LTX-2.3 distilled video model.
     static let ltx23Distilled = VideoGenModel(
         name: "LTX-2.3 distilled",
-        detailES: "22B destilado, 8 pasos. El modelo incluye audio sincronizado; esta vista exporta solo vídeo.",
-        detailEN: "22B distilled, 8 steps. The model includes synchronized audio; this view exports video only.",
+        detailES: "22B destilado, 8 pasos. Los tamaños son menores que los del modelo porque por encima de ellos los primeros fotogramas salen corruptos. Incluye audio sincronizado; esta vista exporta solo vídeo.",
+        detailEN: "22B distilled, 8 steps. The sizes are smaller than the model allows because past them the opening frames come back corrupted. It includes synchronized audio; this view exports video only.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
@@ -163,9 +163,14 @@ enum VideoGenCatalog {
                 urlString: "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
                 fileName: "gemma-3-12b-it-Q4_K_M.gguf", sizeGB: 7.30),
         ],
-        defaultSteps: 8, cfgScale: 1.0, flowShift: 3.0, minVRAMGB: 24,
-        sizes: [VideoGenSize(width: 1280, height: 704), VideoGenSize(width: 960, height: 576),
-                VideoGenSize(width: 832, height: 448), VideoGenSize(width: 704, height: 1280)],
+        // 2.37 is the engine's own default for LTX; 3.0 is the generic one for a
+        // different prediction branch. Steps and CFG follow the model card.
+        defaultSteps: 8, cfgScale: 1.0, flowShift: 2.37, minVRAMGB: 24,
+        // Past about 9.7 million pixel-frames the clip comes back with its opening
+        // frames corrupted, so these stay under that at 33 frames. Measured 09-02;
+        // it happens on the CPU backend too, so it is not the Metal path.
+        sizes: [VideoGenSize(width: 704, height: 384), VideoGenSize(width: 640, height: 352),
+                VideoGenSize(width: 512, height: 288), VideoGenSize(width: 384, height: 704)],
         fps: 24,
         nativeFrames: 0, supportsI2V: true, recommendable: false,
         extraArgs: ["--offload-to-cpu"],

@@ -7,6 +7,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Video: LTX-2.3 no longer offers sizes that come back broken.** Past roughly 9.7 million pixel-frames the clip returns with its opening frames corrupted, and every size the model was offered sat above that: the shortest clip at the smallest of them lost its first eight frames. The four sizes are now 704x384, 640x352, 512x288 and 384x704, all of which measured clean. The fault is in the engine and not in this app's Metal path - it reproduces with the decode on the CPU - so the sizes come back once it is fixed upstream. Reported in #83.
+
+- **Video: LTX-2.3 uses the timestep shift meant for it.** It was being given 3.0, the generic value for a different family; the engine's own default for this model is 2.37. Output is unchanged in the sizes measured.
+
 - **Video: the video engine log can be read from the Logs tab.** It has been written to disk since the video studio shipped, but nothing in the app pointed at it, so a failed clip could not be diagnosed without knowing where to look. The tab now has a **Video** view next to Server and Images, with the same search, filtering and reveal-in-Finder. Reported in #83.
 
 ## [0.86.5] - 2026-09-01
