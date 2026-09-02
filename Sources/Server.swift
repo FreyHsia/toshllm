@@ -861,8 +861,9 @@ struct ServerSettings {
         guard let size = GGUFFile.totalSize(at: modelPath), let gpu = dynamicMoeGPU else {
             return .direct
         }
-        return Self.dynamicMoeHostBankFitsDirectMetal(modelBytes: size, gpuVRAMMB: gpu.vramMB)
-            ? .direct : .split
+        return Self.dynamicMoeHostBankFitsDirectMetal(
+            modelBytes: size, gpuVRAMMB: gpu.vramMB,
+            physicalRAMBytes: ProcessInfo.processInfo.physicalMemory) ? .direct : .split
     }
     var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
         guard !modelPath.isEmpty, let size = GGUFFile.totalSize(at: modelPath) else {
@@ -912,8 +913,10 @@ struct ServerSettings {
         return min(max(dynamicMoeSlots, 1), 256)
     }
     /// Splits the affordable slot budget between the permanently resident experts and the
-    /// LRU ring. Measured on a 35B-A3B: at the same VRAM, moving the budget into the ring is
-    /// worth +53% of generation, and it flattens out once only the active experts stay fixed.
+    /// LRU ring. This is a trade, not a free win: measured on a 35B-A3B at the same VRAM,
+    /// moving the budget into the ring is worth about +64% of generation and costs close to
+    /// half the prefill, so it suits chat rather than long prompts. It flattens out once only
+    /// the active experts stay fixed.
     var dynamicMoeSlotSplit: (fixed: Int, ring: Int) {
         let budget = effectiveDynamicMoeSlots
         guard let info = dynamicMoeModelInfo, budget > 0 else { return (budget, 0) }
@@ -1041,12 +1044,18 @@ struct ServerSettings {
     /// discrete GPU, measured banks larger than the device working set can stall the driver even
     /// when system RAM and swap are healthy. Auto stays on the validated side of that boundary;
     /// private Manual mode remains available for developing a bounded staging implementation.
-    static func dynamicMoeHostBankFitsDirectMetal(modelBytes: UInt64, gpuVRAMMB: Int) -> Bool {
-        guard modelBytes > 0, gpuVRAMMB > 0 else { return false }
+    /// Direct mode wraps the whole expert bank as host memory, and Metal wires those pages, so
+    /// what bounds it is system RAM rather than the card: the slots the graph reads are what
+    /// lives in VRAM. Measured on a 32 GiB machine, a 9.6 GiB bank runs fine while 12.7 and
+    /// 16.9 GiB starve the compositor, because wired pages cannot be evicted and swap is
+    /// capped. A third of physical RAM is the line those three points draw.
+    static func dynamicMoeHostBankFitsDirectMetal(modelBytes: UInt64, gpuVRAMMB: Int,
+                                                  physicalRAMBytes: UInt64) -> Bool {
+        guard modelBytes > 0, gpuVRAMMB > 0, physicalRAMBytes > 0 else { return false }
         let mib = UInt64(1024 * 1024)
         let sharedBytes = min(modelBytes, UInt64(Double(UInt64(1024) * mib) * 1.3))
         let estimatedExpertBytes = modelBytes - sharedBytes
-        return estimatedExpertBytes <= UInt64(gpuVRAMMB) * mib
+        return estimatedExpertBytes <= physicalRAMBytes / 3
     }
 
     /// Resolves DFlash against the same physical GPU selection and memory reserve
