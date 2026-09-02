@@ -176,7 +176,7 @@ The experiment targets systems whose discrete GPU cannot hold the complete MoE m
 
 The design is an independent llama.cpp/Metal implementation inspired by the publicly documented [FreeToken architecture](https://github.com/FlashML-org/FreeToken) and [paper](https://arxiv.org/abs/2608.16157). ToshLLM does not vendor or link the FreeToken runtime or source code. FreeToken is distributed under Apache-2.0; if its source is incorporated in the future, its license, notices and modification requirements must be retained.
 
-> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the full quantized model addressable in host **RAM**. Budget approximately `model size + max(25% of model size, 4 GiB)` as memory available to the engine, in addition to enough memory for macOS and other applications. For example, an 11.44 GiB GGUF needs about 15.44 GiB available to Dynamic MoE, so a 32 GB system is the practical minimum for this class of model. If this headroom is unavailable, Automatic mode rejects Dynamic MoE and returns to normal `ncmoe` instead of relying on swap.
+> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the expert pool addressable in host **RAM**, and Metal wires those pages so the system cannot page or compress them. That is why the usable share of installed memory is small: the rule is that the expert pool must fit in a third of physical RAM, which on a 32 GB machine is about 10.7 GiB and admits an 11.44 GiB GGUF but not a 19.45 GiB one. Measured on 32 GB, a 9.6 GiB pool runs flat while 12.7 and 16.9 GiB starve the compositor. If the headroom is unavailable, Automatic mode rejects Dynamic MoE and returns to normal `ncmoe` instead of relying on swap.
 
 #### How to enable it
 
