@@ -1,7 +1,7 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
-@@ -35,16 +35,22 @@
+@@ -35,16 +35,21 @@
  bool ggml_metal_cpy_tensor_async_ex(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst, bool prefer_events, bool hold_dst);
  bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst);
  
@@ -10,8 +10,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml
  bool ggml_metal_add_inplace_supported(ggml_metal_t ctx, const struct ggml_tensor * acc, const struct ggml_tensor * add);
  bool ggml_metal_add_inplace_async    (ggml_metal_t ctx, struct ggml_tensor * acc, const struct ggml_tensor * add);
  
-+// One command buffer per card per butterfly step: outgoing copy, incoming copy and add
-+// together. Signals before it waits, so a pair cannot lock up.
++// One command buffer per card per butterfly step: both copies and the add together.
 +bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
 +                                struct ggml_tensor * t_self, struct ggml_tensor * tmp_self,
 +                                uint64_t seq);
@@ -45,7 +44,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
  
      id<MTLCommandBuffer> cmd_buf = ctx->cmd_buf_hold;
      ctx->cmd_buf_hold = nil;
-@@ -788,16 +789,50 @@
+@@ -787,17 +788,51 @@
+             memset(link, 0, sizeof(*link));
              ctx_dst->n_xlinks--;
              return NULL;
          }
@@ -53,13 +53,13 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
  
      return link;
  }
- 
++
 +static bool ggml_metal_xdev_link_reserve(ggml_metal_t ctx_src, ggml_metal_t ctx_dst,
 +                                        struct ggml_metal_xdev_link * link, size_t size) {
 +    if (link->cap == 0) {
 +        GGML_LOG_INFO("%s: cross-device hand-off via shared events and host staging (TOSH_MGPU_EVENTS)\n", __func__);
 +    }
-+
+ 
 +    if (link->cap < size) {
 +        // resizing frees pages a queued blit may still read; wait out the link first
 +        if (link->seq > 0 && ![link->ev_done waitUntilSignaledValue:link->seq timeoutMS:10000]) {
@@ -96,7 +96,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
      if (val < 0) {
          const char * v = getenv("TOSH_MGPU_PEER_SELF");
          val = (v && v[0] == '1') ? 1 : 0;
-@@ -928,50 +963,27 @@
+@@ -928,50 +963,25 @@
      }
  
      const size_t size = ggml_nbytes(src);
@@ -139,11 +139,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
      const uint64_t seq = ++link->seq;
  
      @autoreleasepool {
--        // reuse the host block only after the destination consumed the last hand-off
+         // reuse the host block only after the destination consumed the last hand-off
 -        id<MTLCommandBuffer> cmd_src = ggml_metal_cmd_buf_new(ctx_src);
-+        // reuse the host block only after the destination consumed the last hand-off.
-+        // Ride in whatever buffer this device already has open: every cross-device copy
-+        // otherwise costs one command buffer on each side, and those dominate the total.
 +        id<MTLCommandBuffer> cmd_src = ggml_metal_cmd_buf_continue(ctx_src);
          if (seq > 1) {
              [cmd_src encodeWaitForEvent:link->ev_done value:seq - 1];
@@ -153,7 +150,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
                         toBuffer:link->wrap_src destinationOffset:0 size:size];
          [enc_src endEncoding];
          [cmd_src encodeSignalEvent:link->ev_ready value:seq];
-@@ -1110,17 +1122,17 @@
+@@ -1110,17 +1120,17 @@
  
      if (ggml_metal_get_buffer_id(acc).metal == nil || ggml_metal_get_buffer_id(add).metal == nil) {
          return false;
@@ -172,7 +169,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
  
      struct ggml_metal_buffer_id bid_acc = ggml_metal_get_buffer_id(acc);
      struct ggml_metal_buffer_id bid_add = ggml_metal_get_buffer_id(add);
-@@ -1161,17 +1173,17 @@
+@@ -1161,17 +1171,17 @@
  
      if (pipeline.c4) {
          args.ne00 /= 4;
@@ -191,7 +188,7 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
          ggml_metal_encoder_set_buffer  (enc, bid_acc, 1);
          ggml_metal_encoder_set_buffer  (enc, bid_add, 2);
          ggml_metal_encoder_set_buffer  (enc, bid_acc, 3);
-@@ -1187,22 +1199,95 @@
+@@ -1187,22 +1197,92 @@
              }
  
              ggml_metal_encoder_dispatch_threadgroups(enc, args.ne01, args.ne02, args.ne03, nth, 1, 1);
@@ -213,10 +210,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
 +    return ggml_metal_add_inplace_into(ctx, nil, acc, add);
 +}
 +
-+// One command buffer per card per butterfly step, holding the outgoing copy, the incoming
-+// one and the add. Every card signals before it waits, so no pair can lock up. Splitting
-+// this into a buffer per copy is what makes the exchange dominate the buffers a token
-+// creates, and creating one contends on Metal's shared resource pools.
++// A buffer per copy is most of what a token creates, and creating one contends on Metal's
++// shared pools. Every card signals before it waits, so no pair can lock up.
 +bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
 +                                struct ggml_tensor * t_self, struct ggml_tensor * tmp_self,
 +                                uint64_t seq) {
@@ -242,9 +237,8 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml
 +        return false;
 +    }
 +
-+    // Both sides of a step are handed the same number: reading it off the link races with
-+    // whichever card the loop reached first. The counter is shared by every link, so a link
-+    // skips values, and the back-pressure wait has to name the last one this link used.
++    // Both sides are handed the same number: reading it off the link races with whichever
++    // card the loop reached first. Links skip values, so the back-pressure wait names its own.
 +    const uint64_t seq_prev = link_out->seq;
 +    const uint64_t seq_out  = seq;
 +    const uint64_t seq_in   = seq;
