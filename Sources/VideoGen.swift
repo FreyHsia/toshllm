@@ -309,6 +309,18 @@ final class VideoGenerator: ObservableObject {
     private var logTail = ""
     private let fileLog = RotatingFileLog(name: "videogen")
 
+    /// Newest video-gen log file, for the Logs tab to read (this generator lives in
+    /// another window, so the file is the shared handoff).
+    static var latestLogURL: URL? {
+        let dir = AppSupport.directory.appendingPathComponent("logs", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.filter { $0.lastPathComponent.hasPrefix("videogen") }
+            .max { a, b in (mtime(a) ?? .distantPast) < (mtime(b) ?? .distantPast) }
+    }
+    private static func mtime(_ u: URL) -> Date? {
+        try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+
     var isBusy: Bool { if case .generating = state { return true }; return false }
     var elapsed: Int { startedAt.map { Int(-$0.timeIntervalSinceNow) } ?? 0 }
 

@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Video: the video engine log can be read from the Logs tab.** It has been written to disk since the video studio shipped, but nothing in the app pointed at it, so a failed clip could not be diagnosed without knowing where to look. The tab now has a **Video** view next to Server and Images, with the same search, filtering and reveal-in-Finder. Reported in #83.
+
 ## [0.86.5] - 2026-09-01
 
 ### Improved

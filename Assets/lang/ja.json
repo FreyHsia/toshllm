@@ -197,7 +197,7 @@
   "Chat is ready to translate the segments.": "チャットはセグメントを翻訳する準備ができています。",
   "Chat parameters": "チャットのパラメーター",
   "Chat parameters: reasoning, creativity, response length and system prompt.": "チャットのパラメーター: 推論、創造性、応答の長さ、システムプロンプト。",
-  "Chat server log or the image engine log.": "チャットサーバーのログ、または画像エンジンのログ。",
+  "Chat server log, image engine log or video engine log.": "チャットサーバー、画像エンジン、動画エンジンのログ。",
   "Chat shares a GPU with an instance": "チャットがインスタンスとGPUを共有しています",
   "Chat template (--jinja)": "チャットテンプレート(--jinja)",
   "Chat text size": "チャットの文字サイズ",

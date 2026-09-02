@@ -197,7 +197,7 @@
   "Chat is ready to translate the segments.": "La chat è pronta per tradurre i segmenti.",
   "Chat parameters": "Parametri della chat",
   "Chat parameters: reasoning, creativity, response length and system prompt.": "Parametri della chat: ragionamento, creatività, lunghezza della risposta e prompt di sistema.",
-  "Chat server log or the image engine log.": "Log del server chat o del motore di immagini.",
+  "Chat server log, image engine log or video engine log.": "Log del server di chat, del motore immagini o del motore video.",
   "Chat shares a GPU with an instance": "La chat condivide una GPU con un'istanza",
   "Chat template (--jinja)": "Template della chat (--jinja)",
   "Chat text size": "Dimensione del testo della chat",
