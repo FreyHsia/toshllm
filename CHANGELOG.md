@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Improved
+
+- **LLMs: splitting a model across cards by tensor generates 8% to 18% faster.** Every exchange between two cards used to be sent as one command buffer per copy, and each card in a step takes part in two of them. They now go as a single command buffer per card, carrying both copies and the sum that follows, which is a third fewer command buffers per token. Measured on four Radeon Pro W6800X dies, tokens per second on `tg128`:
+
+  | Model | Split | Before | Now |
+  |---|---|---|---|
+  | Qwen3.8-Flash-Next, 72 GiB (MoE) | four cards, by tensor | 16.3 | **17.6** |
+  | Qwen3.6-35B-A3B (MoE) | four cards, by tensor | 23.4 | **25.6** |
+  | | **TensorMesh, rows of two** | 42.1 | **49.9** |
+  | Qwen3.8-27B (dense) | four cards, by tensor | 14.3 | **16.6** |
+  | | two cards, by tensor | 21.5 | **24.6** |
+  | | TensorMesh, rows of two | 21.4 | **24.3** |
+
+  The faster a split already was, the more this shows: a mesh row is two cards doing more work each, so the fixed cost per exchange weighs heavier there, and that is where the largest gain lands. Reading a prompt is unchanged: large batches hand tensors over a different way, which this does not touch. A single card and splitting by layer are untouched too, and measure identical.
+
+- **LLMs: the cards prepare their work at the same time instead of one after another.** Each card's share of a split is independent until they exchange results, but the work of describing it to the driver was done for one card, then the next. Worth 7% to 9% of generation on four cards splitting by tensor; a single card is unaffected.
+
 ### Added
 
 - **Installation: the app is signed and notarized by Apple.** It opens on first launch, without approving it in System Settings.
