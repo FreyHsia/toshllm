@@ -7,6 +7,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **LLMs: Qwen3.8 Flash Next keeps its state across a conversation.** Restoring its cache, copying a sequence and keying block positions were wrong for this architecture, so a saved or branched conversation could come back in a different state than it left in. Taken from upstream.
+
+- **LLMs: splitting Qwen3.8 Flash Next across cards by tensor gives corrupted output.** Not a regression: it has done so on every version that could load the model, and upstream now refuses the combination outright. Split it by layer, or set `TOSH_MGPU_TENSOR_GROUP=2` to keep tensor splitting within pairs of cards, which measures correct. Reported in #87.
+
 - **Video: LTX-2.3 no longer offers sizes that come back broken.** Past roughly 9.7 million pixel-frames the clip returns with its opening frames corrupted, and every size the model was offered sat above that: the shortest clip at the smallest of them lost its first eight frames. The four sizes are now 704x384, 640x352, 512x288 and 384x704, all of which measured clean. The fault is in the engine and not in this app's Metal path - it reproduces with the decode on the CPU - so the sizes come back once it is fixed upstream. Reported in #83.
 
 - **Video: LTX-2.3 uses the timestep shift meant for it.** It was being given 3.0, the generic value for a different family; the engine's own default for this model is 2.37. Output is unchanged in the sizes measured.
