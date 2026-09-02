@@ -12,8 +12,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   | Model | Split | Before | Now |
   |---|---|---|---|
   | Qwen3.8-Flash-Next, 72 GiB (MoE) | four cards, by tensor | 16.3 | **17.6** |
+  | | TensorMesh, rows of two | 24.3 | **27.0** |
   | Qwen3.6-35B-A3B (MoE) | four cards, by tensor | 23.4 | **25.6** |
-  | | **TensorMesh, rows of two** | 42.1 | **49.9** |
+  | | TensorMesh, rows of two | 42.1 | **49.9** |
   | Qwen3.8-27B (dense) | four cards, by tensor | 14.3 | **16.6** |
   | | two cards, by tensor | 21.5 | **24.6** |
   | | TensorMesh, rows of two | 21.4 | **24.3** |
