@@ -26,6 +26,12 @@ enum ChatMemoryService {
 
     static let toolNames = [listName, archiveName, recallName]
 
+    /// On unless the user turned them off; the key is absent for everyone who
+    /// never opened the setting.
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: SettingsKeys.memoryToolsEnabled) as? Bool ?? true
+    }
+
     /// Characters of a message shown in a listing or a recall hit. Enough to
     /// recognise a topic without spending the context the archive just freed.
     static let previewCharacters = 200

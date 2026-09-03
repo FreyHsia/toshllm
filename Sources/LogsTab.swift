@@ -42,17 +42,27 @@ struct ServerLogView: View {
     @State private var minLevel = 0
     @State private var autoFollow = true
     @State private var copied = false
-    /// Which engine's log to show: the chat server, or the image studio.
+    /// Which engine's log to show: the chat server, the image studio or the video one.
     @State private var logSource = "server"
     @State private var imageLog = ""
+    @State private var videoLog = ""
     @StateObject private var checker = EngineChecker()
     @State private var checkVerdict: String?
 
     /// The raw log for the selected source. The image log is read from disk (the
     /// image studio runs in another window).
-    private var rawLog: String { logSource == "images" ? imageLog : server.log }
+    private var rawLog: String {
+        switch logSource {
+        case "images": return imageLog
+        case "video":  return videoLog
+        default:       return server.log
+        }
+    }
     private func reloadImageLog() {
         imageLog = ImageGenerator.latestLogURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+    }
+    private func reloadVideoLog() {
+        videoLog = VideoGenerator.latestLogURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
     }
 
     var body: some View {
@@ -64,6 +74,7 @@ struct ServerLogView: View {
         // The image log lives in a file written by the other window; poll it while shown.
         .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
             if logSource == "images" { reloadImageLog() }
+            if logSource == "video" { reloadVideoLog() }
         }
         .sheet(isPresented: .constant(checker.running)) { engineCheckSheet }
         .alert(loc.t("Comprobación del motor", "Engine check"),
@@ -128,10 +139,14 @@ struct ServerLogView: View {
             GlassSegmentedControl(selection: $logSource, segments: [
                 .init(value: "server", title: loc.t("Servidor", "Server"), systemImage: "server.rack"),
                 .init(value: "images", title: loc.t("Imágenes", "Images"), systemImage: "photo"),
+                .init(value: "video", title: loc.t("Vídeo", "Video"), systemImage: "film"),
             ])
-            .help(loc.t("Registro del servidor de chat o del motor de imágenes.",
-                        "Chat server log or the image engine log."))
-            .onChange(of: logSource) { if logSource == "images" { reloadImageLog() } }
+            .help(loc.t("Registro del servidor de chat, del motor de imágenes o del de vídeo.",
+                        "Chat server log, image engine log or video engine log."))
+            .onChange(of: logSource) {
+                if logSource == "images" { reloadImageLog() }
+                if logSource == "video" { reloadVideoLog() }
+            }
             serverControls
             HStack(spacing: 10) {
                 GlassSearchField(placeholder: loc.t("Filtrar en el registro…", "Filter the log…"), text: $query)
@@ -170,8 +185,12 @@ struct ServerLogView: View {
 
                 Menu(loc.t("Más acciones", "More actions"), systemImage: "ellipsis") {
                     Button(loc.t("Logs en Finder", "Logs in Finder"), systemImage: "folder") {
-                        let file = logSource == "images"
-                            ? (ImageGenerator.latestLogURL ?? server.logsDirectory) : server.logFileURL
+                        let file: URL
+                        switch logSource {
+                        case "images": file = ImageGenerator.latestLogURL ?? server.logsDirectory
+                        case "video":  file = VideoGenerator.latestLogURL ?? server.logsDirectory
+                        default:       file = server.logFileURL
+                        }
                         revealInFinder(file: file, folder: server.logsDirectory)
                     }
                     Button(loc.t("Exportar diagnóstico…", "Export diagnostics…"),
@@ -183,7 +202,11 @@ struct ServerLogView: View {
                     Divider()
                     Button(loc.t("Limpiar en pantalla", "Clear on screen"),
                            systemImage: "trash", role: .destructive) {
-                        if logSource == "images" { imageLog = "" } else { server.log = "" }
+                        switch logSource {
+                        case "images": imageLog = ""
+                        case "video":  videoLog = ""
+                        default:       server.log = ""
+                        }
                     }
                 }
                 .menuStyle(.borderlessButton)

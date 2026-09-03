@@ -496,7 +496,8 @@ final class BenchmarkController: ObservableObject {
             }
 
             let directFits = ServerSettings.dynamicMoeHostBankFitsDirectMetal(
-                modelBytes: modelBytes, gpuVRAMMB: gpu.vramMB)
+                modelBytes: modelBytes, gpuVRAMMB: gpu.vramMB,
+                physicalRAMBytes: ProcessInfo.processInfo.physicalMemory)
             if directFits {
                 var direct = base
                 direct.dynamicMoe = true

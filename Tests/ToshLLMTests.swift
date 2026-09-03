@@ -1062,12 +1062,20 @@ final class ServerSettingsTests: XCTestCase {
             gpuVRAMMB: 3_072, reserveMB: 1_024, prefetch: 4))
     }
 
-    func testDynamicMoeAutoKeepsDirectMetalBankInsideGPUWorkingSet() {
+    func testDynamicMoeAutoKeepsDirectMetalBankInsideSystemRAM() {
         let gib = UInt64(1024 * 1024 * 1024)
+        // 32 GiB host: a 11.44 GiB model leaves a 10.1 GiB bank, which ran fine; the 19.45 GiB
+        // one leaves 18.2 GiB and starved the machine.
         XCTAssertTrue(ServerSettings.dynamicMoeHostBankFitsDirectMetal(
-            modelBytes: UInt64(11.44 * Double(gib)), gpuVRAMMB: 12_288))
+            modelBytes: UInt64(11.44 * Double(gib)), gpuVRAMMB: 12_288,
+            physicalRAMBytes: 32 * gib))
         XCTAssertFalse(ServerSettings.dynamicMoeHostBankFitsDirectMetal(
-            modelBytes: UInt64(19.45 * Double(gib)), gpuVRAMMB: 12_288))
+            modelBytes: UInt64(19.45 * Double(gib)), gpuVRAMMB: 12_288,
+            physicalRAMBytes: 32 * gib))
+        // the same model on a 192 GiB bench has room for it
+        XCTAssertTrue(ServerSettings.dynamicMoeHostBankFitsDirectMetal(
+            modelBytes: UInt64(19.45 * Double(gib)), gpuVRAMMB: 32_752,
+            physicalRAMBytes: 192 * gib))
     }
 
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {

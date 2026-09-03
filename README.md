@@ -126,13 +126,11 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 1. **[Download the latest `.dmg`](https://github.com/engeldlgado/toshllm/releases/latest)**, open it, and drag **ToshLLM** to Applications.
 2. The app is fully self-contained — the inference engines ship inside the bundle. No Homebrew, no Python, nothing else to install.
 
-> **First launch (Gatekeeper):** releases aren't notarized with an Apple
-> Developer ID yet, so macOS blocks the first open. Go to
-> **System Settings → Privacy & Security** and click **"Open Anyway"**, or run:
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/ToshLLM.app
-> ```
-> You only need to do this once per update. Notarized releases are planned.
+> **First launch:** from 0.86.5 the app is signed with an Apple Developer ID and
+> notarized by Apple, so it opens straight away with no warning and nothing to
+> approve. On **0.86.4 and earlier** macOS blocks the first open: go to
+> **System Settings → Privacy & Security** and click **"Open Anyway"**, or run
+> `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
 
 > **Older Macs without AVX2 (e.g. Mac Pro 5,1 and other pre-2013 Xeons):** the normal build needs the AVX2 CPU instructions and will crash on launch with "illegal hardware instruction" on those machines. Each release also ships a dedicated **no-AVX2 build** — download the `.dmg` whose name ends in **`-noavx2`**. It updates on its own channel, so once installed it will only ever offer you no-AVX2 builds.
 
@@ -178,7 +176,7 @@ The experiment targets systems whose discrete GPU cannot hold the complete MoE m
 
 The design is an independent llama.cpp/Metal implementation inspired by the publicly documented [FreeToken architecture](https://github.com/FlashML-org/FreeToken) and [paper](https://arxiv.org/abs/2608.16157). ToshLLM does not vendor or link the FreeToken runtime or source code. FreeToken is distributed under Apache-2.0; if its source is incorporated in the future, its license, notices and modification requirements must be retained.
 
-> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the full quantized model addressable in host **RAM**. Budget approximately `model size + max(25% of model size, 4 GiB)` as memory available to the engine, in addition to enough memory for macOS and other applications. For example, an 11.44 GiB GGUF needs about 15.44 GiB available to Dynamic MoE, so a 32 GB system is the practical minimum for this class of model. If this headroom is unavailable, Automatic mode rejects Dynamic MoE and returns to normal `ncmoe` instead of relying on swap.
+> **RAM warning:** Dynamic MoE reduces **VRAM** by keeping the expert pool addressable in host **RAM**, and Metal wires those pages so the system cannot page or compress them. That is why the usable share of installed memory is small: the rule is that the expert pool must fit in a third of physical RAM, which on a 32 GB machine is about 10.7 GiB and admits an 11.44 GiB GGUF but not a 19.45 GiB one. Measured on 32 GB, a 9.6 GiB pool runs flat while 12.7 and 16.9 GiB starve the compositor. If the headroom is unavailable, Automatic mode rejects Dynamic MoE and returns to normal `ncmoe` instead of relying on swap.
 
 #### How to enable it
 
@@ -489,7 +487,7 @@ Funciones nuevas, aún en validación — actívalas en Ajustes, pero pueden ten
 
 Descarga el `.dmg` desde [Releases](https://github.com/engeldlgado/toshllm/releases/latest), ábrelo y arrastra **ToshLLM** a Aplicaciones. Todo viene incluido — sin Homebrew, sin Python.
 
-> **Primer arranque (Gatekeeper):** las versiones aún no están notarizadas, así que macOS bloqueará la primera apertura. Ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`. Solo se hace una vez por actualización.
+> **Primer arranque:** desde la 0.86.5 la app va firmada con un Apple Developer ID y notarizada por Apple, así que se abre directamente, sin avisos ni nada que aprobar. En la **0.86.4 y anteriores** macOS bloquea la primera apertura: ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
 
 > **Macs antiguos sin AVX2 (p. ej. Mac Pro 5,1 y otros Xeon anteriores a 2013):** el build normal necesita las instrucciones AVX2 y arranca con "illegal hardware instruction" en esas máquinas. Cada versión publica además un **build sin AVX2** — descarga el `.dmg` cuyo nombre termina en **`-noavx2`**. Se actualiza por su propio canal, así que una vez instalado solo te ofrecerá builds sin AVX2.
 

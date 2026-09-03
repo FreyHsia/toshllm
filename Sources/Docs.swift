@@ -255,7 +255,7 @@ Números medidos en el equipo de desarrollo (RX 6700 XT 12 GB, DDR4, macOS):
 La generación de modelos MoE híbridos está limitada por el ancho de banda de la RAM: una GPU más potente no la mejora, pero RAM DDR5 sí (hasta ~2×).
 """),
         DocSection(title: "Solución de problemas", icon: "wrench.and.screwdriver", body: """
-**macOS bloquea la app al instalarla** — Las versiones descargadas aún no están notarizadas por Apple: ve a Ajustes del Sistema → Privacidad y seguridad y pulsa "Abrir de todos modos" (solo la primera vez por versión).
+**macOS bloquea la app al instalarla** — Desde la 0.86.5 las versiones van firmadas y notarizadas por Apple, así que se abren directamente. Si vienes de una anterior: Ajustes del Sistema → Privacidad y seguridad y pulsa "Abrir de todos modos".
 
 **La salida es texto sin sentido** — Verifica que "Estabilidad AMD dGPU" esté activada en Ajustes. Es la causa #1 en GPUs AMD discretas.
 
@@ -499,7 +499,7 @@ Numbers measured on the development machine (RX 6700 XT 12 GB, DDR4, macOS):
 Hybrid MoE generation is RAM-bandwidth-bound: a faster GPU won't improve it, but DDR5 RAM will (up to ~2×).
 """),
         DocSection(title: "Troubleshooting", icon: "wrench.and.screwdriver", body: """
-**macOS blocks the app on install** — Downloaded releases are not Apple-notarized yet: go to System Settings → Privacy & Security and click "Open Anyway" (once per version).
+**macOS blocks the app on install** — From 0.86.5 releases are signed and notarized by Apple, so they open straight away. Coming from an earlier one: System Settings → Privacy & Security, then "Open Anyway".
 
 **Output is gibberish** — Save the server log and report the model, quantization and GPU; the bundled engine already applies the discrete-GPU safety mode.
 

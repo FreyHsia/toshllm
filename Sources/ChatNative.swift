@@ -750,6 +750,7 @@ final class ChatStore: ObservableObject {
         } ?? system
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
+        let memoryToolsEnabled = ChatMemoryService.isEnabled
         let agentTurnLimit = Self.configuredAgentTurnLimit
         let enabledToolNames = conversations[i].enabledToolNames
 
@@ -895,7 +896,7 @@ final class ChatStore: ObservableObject {
                         }
                     }
                     if javaScriptEnabled { availableTools.append(JavaScriptSandboxService.tool) }
-                    availableTools.append(contentsOf: ChatMemoryService.tools)
+                    if memoryToolsEnabled { availableTools.append(contentsOf: ChatMemoryService.tools) }
                     availableTools += await ToshMCPService.shared.discoverTools()
                     if let enabledToolNames {
                         let selected = Set(enabledToolNames)
@@ -1588,6 +1589,9 @@ final class ChatStore: ObservableObject {
     /// model needs is already in the transcript, so archiving only records a range
     /// and recall reads it back: nothing is deleted and nothing leaves the app.
     func runMemoryTool(_ name: String, arguments: [String: Any]) -> ToolExecutionResult {
+        guard ChatMemoryService.isEnabled else {
+            return ToolExecutionResult(content: "Conversation memory tools are turned off.", isError: true)
+        }
         guard let i = currentIndex else {
             return ToolExecutionResult(content: "No open conversation.", isError: true)
         }
@@ -3573,6 +3577,7 @@ struct NativeChatView: View {
         if UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled) {
             tools.append(JavaScriptSandboxService.tool)
         }
+        if ChatMemoryService.isEnabled { tools += ChatMemoryService.tools }
         tools += await ToshMCPService.shared.discoverTools()
         var seen = Set<String>()
         availableTools = tools.filter { seen.insert($0.name).inserted }
